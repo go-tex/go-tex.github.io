@@ -1,0 +1,2 @@
+packages:
+  - { name: "math", desc: "TeX math-mode typesetter → SVG via the OpenType MATH table; wasm-ready for offline math preview.", url: "https://github.com/go-tex/math", doc: "https://pkg.go.dev/github.com/go-tex/math" }

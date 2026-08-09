@@ -1,0 +1,4 @@
+baseURL = "https://go-tex.github.io/"
+languageCode = "en-us"
+title = "go-tex"
+disableKinds = ["taxonomy", "term", "RSS", "sitemap"]

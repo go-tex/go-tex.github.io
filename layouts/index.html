@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ .Site.Title }} — Pure-Go TeX.</title>
+<meta name="description" content="Pure-Go TeX.">
+<link rel="icon" type="image/svg+xml" href="{{ "favicon.svg" | relURL }}">
+<link rel="stylesheet" href="{{ "css/brand.css" | relURL }}">
+<script src="{{ "js/theme.js" | relURL }}"></script>
+</head><body>
+<section class="hero">
+  <button id="themebtn" class="theme" type="button">Theme: System</button>
+  <img src="{{ "img/go-tex-white.png" | relURL }}" alt="go-tex">
+  <h1>go-tex</h1>
+  <p>Pure-Go TeX.</p>
+  <div class="btns">
+    <a class="btn btn-solid" href="https://go-tex.github.io/docs/">Documentation</a>
+    <a class="btn btn-ghost" href="https://github.com/go-tex">GitHub</a>
+  </div>
+</section>
+<div class="wrap">
+  <div class="panel">
+    <h2>What is go-tex?</h2>
+    <p>go-tex is a pure-Go (CGO_ENABLED=0) TeX effort. It starts from the math component — a TeX math-mode typesetter that lays formulas out to self-contained SVG using the OpenType MATH table (metrics + vector glyph outlines via go-opentype), with no TeX engine, no cgo and no server, and compiles to js/wasm for offline client-side math preview. The full engine will follow in go-tex/tex.</p>
+  </div>
+  <h2 class="section">Packages</h2>
+  <p class="sub">{{ len site.Data.pkgs.packages }} module(s) — generated from the org's repos.</p>
+  <div class="grid">
+    <div class="card"><div class="chip">MA</div><div class="nm">math</div><div class="ds">TeX math-mode typesetter → SVG via the OpenType MATH table; wasm-ready for offline math preview.</div><div class="lk"><a href="https://github.com/go-tex/math">GitHub</a> · <a href="https://pkg.go.dev/github.com/go-tex/math">pkg.go.dev</a></div></div>
+  </div>
+</div>
+<footer>Built with Hugo · Pure Go, CGO=0 · Branding from <a href="https://github.com/go-tex/brand">go-tex/brand</a></footer>
+</body></html>

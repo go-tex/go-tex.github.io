@@ -1,0 +1,9 @@
+<svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="go-tex">
+  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4F46E5"/><stop offset="1" stop-color="#1E1B4B"/></linearGradient></defs>
+  <rect width="256" height="256" rx="56" fill="url(#g)"/>
+  <g fill="#FFFFFF" font-family="Georgia,'Times New Roman',serif" font-weight="700">
+    <text x="44" y="150" font-size="96">T</text>
+    <text x="98" y="176" font-size="96">E</text>
+    <text x="156" y="150" font-size="96">X</text>
+  </g>
+</svg>
