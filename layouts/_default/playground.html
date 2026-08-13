@@ -113,13 +113,15 @@ there is no server round-trip at all.
 
 <footer>Built with Hugo · Pure Go, CGO=0 · Branding from <a href="https://github.com/go-tex/brand">go-tex/brand</a></footer>
 
-<script src="{{ "js/wasm_exec.js" | relURL }}"></script>
+<script src="{{ "js/wasm_exec.js" | absURL }}"></script>
 <script>
 "use strict";
 (function(){
   var $=function(id){return document.getElementById(id);};
   var src=$("src"), preview=$("pages"), errBox=$("err");
-  var wasmURL={{ "gotex.wasm" | relURL | jsonify }};
+  // Absolute URL (never resolves against /playground/) + a build-stamped query so a
+  // new engine build busts the CDN/browser cache.
+  var wasmURL={{ printf "%s?v=%d" ("gotex.wasm" | absURL) now.Unix | jsonify }};
   var ready=false, started=false;
 
   function render(){
@@ -157,23 +159,31 @@ there is no server round-trip at all.
     };
     var fail=function(e){
       $("status").textContent="engine failed to load";
-      errBox.textContent="Failed to load gotex.wasm: "+String(e)+
-        "\n(the engine must be served over http; file:// blocks fetch of siblings.)";
+      var hint = location.protocol==="file:"
+        ? "\n(open this page over http:// — file:// blocks fetching the engine.)"
+        : "\n(try a hard refresh — the engine asset may be cached stale.)";
+      errBox.textContent="Failed to load gotex.wasm: "+String(e)+hint;
       errBox.classList.add("show");
     };
-    // Prefer streaming instantiation; fall back to ArrayBuffer when the server
-    // does not send application/wasm (some static hosts don't).
-    if(WebAssembly.instantiateStreaming){
-      WebAssembly.instantiateStreaming(fetch(wasmURL),go.importObject).then(boot).catch(function(){
-        fetch(wasmURL).then(function(r){return r.arrayBuffer();})
-          .then(function(b){return WebAssembly.instantiate(b,go.importObject);})
-          .then(boot).catch(fail);
+    // Fetch once, verify we actually got the WebAssembly module (a 404 on a static
+    // host returns an HTML page, whose first bytes fail the wasm magic-number check
+    // with a confusing error) — then instantiate, streaming when the server sends
+    // application/wasm, else from an ArrayBuffer.
+    fetch(wasmURL,{cache:"reload"}).then(function(r){
+      if(!r.ok) throw new Error("HTTP "+r.status+" fetching the engine at "+wasmURL);
+      var ct=r.headers.get("content-type")||"";
+      if(WebAssembly.instantiateStreaming && ct.indexOf("application/wasm")>=0){
+        return WebAssembly.instantiateStreaming(r,go.importObject);
+      }
+      return r.arrayBuffer().then(function(b){
+        // Guard against a non-wasm body (e.g. an HTML error page) reaching the
+        // compiler, which would otherwise report an opaque magic-number error.
+        var m=new Uint8Array(b,0,4);
+        if(!(m[0]===0x00&&m[1]===0x61&&m[2]===0x73&&m[3]===0x6d))
+          throw new Error("the engine URL did not return a WebAssembly module (got "+(ct||"unknown type")+")");
+        return WebAssembly.instantiate(b,go.importObject);
       });
-    } else {
-      fetch(wasmURL).then(function(r){return r.arrayBuffer();})
-        .then(function(b){return WebAssembly.instantiate(b,go.importObject);})
-        .then(boot).catch(fail);
-    }
+    }).then(boot).catch(fail);
   }
 
   // Lazy-load: only fetch the 8.5 MB engine once the playground scrolls into
