@@ -1,2 +1,4 @@
 packages:
-  - { name: "math", desc: "TeX math-mode typesetter → SVG via the OpenType MATH table; wasm-ready for offline math preview.", url: "https://github.com/go-tex/math", doc: "https://pkg.go.dev/github.com/go-tex/math" }
+  - { name: "engine", abbr: "EN", desc: "The pure-Go TeX engine — faithful mouth + gullet, scaled-point stomach, math, OpenType fonts, PDF/SVG, and the real LaTeX base classes (article/report/book), native and js/wasm.", url: "https://github.com/go-tex/engine", doc: "https://pkg.go.dev/github.com/go-tex/engine" }
+  - { name: "math", abbr: "MA", desc: "Pure-Go TeX math-mode typesetter (fractions, radicals, matrices, big operators, in-math font switches, named operators, long arrows) → vector output; wasm-ready.", url: "https://github.com/go-tex/math", doc: "https://pkg.go.dev/github.com/go-tex/math" }
+  - { name: "tex", abbr: "TX", desc: "A lightweight LaTeX-subset document processor → semantic HTML (macro expansion + structure + math); js/wasm-ready.", url: "https://github.com/go-tex/tex", doc: "https://pkg.go.dev/github.com/go-tex/tex" }

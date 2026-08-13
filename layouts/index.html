@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{ .Site.Title }} — Pure-Go TeX.</title>
-<meta name="description" content="Pure-Go TeX.">
+<title>{{ .Site.Title }} — Pure-Go TeX that runs the real LaTeX classes</title>
+<meta name="description" content="Pure-Go (CGO=0) TeX that loads and runs the genuine LaTeX classes — article, report and book — in Go and in the browser, with no TeXLive and no server.">
 <link rel="icon" type="image/svg+xml" href="{{ "favicon.svg" | relURL }}">
 <link rel="stylesheet" href="{{ "css/brand.css" | relURL }}">
 <script src="{{ "js/theme.js" | relURL }}"></script>
@@ -11,7 +11,7 @@
   <button id="themebtn" class="theme" type="button">Theme: System</button>
   <img src="{{ "img/go-tex-white.png" | relURL }}" alt="go-tex">
   <h1>go-tex</h1>
-  <p>Pure-Go TeX.</p>
+  <p>Pure-Go TeX that runs the real LaTeX classes — in Go and in the browser.</p>
   <div class="btns">
     <a class="btn btn-solid" href="https://go-tex.github.io/docs/">Documentation</a>
     <a class="btn btn-ghost" href="https://github.com/go-tex">GitHub</a>
@@ -19,14 +19,29 @@
 </section>
 <div class="wrap">
   <div class="panel">
-    <h2>What is go-tex?</h2>
-    <p>go-tex is a pure-Go (CGO_ENABLED=0) TeX effort. It starts from the math component — a TeX math-mode typesetter that lays formulas out to self-contained SVG using the OpenType MATH table (metrics + vector glyph outlines via go-opentype), with no TeX engine, no cgo and no server, and compiles to js/wasm for offline client-side math preview. The full engine will follow in go-tex/tex.</p>
+    <h2>Genuine LaTeX classes, in pure Go</h2>
+    <p>go-tex is a pure-Go (<code>CGO_ENABLED=0</code>) TeX effort. Its engine is a faithful re-implementation of TeX — the category-code mouth and gullet, a scaled-point stomach with Knuth–Plass line breaking and a cost-based page builder, <code>\halign</code> tables, math, OpenType fonts, and PDF/SVG output — and on top of it, it <strong>loads and runs the genuine LaTeX classes</strong>: <code>\documentclass{article}</code>, <code>{report}</code> and <code>{book}</code> execute the real, embedded <code>.cls</code> files (LPPL, verbatim) — not an emulation. They typeset a numbered title, a dotted <code>\tableofcontents</code>, numbered sections, <code>\chapter</code>, numbered figure/table captions, lists, and math.</p>
+    <p>Because the class files are embedded and the resolver needs no filesystem, the real classes <strong>also run in the browser via <code>js/wasm</code></strong> — genuine LaTeX class rendering client-side, with no TeXLive and no server.</p>
+  </div>
+  <h2 class="section">Capabilities</h2>
+  <p class="sub">A full pipeline, gated by objective oracles.</p>
+  <div class="grid">
+    <div class="card"><div class="nm">Real base classes</div><div class="ds">article, report and book load and run the genuine embedded LaTeX <code>.cls</code> files — numbered title, dotted TOC, numbered sections/chapters, figure/table captions, lists, math.</div></div>
+    <div class="card"><div class="nm">Faithful engine</div><div class="ds">Category-code mouth and gullet, a scaled-point stomach with Knuth–Plass line breaking, a cost-based page builder, and <code>\halign</code> tables.</div></div>
+    <div class="card"><div class="nm">Math &amp; fonts</div><div class="ds">Math via go-tex/math (vector output); OpenType fonts with a built-in default font, kerning and ligatures — runs with no assets.</div></div>
+    <div class="card"><div class="nm">PDF &amp; SVG output</div><div class="ds">Embedded-subset-font PDF with selectable text, and self-contained SVG pages carrying a source map for click-to-line.</div></div>
+    <div class="card"><div class="nm">In the browser</div><div class="ds">A self-contained <code>js/wasm</code> build renders real LaTeX classes client-side — no TeXLive, no server.</div></div>
+    <div class="card"><div class="nm">Held to fidelity</div><div class="ds">A byte-exact conformance ratchet plus a whole-document prose check against a real LaTeX engine (tectonic): ~90% median of the reference's prose words on real arXiv article papers.</div></div>
   </div>
   <h2 class="section">Packages</h2>
   <p class="sub">{{ len site.Data.pkgs.packages }} module(s) — generated from the org's repos.</p>
   <div class="grid">
-    <div class="card"><div class="chip">MA</div><div class="nm">math</div><div class="ds">TeX math-mode typesetter → SVG via the OpenType MATH table; wasm-ready for offline math preview.</div><div class="lk"><a href="https://github.com/go-tex/math">GitHub</a> · <a href="https://pkg.go.dev/github.com/go-tex/math">pkg.go.dev</a></div></div>
+    {{ range site.Data.pkgs.packages }}
+    <div class="card"><div class="chip">{{ .abbr }}</div><div class="nm">{{ .name }}</div><div class="ds">{{ .desc }}</div><div class="lk"><a href="{{ .url }}">GitHub</a> · <a href="{{ .doc }}">pkg.go.dev</a></div></div>
+    {{ end }}
   </div>
+  <h2 class="section">Scope</h2>
+  <p class="sub">The engine loads and runs the standard base classes; it is functional-parity-oriented and held to real-LaTeX fidelity — not a claim of full TeXLive parity. <code>amsart</code> and heavy packages (<code>tikz</code>, <code>hyperref</code>, …) are not yet run as real files; that is the roadmap.</p>
 </div>
 <footer>Built with Hugo · Pure Go, CGO=0 · Branding from <a href="https://github.com/go-tex/brand">go-tex/brand</a></footer>
 </body></html>
