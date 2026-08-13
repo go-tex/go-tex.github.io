@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>go-tex — Try it: live LaTeX in your browser</title>
+<meta name="description" content="Type LaTeX and see it typeset by the pure-Go go-tex engine compiled to WebAssembly — the genuine article.cls, executed in your browser, with no TeXLive and no server.">
+<link rel="icon" type="image/svg+xml" href="{{ "favicon.svg" | relURL }}">
+<link rel="stylesheet" href="{{ "css/brand.css" | relURL }}">
+<script src="{{ "js/theme.js" | relURL }}"></script>
+<style>
+/* Playground-only styles — kept off every other page. */
+.hero.mini{padding:48px 24px 78px}
+.hero.mini h1{font-size:40px}
+.hero .caption{font-size:14px;opacity:.9;max-width:680px;margin:14px auto 0}
+.hero .caption code{background:rgba(255,255,255,.16);padding:1px 6px;border-radius:5px}
+.pg{max-width:1200px;margin:-50px auto 56px;padding:0 24px}
+.pg-bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;color:var(--muted);
+  font-size:13px;margin:0 2px 12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.pg-bar .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:0 0 auto}
+.pg-bar .dot.ok{background:var(--from)}
+.pg-bar .grow{flex:1}
+.panes{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.pane{background:var(--card);border:1px solid var(--line);border-radius:16px;
+  box-shadow:0 10px 30px var(--shadow);display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.pane .label{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);
+  padding:12px 16px;border-bottom:1px solid var(--line);font-weight:700}
+#src{flex:1;border:0;outline:0;resize:none;padding:16px;min-height:520px;
+  background:transparent;color:var(--ink);tab-size:2;
+  font:13px/1.55 ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+#preview{flex:1;overflow:auto;padding:18px;min-height:520px;background:var(--bg)}
+#preview svg{background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.28);
+  display:block;margin:0 auto 16px;max-width:100%;height:auto}
+#err{display:none;margin:0 0 14px;padding:11px 13px;border-radius:10px;
+  background:#fdecec;color:#9b1c1c;white-space:pre-wrap;
+  font:12.5px/1.45 ui-monospace,Menlo,monospace}
+:root[data-theme="dark"] #err{background:#3a1113;color:#f7b4b4}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) #err{background:#3a1113;color:#f7b4b4}}
+#err.show{display:block}
+.pg-note{color:var(--muted);font-size:13px;margin:16px 2px 0;text-align:center}
+.pg-back{display:inline-block;margin-top:6px;font-weight:600}
+@media (max-width:860px){
+  .panes{grid-template-columns:1fr}
+  #src,#preview{min-height:360px}
+}
+</style>
+</head><body>
+<section class="hero mini">
+  <button id="themebtn" class="theme" type="button">Theme: System</button>
+  <img src="{{ "img/go-tex-white.png" | relURL }}" alt="go-tex" style="width:76px;height:76px">
+  <h1>Try it in your browser</h1>
+  <p>Type LaTeX on the left, watch the pure-Go engine typeset it on the right.</p>
+  <p class="caption">The genuine LaTeX <code>article.cls</code>, executed in WebAssembly — no TeXLive, no server.</p>
+</section>
+
+<div class="pg">
+  <div class="pg-bar">
+    <span class="dot" id="statusdot"></span>
+    <span id="status">loading the engine (~8.5&nbsp;MB, one time)…</span>
+    <span class="grow"></span>
+    <span id="ver"></span>
+    <span id="count"></span>
+  </div>
+  <div class="panes">
+    <section class="pane">
+      <div class="label">LaTeX source — editable</div>
+      <textarea id="src" spellcheck="false" autocomplete="off" autocapitalize="off">\documentclass{article}
+
+\title{Live \LaTeX{} in WebAssembly}
+\author{the go-tex authors}
+\date{2026}
+
+\begin{document}
+\maketitle
+\tableofcontents
+
+\section{Introduction}
+This page is typeset by the genuine \texttt{article.cls}, executed as
+WebAssembly directly in your browser --- no TeX Live, no server.
+
+\subsection{What runs here}
+The pure-Go TeX engine performs Knuth--Plass line breaking and lays out
+the document exactly as a real \LaTeX{} run would.
+
+\section{Features on display}
+\begin{itemize}
+  \item The real title block from \texttt{maketitle}.
+  \item A dotted table of contents.
+  \item Numbered section and subsection headings.
+  \item An \texttt{itemize} list (this one).
+  \item An inline equation: the quadratic root
+        $x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}$.
+\end{itemize}
+
+\subsection{Why it matters}
+Client-side live preview that a TeX Live install can never offer, because
+there is no server round-trip at all.
+
+\end{document}</textarea>
+    </section>
+    <section class="pane">
+      <div class="label">Rendered — page 1</div>
+      <div id="preview">
+        <div id="err"></div>
+        <div id="pages"></div>
+      </div>
+    </section>
+  </div>
+  <p class="pg-note">
+    Real LaTeX class rendering, client-side, from the pure-Go
+    <a href="https://github.com/go-tex/engine">go-tex/engine</a>.<br>
+    <a class="pg-back" href="{{ "" | relURL }}">← Back to go-tex</a>
+  </p>
+</div>
+
+<footer>Built with Hugo · Pure Go, CGO=0 · Branding from <a href="https://github.com/go-tex/brand">go-tex/brand</a></footer>
+
+<script src="{{ "js/wasm_exec.js" | relURL }}"></script>
+<script>
+"use strict";
+(function(){
+  var $=function(id){return document.getElementById(id);};
+  var src=$("src"), preview=$("pages"), errBox=$("err");
+  var wasmURL={{ "gotex.wasm" | relURL | jsonify }};
+  var ready=false, started=false;
+
+  function render(){
+    if(!ready||!globalThis.gotexToSVG) return;
+    var t0=performance.now(), res;
+    try{ res=globalThis.gotexToSVG(src.value,{size:11}); }
+    catch(e){ res={error:String(e)}; }
+    if(res.error){
+      errBox.textContent="Error: "+res.error+
+        (res.errorLine?"  (line "+res.errorLine+", col "+res.errorCol+")":"");
+      errBox.classList.add("show");
+      $("count").textContent="· compile error";
+      return;
+    }
+    errBox.classList.remove("show"); errBox.textContent="";
+    preview.innerHTML=res.pages.join("");
+    $("count").textContent="· "+res.pages.length+" page(s) · "+
+      (performance.now()-t0).toFixed(0)+" ms";
+  }
+
+  var timer=null;
+  function scheduleRender(){ clearTimeout(timer); timer=setTimeout(render,300); }
+
+  function loadEngine(){
+    if(started) return; started=true;
+    var go=new Go();
+    var boot=function(result){
+      go.run(result.instance);
+      ready=true;
+      $("statusdot").classList.add("ok");
+      $("status").textContent="engine ready";
+      $("ver").textContent=globalThis.gotexVersion();
+      src.addEventListener("input",scheduleRender);
+      render();
+    };
+    var fail=function(e){
+      $("status").textContent="engine failed to load";
+      errBox.textContent="Failed to load gotex.wasm: "+String(e)+
+        "\n(the engine must be served over http; file:// blocks fetch of siblings.)";
+      errBox.classList.add("show");
+    };
+    // Prefer streaming instantiation; fall back to ArrayBuffer when the server
+    // does not send application/wasm (some static hosts don't).
+    if(WebAssembly.instantiateStreaming){
+      WebAssembly.instantiateStreaming(fetch(wasmURL),go.importObject).then(boot).catch(function(){
+        fetch(wasmURL).then(function(r){return r.arrayBuffer();})
+          .then(function(b){return WebAssembly.instantiate(b,go.importObject);})
+          .then(boot).catch(fail);
+      });
+    } else {
+      fetch(wasmURL).then(function(r){return r.arrayBuffer();})
+        .then(function(b){return WebAssembly.instantiate(b,go.importObject);})
+        .then(boot).catch(fail);
+    }
+  }
+
+  // Lazy-load: only fetch the 8.5 MB engine once the playground scrolls into
+  // view. It is above the fold here, so this fires right after first paint —
+  // the page renders before the wasm stream begins.
+  function arm(){
+    if("IntersectionObserver" in window){
+      var io=new IntersectionObserver(function(entries){
+        for(var i=0;i<entries.length;i++){
+          if(entries[i].isIntersecting){ io.disconnect(); loadEngine(); return; }
+        }
+      },{rootMargin:"200px"});
+      io.observe(document.querySelector(".panes"));
+    } else {
+      loadEngine();
+    }
+  }
+  if(document.readyState!=="loading") arm();
+  else document.addEventListener("DOMContentLoaded",arm);
+})();
+</script>
+</body></html>
