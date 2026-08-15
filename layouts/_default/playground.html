@@ -119,14 +119,20 @@ there is no server round-trip at all.
 (function(){
   var $=function(id){return document.getElementById(id);};
   var src=$("src"), preview=$("pages"), errBox=$("err");
-  // A STABLE absolute URL (never resolves against /playground/, no per-build query).
-  // A timestamp cache-buster mints a brand-new URL on every site redeploy, which is
-  // always cold at the CDN edge and forces an origin fetch straight into GitHub Pages'
-  // post-deploy propagation window — the exact cause of the recurring "HTTP 404
-  // fetching the engine" seen here. The bare URL stays warm in every edge across the
-  // frequent doc-only redeploys, and the asset's ETag already picks up a real new
-  // engine build within the 10-minute cache window. No churn, so no cold-miss 404.
-  var wasmURL={{ "gotex.wasm" | absURL | jsonify }};
+  // The 9.6 MB engine is served from jsDelivr, pinned to this build's commit, with
+  // the same file on GitHub Pages as a fallback. Why not Pages alone: every Pages
+  // deploy purges its Fastly cache, and during the post-deploy propagation window the
+  // origin briefly 404s — Fastly then NEGATIVELY CACHES that 404 with a long TTL, so
+  // the engine keeps 404ing ("Failed to load gotex.wasm: HTTP 404") long after the
+  // deploy finished, which is the recurring failure seen here. jsDelivr pins the
+  // asset to an immutable per-commit URL on an independent CDN that our deploys never
+  // purge, so it stays available across every redeploy. wasmURL is primary; if it
+  // ever fails we fall back to the Pages copy.
+  {{ $local := "gotex.wasm" | absURL }}
+  {{ $primary := $local }}
+  {{ with .Site.Params.wasmsha }}{{ $primary = printf "https://cdn.jsdelivr.net/gh/go-tex/go-tex.github.io@%s/static/gotex.wasm" . }}{{ end }}
+  var wasmURL={{ $primary | jsonify }};
+  var wasmFallback={{ $local | jsonify }};
   var ready=false, started=false;
 
   function render(){
@@ -170,19 +176,18 @@ there is no server round-trip at all.
       errBox.textContent="Failed to load gotex.wasm: "+String(e)+hint;
       errBox.classList.add("show");
     };
-    // Fetch, verify we actually got the WebAssembly module (a 404 on a static host
-    // returns an HTML page, whose first bytes fail the wasm magic-number check with a
-    // confusing error), then instantiate — streaming when the server sends
-    // application/wasm, else from an ArrayBuffer. A single delayed retry absorbs the
-    // brief origin-propagation window right after a deploy, so a cold edge that 404s
-    // once self-heals instead of surfacing an error to the reader.
-    function attempt(triesLeft){
-      return fetch(wasmURL,{cache:"reload"}).then(function(r){
+    // Fetch a given URL, verify we actually got the WebAssembly module (a 404 on a
+    // static host returns an HTML page, whose first bytes fail the wasm magic-number
+    // check with a confusing error), then instantiate — streaming when the server
+    // sends application/wasm, else from an ArrayBuffer. A single delayed retry absorbs
+    // a brief propagation blip; on outright failure the caller tries the next source.
+    function attempt(url,triesLeft){
+      return fetch(url,{cache:"reload"}).then(function(r){
         if(!r.ok){
           if(triesLeft>0){
-            return new Promise(function(res){setTimeout(res,1500);}).then(function(){return attempt(triesLeft-1);});
+            return new Promise(function(res){setTimeout(res,1500);}).then(function(){return attempt(url,triesLeft-1);});
           }
-          throw new Error("HTTP "+r.status+" fetching the engine at "+wasmURL);
+          throw new Error("HTTP "+r.status+" fetching the engine at "+url);
         }
         var ct=r.headers.get("content-type")||"";
         if(WebAssembly.instantiateStreaming && ct.indexOf("application/wasm")>=0){
@@ -198,7 +203,11 @@ there is no server round-trip at all.
         });
       });
     }
-    attempt(1).then(boot).catch(fail);
+    // Primary source (jsDelivr, immutable per-commit) then the Pages fallback, so a
+    // Pages negatively-cached 404 can never take the playground down on its own.
+    attempt(wasmURL,1).catch(function(){
+      return wasmFallback===wasmURL ? Promise.reject() : attempt(wasmFallback,1);
+    }).then(boot).catch(fail);
   }
 
   // Lazy-load: only fetch the 8.5 MB engine once the playground scrolls into

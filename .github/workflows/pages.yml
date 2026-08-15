@@ -25,6 +25,10 @@ jobs:
           hugo-version: "0.161.1"
           extended: true
       - run: hugo --gc --minify
+        env:
+          # Pins the playground's engine wasm to this commit on jsDelivr's immutable
+          # CDN, decoupling the 9.6 MB asset from Pages' post-deploy negative caching.
+          HUGO_PARAMS_WASMSHA: ${{ github.sha }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: ./public
