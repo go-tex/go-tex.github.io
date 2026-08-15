@@ -119,9 +119,14 @@ there is no server round-trip at all.
 (function(){
   var $=function(id){return document.getElementById(id);};
   var src=$("src"), preview=$("pages"), errBox=$("err");
-  // Absolute URL (never resolves against /playground/) + a build-stamped query so a
-  // new engine build busts the CDN/browser cache.
-  var wasmURL={{ printf "%s?v=%d" ("gotex.wasm" | absURL) now.Unix | jsonify }};
+  // A STABLE absolute URL (never resolves against /playground/, no per-build query).
+  // A timestamp cache-buster mints a brand-new URL on every site redeploy, which is
+  // always cold at the CDN edge and forces an origin fetch straight into GitHub Pages'
+  // post-deploy propagation window — the exact cause of the recurring "HTTP 404
+  // fetching the engine" seen here. The bare URL stays warm in every edge across the
+  // frequent doc-only redeploys, and the asset's ETag already picks up a real new
+  // engine build within the 10-minute cache window. No churn, so no cold-miss 404.
+  var wasmURL={{ "gotex.wasm" | absURL | jsonify }};
   var ready=false, started=false;
 
   function render(){
@@ -165,25 +170,35 @@ there is no server round-trip at all.
       errBox.textContent="Failed to load gotex.wasm: "+String(e)+hint;
       errBox.classList.add("show");
     };
-    // Fetch once, verify we actually got the WebAssembly module (a 404 on a static
-    // host returns an HTML page, whose first bytes fail the wasm magic-number check
-    // with a confusing error) — then instantiate, streaming when the server sends
-    // application/wasm, else from an ArrayBuffer.
-    fetch(wasmURL,{cache:"reload"}).then(function(r){
-      if(!r.ok) throw new Error("HTTP "+r.status+" fetching the engine at "+wasmURL);
-      var ct=r.headers.get("content-type")||"";
-      if(WebAssembly.instantiateStreaming && ct.indexOf("application/wasm")>=0){
-        return WebAssembly.instantiateStreaming(r,go.importObject);
-      }
-      return r.arrayBuffer().then(function(b){
-        // Guard against a non-wasm body (e.g. an HTML error page) reaching the
-        // compiler, which would otherwise report an opaque magic-number error.
-        var m=new Uint8Array(b,0,4);
-        if(!(m[0]===0x00&&m[1]===0x61&&m[2]===0x73&&m[3]===0x6d))
-          throw new Error("the engine URL did not return a WebAssembly module (got "+(ct||"unknown type")+")");
-        return WebAssembly.instantiate(b,go.importObject);
+    // Fetch, verify we actually got the WebAssembly module (a 404 on a static host
+    // returns an HTML page, whose first bytes fail the wasm magic-number check with a
+    // confusing error), then instantiate — streaming when the server sends
+    // application/wasm, else from an ArrayBuffer. A single delayed retry absorbs the
+    // brief origin-propagation window right after a deploy, so a cold edge that 404s
+    // once self-heals instead of surfacing an error to the reader.
+    function attempt(triesLeft){
+      return fetch(wasmURL,{cache:"reload"}).then(function(r){
+        if(!r.ok){
+          if(triesLeft>0){
+            return new Promise(function(res){setTimeout(res,1500);}).then(function(){return attempt(triesLeft-1);});
+          }
+          throw new Error("HTTP "+r.status+" fetching the engine at "+wasmURL);
+        }
+        var ct=r.headers.get("content-type")||"";
+        if(WebAssembly.instantiateStreaming && ct.indexOf("application/wasm")>=0){
+          return WebAssembly.instantiateStreaming(r,go.importObject);
+        }
+        return r.arrayBuffer().then(function(b){
+          // Guard against a non-wasm body (e.g. an HTML error page) reaching the
+          // compiler, which would otherwise report an opaque magic-number error.
+          var m=new Uint8Array(b,0,4);
+          if(!(m[0]===0x00&&m[1]===0x61&&m[2]===0x73&&m[3]===0x6d))
+            throw new Error("the engine URL did not return a WebAssembly module (got "+(ct||"unknown type")+")");
+          return WebAssembly.instantiate(b,go.importObject);
+        });
       });
-    }).then(boot).catch(fail);
+    }
+    attempt(1).then(boot).catch(fail);
   }
 
   // Lazy-load: only fetch the 8.5 MB engine once the playground scrolls into
