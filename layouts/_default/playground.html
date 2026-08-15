@@ -128,11 +128,15 @@ there is no server round-trip at all.
   // asset to an immutable per-commit URL on an independent CDN that our deploys never
   // purge, so it stays available across every redeploy. wasmURL is primary; if it
   // ever fails we fall back to the Pages copy.
-  {{ $local := "gotex.wasm" | absURL }}
+  {{ $local := printf "%s" ("gotex.wasm" | absURL) }}
   {{ $primary := $local }}
   {{ with .Site.Params.wasmsha }}{{ $primary = printf "https://cdn.jsdelivr.net/gh/go-tex/go-tex.github.io@%s/static/gotex.wasm" . }}{{ end }}
-  var wasmURL={{ $primary | jsonify }};
-  var wasmFallback={{ $local | jsonify }};
+  // No jsonify: in a <script> context html/template already emits a properly
+  // escaped, quoted JS string literal. Piping through jsonify too double-encodes
+  // it into "\"https://…\"" — a quoted URL that fetch() cannot resolve (the
+  // long-standing "HTTP 404 fetching the engine" bug).
+  var wasmURL={{ $primary }};
+  var wasmFallback={{ $local }};
   var ready=false, started=false;
 
   function render(){
