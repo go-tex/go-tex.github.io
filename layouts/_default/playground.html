@@ -22,11 +22,23 @@
 .pane{background:var(--card);border:1px solid var(--line);border-radius:16px;
   box-shadow:0 10px 30px var(--shadow);display:flex;flex-direction:column;overflow:hidden;min-width:0}
 .pane .label{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);
-  padding:12px 16px;border-bottom:1px solid var(--line);font-weight:700}
+  padding:8px 10px 8px 16px;border-bottom:1px solid var(--line);font-weight:700;
+  display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:37px}
+/* Segmented control that switches the render pane between the two page views. */
+.viewtoggle{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;flex:0 0 auto}
+.viewtoggle button{appearance:none;-webkit-appearance:none;border:0;background:transparent;cursor:pointer;
+  color:var(--muted);padding:5px 10px;letter-spacing:.5px;text-transform:uppercase;
+  font:700 10px/1 ui-monospace,SFMono-Regular,Menlo,monospace}
+.viewtoggle button+button{border-left:1px solid var(--line)}
+.viewtoggle button.on{background:var(--from);color:#fff}
 #src{flex:1;border:0;outline:0;resize:none;padding:16px;min-height:520px;
   background:transparent;color:var(--ink);tab-size:2;
   font:13px/1.55 ui-monospace,"SF Mono",Menlo,Consolas,monospace}
 #preview{flex:1;overflow:auto;padding:18px;min-height:520px;background:var(--bg)}
+/* Compact view: the preview is a fixed-height frame that scrolls its pages
+   internally, so the page never grows as pages are appended. Continuous view
+   (the default) keeps the pages stacked and lets the whole page scroll. */
+.pg[data-view="compact"] #preview{flex:none;height:72vh;min-height:0}
 #preview svg{background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.28);
   display:block;margin:0 auto 16px;max-width:100%;height:auto}
 #err{display:none;margin:0 0 14px;padding:11px 13px;border-radius:10px;
@@ -51,7 +63,7 @@
   <p class="caption">The genuine LaTeX <code>article.cls</code>, executed in WebAssembly — no TeXLive, no server.</p>
 </section>
 
-<div class="pg">
+<div class="pg" data-view="continuous">
   <div class="pg-bar">
     <span class="dot" id="statusdot"></span>
     <span id="status">loading the engine (~8.5&nbsp;MB, one time)…</span>
@@ -97,7 +109,13 @@ there is no server round-trip at all.
 \end{document}</textarea>
     </section>
     <section class="pane">
-      <div class="label">Rendered — page 1</div>
+      <div class="label">
+        <span>Rendered</span>
+        <span class="viewtoggle" role="group" aria-label="Page view mode">
+          <button type="button" id="vw-cont" class="on" aria-pressed="true">Continuous</button>
+          <button type="button" id="vw-comp" aria-pressed="false">Compact</button>
+        </span>
+      </div>
       <div id="preview">
         <div id="err"></div>
         <div id="pages"></div>
@@ -138,6 +156,23 @@ there is no server round-trip at all.
   var wasmURL={{ $primary }};
   var wasmFallback={{ $local }};
   var ready=false, started=false;
+
+  // Page view mode: "continuous" (pages append and the whole page scrolls) or
+  // "compact" (pages scroll inside a fixed-height frame). Persisted across visits.
+  (function(){
+    var pg=document.querySelector(".pg"), bc=$("vw-cont"), bp=$("vw-comp");
+    function setView(mode){
+      var compact=mode==="compact";
+      pg.setAttribute("data-view",compact?"compact":"continuous");
+      bp.classList.toggle("on",compact); bc.classList.toggle("on",!compact);
+      bp.setAttribute("aria-pressed",compact); bc.setAttribute("aria-pressed",!compact);
+      try{ localStorage.setItem("gotex-pg-view",compact?"compact":"continuous"); }catch(e){}
+    }
+    bc.addEventListener("click",function(){ setView("continuous"); });
+    bp.addEventListener("click",function(){ setView("compact"); });
+    var saved; try{ saved=localStorage.getItem("gotex-pg-view"); }catch(e){}
+    setView(saved==="compact"?"compact":"continuous");
+  })();
 
   function render(){
     if(!ready||!globalThis.gotexToSVG) return;
