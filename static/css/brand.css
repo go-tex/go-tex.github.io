@@ -1,4 +1,8 @@
 :root{
+  /* Declare that the site themes itself (light + dark). Without this, a browser's
+     "auto dark mode" (Chrome Auto Dark, Safari) force-inverts the page — turning
+     the white document preview black even while the site is in Light mode. */
+  color-scheme:light dark;
   --from:#22CCE2;--to:#0079A8;--dark:#0A6E96;
   --ink:#0b2530;--muted:#5b6b73;--bg:#f5f8fa;--card:#fff;--line:#e3ebef;
   --code:#0b2530;--codei:#d6f3fb;--shadow:rgba(0,60,90,.06);--shadow2:rgba(0,60,90,.10);
@@ -7,9 +11,9 @@
   :root{--ink:#e6f2f6;--muted:#8fa6ae;--bg:#0b1418;--card:#111e24;--line:#1f333b;
     --code:#02090c;--codei:#bfeefb;--shadow:rgba(0,0,0,.4);--shadow2:rgba(0,0,0,.55);}
 }
-:root[data-theme="dark"]{--ink:#e6f2f6;--muted:#8fa6ae;--bg:#0b1418;--card:#111e24;--line:#1f333b;
+:root[data-theme="dark"]{color-scheme:dark;--ink:#e6f2f6;--muted:#8fa6ae;--bg:#0b1418;--card:#111e24;--line:#1f333b;
   --code:#02090c;--codei:#bfeefb;--shadow:rgba(0,0,0,.4);--shadow2:rgba(0,0,0,.55);}
-:root[data-theme="light"]{--ink:#0b2530;--muted:#5b6b73;--bg:#f5f8fa;--card:#fff;--line:#e3ebef;
+:root[data-theme="light"]{color-scheme:light;--ink:#0b2530;--muted:#5b6b73;--bg:#f5f8fa;--card:#fff;--line:#e3ebef;
   --code:#0b2530;--codei:#d6f3fb;--shadow:rgba(0,60,90,.06);--shadow2:rgba(0,60,90,.10);}
 *{box-sizing:border-box}
 body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:var(--ink);background:var(--bg);line-height:1.6}
