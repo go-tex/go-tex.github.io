@@ -39,7 +39,14 @@
    internally, so the page never grows as pages are appended. Continuous view
    (the default) keeps the pages stacked and lets the whole page scroll. */
 .pg[data-view="compact"] #preview{flex:none;height:72vh;min-height:0}
-#preview svg{background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.28);
+/* The engine's SVG is theme-neutral: content painted with fill="currentColor"
+   and no baked-in page background (see the render() transform below). The colour
+   and the "paper" background come from the theme here, so the preview is a white
+   page with black text in Light mode and a dark page with light text in Dark
+   mode — a proper dark rendering, no page-inverting extension needed. currentColor
+   is an inherited property, so it reaches the nested <svg> that carries each
+   formula (a CSS filter would not). */
+#preview svg{color:var(--ink);background:var(--card);box-shadow:0 2px 14px var(--shadow2);
   display:block;margin:0 auto 16px;max-width:100%;height:auto}
 #err{display:none;margin:0 0 14px;padding:11px 13px;border-radius:10px;
   background:#fdecec;color:#9b1c1c;white-space:pre-wrap;
@@ -174,6 +181,17 @@ there is no server round-trip at all.
     setView(saved==="compact"?"compact":"continuous");
   })();
 
+  // Make one page's SVG theme-neutral so the CSS theme colours it: drop the
+  // default white "paper" rect (so #preview svg's background var(--card) shows —
+  // white in Light, dark in Dark) and repaint black content with currentColor (so
+  // #preview svg's color var(--ink) drives it — dark on light, light on dark).
+  // An explicit \pagecolor (any non-white rect) and \textcolor (any #rrggbb fill)
+  // are left untouched.
+  function themeSVG(s){
+    return s.replace('<rect width="100%" height="100%" fill="white"/>','')
+            .split('fill="black"').join('fill="currentColor"');
+  }
+
   function render(){
     if(!ready||!globalThis.gotexToSVG) return;
     var t0=performance.now(), res;
@@ -187,7 +205,7 @@ there is no server round-trip at all.
       return;
     }
     errBox.classList.remove("show"); errBox.textContent="";
-    preview.innerHTML=res.pages.join("");
+    preview.innerHTML=res.pages.map(themeSVG).join("");
     $("count").textContent="· "+res.pages.length+" page(s) · "+
       (performance.now()-t0).toFixed(0)+" ms";
   }
