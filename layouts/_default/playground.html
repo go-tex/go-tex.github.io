@@ -8,11 +8,13 @@
 <script src="{{ "js/theme.js" | relURL }}"></script>
 <style>
 /* Playground-only styles — kept off every other page. */
-.hero.mini{padding:48px 24px 78px}
+.hero.mini{padding:48px 24px 40px}
 .hero.mini h1{font-size:40px}
 .hero .caption{font-size:14px;opacity:.9;max-width:680px;margin:14px auto 0}
 .hero .caption code{background:rgba(255,255,255,.16);padding:1px 6px;border-radius:5px}
-.pg{max-width:1200px;margin:-50px auto 56px;padding:0 24px}
+/* Sit the panels BELOW the banner with clear breathing room. A former negative
+   top margin pulled them up into the blue banner, clipping the panel labels. */
+.pg{max-width:1200px;margin:24px auto 56px;padding:0 24px}
 .pg-bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;color:var(--muted);
   font-size:13px;margin:0 2px 12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .pg-bar .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:0 0 auto}
