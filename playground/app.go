@@ -27,8 +27,7 @@ import (
 	engine "github.com/go-tex/engine"
 	"github.com/go-widgets/painter"
 	"github.com/go-widgets/toolkit"
-
-	"github.com/go-tex/go-tex.github.io/playground/latexhl"
+	"github.com/go-widgets/toolkit/rougelex"
 )
 
 // editorFontTTF is the monospace face the CodeEditor renders with. A code editor
@@ -106,7 +105,7 @@ type State struct {
 	dark  bool
 
 	editor     *toolkit.CodeEditor
-	hl         *latexhl.Highlighter
+	hl         *rougelex.Highlighter
 	renderView *toolkit.PagedView
 	logView    *toolkit.LogView
 	rightPane  *rightPane
@@ -179,7 +178,7 @@ func NewState(w, h int, dark bool) *State {
 	s.now = defaultTimestamp // host overrides via SetTimeProvider (browser locale time)
 	s.setTheme(dark)
 
-	s.hl = latexhl.New()
+	s.hl = rougelex.New()
 	s.editor = toolkit.NewCodeEditor(SampleLaTeX)
 	s.editor.Language = "latex"
 	s.editor.Syntax = s.hl
@@ -209,7 +208,7 @@ func NewState(w, h int, dark bool) *State {
 	}
 	s.paned = toolkit.NewHPaned(s.editor, s.rightPane)
 
-	s.schemePicker = toolkit.NewDropDown(latexhl.ThemeNames(), 0)
+	s.schemePicker = toolkit.NewDropDown(rougelex.ThemeNames(), 0)
 	// DropDown is MVVM in v0.196: react to a selection change by subscribing to
 	// its Selected observable (Subscribe does not fire on registration, so the
 	// initial scheme is applied by the first compile, not here). The picker lives
@@ -314,14 +313,16 @@ func (s *State) HandleSelectAll() bool {
 
 // applyScheme switches the syntax colour theme. A fresh highlighter instance is
 // installed so the CodeEditor's span cache (keyed by highlighter identity)
-// invalidates and re-lexes with the new palette.
+// invalidates and re-lexes with the new palette. The named schemes return a
+// fixed Palette from rougelex.PaletteByName; the "Default" scheme returns the
+// zero Palette, which keeps the highlighter theme-derived.
 func (s *State) applyScheme(idx int) {
-	names := latexhl.ThemeNames()
+	names := rougelex.ThemeNames()
 	if idx < 0 || idx >= len(names) {
 		return
 	}
-	hl := latexhl.New()
-	hl.SetTheme(names[idx])
+	pal, _ := rougelex.PaletteByName(names[idx])
+	hl := &rougelex.Highlighter{Palette: pal}
 	s.hl = hl
 	s.editor.Syntax = hl
 	s.dirty = true

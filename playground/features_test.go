@@ -8,8 +8,7 @@ import (
 	"testing"
 
 	"github.com/go-widgets/toolkit"
-
-	"github.com/go-tex/go-tex.github.io/playground/latexhl"
+	"github.com/go-widgets/toolkit/rougelex"
 )
 
 const diagDoc = `\documentclass{article}\begin{document}
@@ -239,7 +238,7 @@ func TestSchemePickerChangesColours(t *testing.T) {
 	defColor := colourOf(s.editor.Syntax.Highlight("latex", line, s.theme), `\section`, line[0])
 
 	// Select "Monokai" (index of it in ThemeNames).
-	names := latexhl.ThemeNames()
+	names := rougelex.ThemeNames()
 	mi := indexOf(names, "Monokai")
 	if mi < 0 {
 		t.Fatalf("Monokai not among %v", names)
