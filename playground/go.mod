@@ -7,10 +7,11 @@ require (
 	github.com/go-opentype/fonts v0.8.0
 	github.com/go-tex/engine v0.159.0
 	github.com/go-widgets/painter v0.11.0
-	github.com/go-widgets/toolkit v0.202.0
+	github.com/go-widgets/toolkit v0.205.0
 )
 
 require (
+	github.com/go-crdt/crdt v0.19.0 // indirect
 	github.com/go-iconoir/iconoir v0.2.0 // indirect
 	github.com/go-images/images v0.0.0-20260815210351-4a50ef5ab734 // indirect
 	github.com/go-opentype/opentype v0.6.0 // indirect

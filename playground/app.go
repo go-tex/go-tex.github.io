@@ -108,9 +108,9 @@ type State struct {
 	editor     *toolkit.CodeEditor
 	hl         *latexhl.Highlighter
 	renderView *toolkit.PagedView
-	logView    *logView
+	logView    *toolkit.LogView
 	rightPane  *rightPane
-	minimap    *minimap
+	minimap    *toolkit.CodeMinimap
 	paned      *toolkit.Paned
 	status     *toolkit.Statusbar
 
@@ -162,6 +162,13 @@ type State struct {
 	// persists the buffer independent of the compile path. Nil in tests.
 	OnCompileNeeded func()
 	OnEdit          func(text string)
+
+	// now returns the host-formatted timestamp stamped on each compile's Log
+	// entries. The toolkit LogView never reads the clock itself, so the host
+	// formats the time (the wasm driver wires this to the browser's
+	// new Date().toLocaleTimeString()); defaults to a Go wall-clock format so a
+	// native build/test still gets non-empty timestamps.
+	now func() string
 }
 
 // NewState builds the playground at w×h DEVICE pixels, dark or light, compiles
@@ -169,6 +176,7 @@ type State struct {
 // text/scale first via SetupText.
 func NewState(w, h int, dark bool) *State {
 	s := &State{w: w, h: h, dark: dark, showMinimap: true}
+	s.now = defaultTimestamp // host overrides via SetTimeProvider (browser locale time)
 	s.setTheme(dark)
 
 	s.hl = latexhl.New()
@@ -189,9 +197,16 @@ func NewState(w, h int, dark bool) *State {
 	}
 
 	s.renderView = toolkit.NewPagedView(nil)
-	s.logView = &logView{}
+	s.logView = toolkit.NewLogView()
+	s.logView.MaxEntries = 500
 	s.rightPane = newRightPane(s.renderView, s.logView)
-	s.minimap = &minimap{}
+	s.minimap = toolkit.NewCodeMinimap()
+	// The overview is a scroll thumbnail: a click/drag maps to a buffer line and
+	// scrolls the editor there (mirrors the old minimapScrollTo).
+	s.minimap.OnScrollToLine = func(line int) {
+		s.editor.ScrollLine = line
+		s.dirty = true
+	}
 	s.paned = toolkit.NewHPaned(s.editor, s.rightPane)
 
 	s.schemePicker = toolkit.NewDropDown(latexhl.ThemeNames(), 0)
@@ -241,6 +256,16 @@ func (c *appClipboard) SetClipboardText(s string) {
 // SetClipboardWriter installs the host hook that mirrors every copy/cut to the OS
 // clipboard (the wasm driver wires it to navigator.clipboard.writeText).
 func (s *State) SetClipboardWriter(w func(string)) { s.clip.onWrite = w }
+
+// SetTimeProvider installs the host clock the compile Log stamps its entries
+// with. The wasm driver wires it to the browser's
+// new Date().toLocaleTimeString() so entries carry the viewer's local time; a
+// nil hook is ignored (the Go wall-clock default stays in place).
+func (s *State) SetTimeProvider(now func() string) {
+	if now != nil {
+		s.now = now
+	}
+}
 
 // HandleCopy copies the editor selection to the clipboard. No-op (returns false)
 // when the editor is unfocused.
@@ -379,9 +404,9 @@ func (s *State) Theme() *toolkit.Theme { return s.theme }
 
 // Read-only introspection for the host/verification harness: the editor pane
 // width, whether the Log is shown, the active tab index, the render zoom
-// percentage (read from the PagedView's Zoom observable), the selected colour
-// scheme index and the minimap's token-segment count. They let a headless test
-// assert real state changes after a pointer interaction.
+// percentage (read from the PagedView's Zoom observable) and the selected colour
+// scheme index. They let a headless test assert real state changes after a
+// pointer interaction.
 func (s *State) EditorWidth() int    { return s.editor.Bounds().W }
 func (s *State) ShowLog() bool       { return s.showLog() }
 func (s *State) ActiveTab() int      { return s.rightPane.active }
@@ -436,14 +461,10 @@ func (s *State) CaretPixel(line, col int) (int, int) {
 	return x, y
 }
 
-// MinimapSegments returns how many coloured token segments the minimap paints
-// for the current buffer (proving it renders per-token rows, not one solid bar
-// per line). It refreshes the overview inputs first, so it is valid after layout.
-func (s *State) MinimapSegments() int {
-	spans := s.hl.Highlight("latex", s.editor.Lines, s.theme)
-	s.minimap.update(s.editor.Lines, spans, s.editor.ScrollLine, s.visibleEditorLines())
-	return s.minimap.segmentCount(s.theme.OnSurface)
-}
+// LogEntryCount returns how many entries the diagnostics Log has accumulated
+// (proving the history builds up across compiles, newest at the bottom, rather
+// than being cleared each compile). Host introspection for the headless harness.
+func (s *State) LogEntryCount() int { return s.logView.Len() }
 
 // DividerX is the surface x of the resize grip's leading edge.
 func (s *State) DividerX() int { return s.paned.Bounds().X + s.paned.Position }
@@ -553,7 +574,7 @@ func (s *State) Compile() {
 	s.drawnPages = res.drawnPages
 	s.diag = res.diag
 	s.lineMaps = res.lineMaps // per-page source-line bands for click↔caret linking
-	s.logView.set(res.diag, res.errText)
+	s.logCompile(res)         // append a timestamped block to the accumulating Log
 
 	s.renderView.SetPages(res.bitmaps) // nil bitmaps clear the viewer
 	s.updateStatus()
@@ -575,7 +596,7 @@ func (s *State) updateStatus() {
 		seg = "compile error"
 	}
 	s.status.SetSegment(2, seg)
-	if n := s.logView.alarmCount(); n > 0 {
+	if n := diagIssueCount(s.diag, s.errText); n > 0 {
 		s.status.SetSegment(3, strconv.Itoa(n)+" issue(s)")
 	} else {
 		s.status.SetSegment(3, "")
@@ -609,7 +630,7 @@ func (s *State) Draw(buf []byte) {
 	s.paned.Draw(p, s.theme)
 	if s.showMinimap && s.minimap.Bounds().W > 0 {
 		spans := s.hl.Highlight("latex", s.editor.Lines, s.theme)
-		s.minimap.update(s.editor.Lines, spans, s.editor.ScrollLine, s.visibleEditorLines())
+		s.minimap.Update(s.editor.Lines, spans, s.editor.ScrollLine, s.visibleEditorLines())
 		s.minimap.Draw(p, s.theme)
 	}
 	if s.errText != "" && !s.showLog() {
@@ -798,9 +819,6 @@ func (s *State) HandleScroll(x, y, dx, dy int) bool {
 	return false
 }
 
-// rowStep is the pixel distance one wheel row scrolls.
-const rowStep = 28
-
 // HandleChar routes a printable character to the editor. Typing ends any
 // keyboard selection in progress (the inserted text replaces it if present).
 // When the render pane holds focus instead, a space bar pages the viewer and no
@@ -891,14 +909,16 @@ func (s *State) afterKey() {
 	s.dirty = true
 }
 
-// minimapScrollTo scrolls the editor so the buffer line under minimap-y sits at
-// the top of the viewport.
+// minimapScrollTo scrolls the editor so the buffer line under the surface-y
+// under the pointer sits at the top of the viewport. It refreshes the overview's
+// line cache first so a click maps correctly even before the first paint (Draw
+// also refreshes it every frame; the pointer mapping needs only the line count,
+// so the per-line spans are left nil), then hands the widget a click at that y —
+// CodeMinimap re-anchors the local y to surface space, maps it to a buffer line
+// and fires OnScrollToLine, which sets the editor's ScrollLine.
 func (s *State) minimapScrollTo(y int) {
-	// Refresh the overview's line cache so a click maps correctly even before the
-	// first paint (Draw also refreshes it every frame). The pointer mapping needs
-	// only the line count, so the per-line spans are left nil here.
-	s.minimap.update(s.editor.Lines, nil, s.editor.ScrollLine, s.visibleEditorLines())
-	s.editor.ScrollLine = s.minimap.lineAtY(y) // lineAtY already clamps to [0, n-1]
+	s.minimap.Update(s.editor.Lines, nil, s.editor.ScrollLine, s.visibleEditorLines())
+	s.minimap.OnEvent(toolkit.Event{Kind: toolkit.EventClick, Y: y - s.minimap.Bounds().Y})
 }
 
 // --- source ↔ render linking --------------------------------------------

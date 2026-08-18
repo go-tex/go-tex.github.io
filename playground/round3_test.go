@@ -16,7 +16,7 @@ func newTestRightPane(t *testing.T) *rightPane {
 	t.Helper()
 	SetupText(1)
 	rv := toolkit.NewPagedView(testBitmaps(6))
-	rp := newRightPane(rv, &logView{})
+	rp := newRightPane(rv, toolkit.NewLogView())
 	rp.SetBounds(toolkit.Rect{X: 0, Y: 0, W: 240, H: 320})
 	return rp
 }
@@ -40,23 +40,33 @@ func TestRightPaneTabSwitchAndRouting(t *testing.T) {
 		t.Fatalf("Log tab did not activate (press=%d, isLog=%v)", rp.press, rp.isLog())
 	}
 
-	// A click in the log content is consumed but captures nothing (scroll-only).
+	// A click in the log content is forwarded to the LogView and captures it (so a
+	// following drag pans its scrollback); drag + release round-trip to the widget.
 	cx, cy := contentPoint(rp)
 	if !rp.click(cx, cy) {
 		t.Fatalf("log content click should be consumed")
 	}
+	if rp.press != rpPressLog {
+		t.Fatalf("log content click should capture the log (press=%d)", rp.press)
+	}
+	if !rp.drag(cx, cy+30) {
+		t.Fatalf("log drag not routed to the LogView")
+	}
+	if !rp.release(cx, cy+30) {
+		t.Fatalf("log release not routed to the LogView")
+	}
 	if rp.press != rpPressNone {
-		t.Fatalf("log content click should capture nothing")
+		t.Fatalf("log capture not cleared after release")
 	}
 	// keyDown on the Log tab is not routed to the render viewer.
 	if rp.keyDown("PageDown") {
 		t.Fatalf("keyDown on the Log tab should not route to the render viewer")
 	}
 
-	// Wheel over the log scrolls its own offset; wheel on the tab strip is inert;
-	// wheel outside is not consumed.
-	if !rp.scrollWheel(cx, cy, 0, 4) || rp.log.offset <= 0 {
-		t.Fatalf("log wheel did not scroll: offset=%d", rp.log.offset)
+	// Wheel over the log is consumed (the LogView owns its scroll); wheel on the
+	// tab strip is inert; wheel outside is not consumed.
+	if !rp.scrollWheel(cx, cy, 0, 4) {
+		t.Fatalf("log wheel not consumed")
 	}
 	strip := rp.Bounds()
 	if !rp.scrollWheel(strip.X+2, strip.Y+2, 0, 1) {
@@ -139,30 +149,6 @@ func TestAtLeast1(t *testing.T) {
 	}
 }
 
-func TestMinimapMaxColsClampAtScale2(t *testing.T) {
-	defer SetupText(1)
-	SetupText(2) // charW = scaled(1) = 2, so a very narrow strip clamps maxCols to 1
-	m := &minimap{}
-	m.SetBounds(toolkit.Rect{X: 0, Y: 0, W: 5, H: 40})
-	m.update([]string{"abcdef"}, nil, 0, 1)
-	buf := make([]byte, 5*40*4)
-	m.Draw(painter.NewPixelPainter(buf, 5, 40), toolkit.DefaultLight())
-	if got := m.segmentCount(toolkit.DefaultLight().OnSurface); got != 1 {
-		t.Fatalf("a narrow strip should clip to a single 1-char segment, got %d", got)
-	}
-}
-
-func TestSpanColorAtFallback(t *testing.T) {
-	fallback := toolkit.RGB(1, 2, 3)
-	spans := []toolkit.TextSpan{{Start: 2, End: 4, Color: toolkit.RGB(9, 9, 9)}}
-	if got := spanColorAt(spans, 3, fallback); got != (toolkit.RGB(9, 9, 9)) {
-		t.Fatalf("spanColorAt inside a span = %v", got)
-	}
-	if got := spanColorAt(spans, 10, fallback); got != fallback {
-		t.Fatalf("spanColorAt outside every span should fall back, got %v", got)
-	}
-}
-
 // --- app introspection + tab toggle ------------------------------------------
 
 func TestRound3Introspection(t *testing.T) {
@@ -179,8 +165,10 @@ func TestRound3Introspection(t *testing.T) {
 	if s.RenderMode() != int(toolkit.PagedContinuous) {
 		t.Fatalf("initial render mode should be continuous")
 	}
-	if n := s.MinimapSegments(); n <= 0 {
-		t.Fatalf("sample document should paint minimap segments, got %d", n)
+	// The initial compile already seeded the accumulating Log (history, not a
+	// cleared-each-compile panel).
+	if n := s.LogEntryCount(); n <= 0 {
+		t.Fatalf("initial compile should have seeded the Log, got %d entries", n)
 	}
 
 	// toggleLog both directions (covers the render->log and log->render branches).
