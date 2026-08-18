@@ -4,11 +4,8 @@
 package playground
 
 import (
-	"strings"
 	"testing"
 
-	engine "github.com/go-tex/engine"
-	"github.com/go-widgets/painter"
 	"github.com/go-widgets/toolkit"
 )
 
@@ -80,6 +77,9 @@ func TestHandleScrollRegionsAndOutside(t *testing.T) {
 	}
 }
 
+// TestHandleScrollLogPane drives a wheel over the Log tab through the full State
+// router: the toolkit LogView owns its own scroll offset (no host-side offset
+// state), so we assert only that the scroll is consumed on both wheel directions.
 func TestHandleScrollLogPane(t *testing.T) {
 	s := newTestState(t, false)
 	s.toggleLog()
@@ -87,137 +87,9 @@ func TestHandleScrollLogPane(t *testing.T) {
 	if !s.HandleScroll(rr.X+10, rr.Y+10, 0, 4) {
 		t.Fatalf("scroll over log not consumed")
 	}
-	if s.logView.offset <= 0 {
-		t.Fatalf("log did not scroll down: offset=%d", s.logView.offset)
+	if !s.HandleScroll(rr.X+10, rr.Y+10, 0, -100) {
+		t.Fatalf("upward scroll over log not consumed")
 	}
-	// Scrolling up past the top clamps to 0.
-	s.HandleScroll(rr.X+10, rr.Y+10, 0, -100)
-	if s.logView.offset != 0 {
-		t.Fatalf("log offset did not clamp to 0: %d", s.logView.offset)
-	}
-}
-
-func TestLogViewAlarmsAndDraw(t *testing.T) {
-	lv := &logView{}
-	lv.set(engine.Diagnostics{
-		Runaway:       true,
-		OpenGroups:    2,
-		PageCapHit:    true,
-		Skipped:       map[string]int{"foo": 3, "bar": 3, "baz": 1},
-		UndefinedEnvs: map[string]int{"env": 1},
-		MathDropped:   map[string]int{"\\zzz": 1},
-	}, "boom")
-	if got := lv.alarmCount(); got != 4+3+1+1 {
-		t.Fatalf("alarmCount = %d, want 9", got)
-	}
-	var b strings.Builder
-	for _, e := range lv.rows() {
-		b.WriteString(e.text + "\n")
-	}
-	body := b.String()
-	for _, want := range []string{"Compile error: boom", "Runaway", "group(s) still open", "page cap", "foo", "bar", "baz", "env", "zzz"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("log rows missing %q:\n%s", want, body)
-		}
-	}
-	// Tie-break: equal counts sort alphabetically (bar before foo).
-	if strings.Index(body, "3x  \\bar") > strings.Index(body, "3x  \\foo") {
-		t.Fatalf("equal-count entries not alphabetised:\n%s", body)
-	}
-	// Draw on both a dark and a light ground (the alarm-red picker branches), and
-	// with a scroll offset (clips top rows).
-	buf := make([]byte, 400*300*4)
-	lv.SetBounds(toolkit.Rect{X: 0, Y: 0, W: 400, H: 300})
-	lv.Draw(painter.NewPixelPainter(buf, 400, 300), toolkit.DefaultDark())
-	lv.Draw(painter.NewPixelPainter(buf, 400, 300), toolkit.DefaultLight())
-	lv.offset = 40
-	lv.Draw(painter.NewPixelPainter(buf, 400, 300), toolkit.DefaultDark())
-	// Zero-size draw is a no-op (no panic).
-	lv.SetBounds(toolkit.Rect{})
-	lv.Draw(painter.NewPixelPainter(buf, 400, 300), toolkit.DefaultDark())
-}
-
-func TestMinimapLineAtYEdges(t *testing.T) {
-	m := &minimap{}
-	m.SetBounds(toolkit.Rect{X: 0, Y: 100, W: 80, H: 200})
-	// No lines yet -> 0.
-	if got := m.lineAtY(150); got != 0 {
-		t.Fatalf("lineAtY with no lines = %d, want 0", got)
-	}
-	m.update([]string{"a", "b", "c", "d"}, nil, 0, 2)
-	if got := m.lineAtY(50); got != 0 { // above the top clamps to 0
-		t.Fatalf("lineAtY above top = %d, want 0", got)
-	}
-	if got := m.lineAtY(10000); got != 3 { // below the bottom clamps to n-1
-		t.Fatalf("lineAtY below bottom = %d, want 3", got)
-	}
-}
-
-func TestMinimapDrawBranches(t *testing.T) {
-	m := &minimap{}
-	buf := make([]byte, 100*400*4)
-	p := painter.NewPixelPainter(buf, 100, 400)
-	th := toolkit.DefaultLight()
-
-	// Zero-size: no-op (also exercises segmentCount's empty guard).
-	m.Draw(p, th)
-	if m.segmentCount(th.OnSurface) != 0 {
-		t.Fatalf("segmentCount on a zero-size minimap should be 0")
-	}
-
-	// Empty line list: paints the ground but no segments.
-	m.SetBounds(toolkit.Rect{X: 0, Y: 0, W: 80, H: 400})
-	m.update(nil, nil, 0, 0)
-	m.Draw(p, th)
-	if m.segmentCount(th.OnSurface) != 0 {
-		t.Fatalf("segmentCount with no lines should be 0")
-	}
-
-	// Real content: an indented line (leading spaces -> gap), a comment, a
-	// multi-token line whose per-rune spans force a colour-run split, and a
-	// blank line. The viewport indicator is visible.
-	lines := []string{
-		"    indented word", // leading whitespace, then two space-separated runs
-		"%comment",          // one dimmed run (no internal spaces)
-		"ab",                // two adjacent runes of DIFFERENT colours -> a run split
-		"",                  // blank line -> no segments
-	}
-	red := toolkit.RGB(0xFF, 0, 0)
-	blue := toolkit.RGB(0, 0, 0xFF)
-	spans := [][]toolkit.TextSpan{
-		nil, // line 0 falls back to the neutral ink
-		{{Start: 0, End: 8, Color: toolkit.RGB(0x80, 0x80, 0x80)}},
-		{{Start: 0, End: 1, Color: red}, {Start: 1, End: 2, Color: blue}}, // 'a' red, 'b' blue
-		nil,
-	}
-	m.update(lines, spans, 1, 2)
-	m.Draw(p, th)
-	// Segments: line0 has 2 runs, line1 has 1 run, line2 splits into 2 runs,
-	// line3 (blank) has 0 -> 5 in total.
-	if got := m.segmentCount(th.OnSurface); got != 5 {
-		t.Fatalf("segmentCount = %d, want 5 (2+1+2+0)", got)
-	}
-
-	// A viewport taller than the widget clamps the indicator height.
-	m.update([]string{"a", "b"}, nil, 0, 100)
-	m.Draw(p, th)
-
-	// More lines than pixel rows: lines that collapse onto an already-drawn row
-	// are sampled out (the y==prevY branch) rather than overflowing.
-	many := make([]string, 600)
-	for i := range many {
-		many[i] = "z"
-	}
-	m.update(many, nil, 0, 1)
-	m.Draw(p, th)
-	if got := m.segmentCount(th.OnSurface); got >= len(many) {
-		t.Fatalf("more lines than rows should sample: got %d segments for %d lines", got, len(many))
-	}
-
-	// A near-zero width clamps usableW/maxCols to 1 (a long line is clipped).
-	m.SetBounds(toolkit.Rect{X: 0, Y: 0, W: 4, H: 100})
-	m.update([]string{strings.Repeat("y", 400)}, nil, 0, 1)
-	m.Draw(p, th)
 }
 
 func TestIntrospectionAccessors(t *testing.T) {

@@ -73,43 +73,6 @@ func TestAppClipboardNilWriter(t *testing.T) {
 	}
 }
 
-// --- #1 minimap fixed-row geometry ------------------------------------------
-
-func TestMinimapMetricsTinyHeightAndOverflow(t *testing.T) {
-	m := &minimap{}
-	// Height smaller than one row clamps maxRows up to 1.
-	m.SetBounds(toolkit.Rect{X: 0, Y: 0, W: 80, H: 1})
-	m.update([]string{"a", "b"}, nil, 0, 1)
-	if _, dr := m.metrics(); dr != 1 {
-		t.Fatalf("tiny height should draw exactly 1 row, got %d", dr)
-	}
-	buf := make([]byte, 80*1*4)
-	m.Draw(painter.NewPixelPainter(buf, 80, 1), toolkit.DefaultLight())
-
-	// Taller-than-widget buffer: displayRows caps at the rows that fit (compress).
-	m.SetBounds(toolkit.Rect{X: 0, Y: 0, W: 80, H: 40})
-	many := make([]string, 500)
-	for i := range many {
-		many[i] = "z"
-	}
-	m.update(many, nil, 0, 5)
-	_, dr := m.metrics()
-	if dr >= len(many) || dr < 1 {
-		t.Fatalf("overflow should compress to fitting rows, got displayRows=%d", dr)
-	}
-}
-
-func TestLineForRowClamps(t *testing.T) {
-	// A row past the end (only reachable via a defensive call) clamps to the last
-	// source line.
-	if got := lineForRow(5, 2, 3); got != 2 {
-		t.Fatalf("lineForRow overshoot = %d, want 2", got)
-	}
-	if got := lineForRow(0, 4, 4); got != 0 {
-		t.Fatalf("lineForRow(0) = %d, want 0", got)
-	}
-}
-
 // --- #5 continuous / paginated render ---------------------------------------
 
 // multiPageDoc is a document long enough to paginate into several sheets.

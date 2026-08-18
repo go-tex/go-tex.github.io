@@ -11,21 +11,21 @@ import (
 // rightPane is the composed right-hand side of the split: a compact folder-style
 // tab strip (Rendered | Log) pinned to its top, with the active tab's content
 // filling the rest — the shared [toolkit.PagedView] on the Rendered tab, the
-// diagnostics logView on the Log tab. Selecting a tab (a click on the strip)
+// shared [toolkit.LogView] on the Log tab. Selecting a tab (a click on the strip)
 // swaps which content shows.
 //
 // It is the Second child of the Paned, so the Paned sizes and draws it; State
 // drives its pointer + keyboard input through surface-coordinate methods
 // (matching how State routes every other region) and reads the active tab for
-// the app-level tab links. The render tab's paging, zoom, toolbar and scroll are
-// entirely owned by the PagedView — this pane only translates surface
-// coordinates into the widget's local frame and forwards the event.
+// the app-level tab links. Both content widgets own their own scroll, paging and
+// decoration — this pane only translates surface coordinates into the widget's
+// local frame and forwards the event.
 type rightPane struct {
 	toolkit.Base
 
 	tabs   *tabBar
 	render *toolkit.PagedView
-	log    *logView
+	log    *toolkit.LogView
 
 	active int
 	tabH   int
@@ -40,11 +40,12 @@ const (
 	rpPressNone = iota
 	rpPressTabs
 	rpPressRender
+	rpPressLog
 )
 
 // newRightPane composes the tab strip over the given render (PagedView) and log
-// views.
-func newRightPane(rv *toolkit.PagedView, lv *logView) *rightPane {
+// (LogView) views.
+func newRightPane(rv *toolkit.PagedView, lv *toolkit.LogView) *rightPane {
 	rp := &rightPane{render: rv, log: lv}
 	rp.tabs = newTabBar([]string{"Rendered", "Log"}, func(i int) { rp.active = i })
 	return rp
@@ -111,10 +112,17 @@ func (rp *rightPane) local(x, y int) (int, int) {
 	return x - b.X, y - b.Y
 }
 
+// localLog translates a surface point into the LogView's own coordinate frame.
+func (rp *rightPane) localLog(x, y int) (int, int) {
+	b := rp.log.Bounds()
+	return x - b.X, y - b.Y
+}
+
 // click routes a surface-coordinate press: onto the tab strip (switch tabs), or
 // into the active content. On the render tab it forwards a widget-local
-// EventClick to the PagedView (which routes it to a toolbar button or its inner
-// scroll pane) and captures the render for the following drag.
+// EventClick to the PagedView (a toolbar button or its inner scroll pane) and
+// captures the render for the following drag; on the log tab it forwards the
+// click to the LogView (its scrollbar thumb / drag-pan) and captures the log.
 func (rp *rightPane) click(x, y int) bool {
 	rp.press = rpPressNone
 	if rp.inTabs(y) {
@@ -125,7 +133,10 @@ func (rp *rightPane) click(x, y int) bool {
 		return true
 	}
 	if rp.isLog() {
-		return true // the log view is scroll-only: consume the press, nothing to route
+		lx, ly := rp.localLog(x, y)
+		rp.log.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: lx, Y: ly})
+		rp.press = rpPressLog
+		return true
 	}
 	if rp.render.Bounds().Contains(x, y) {
 		lx, ly := rp.local(x, y)
@@ -136,33 +147,43 @@ func (rp *rightPane) click(x, y int) bool {
 	return false
 }
 
-// drag forwards a captured drag to the PagedView (a grabbed scrollbar thumb or a
-// content pan). The tab strip and the log view have nothing to drag.
+// drag forwards a captured drag to the widget that owns the press: the PagedView
+// (a grabbed scrollbar thumb or a content pan) or the LogView (its scrollback
+// drag-pan). The tab strip has nothing to drag.
 func (rp *rightPane) drag(x, y int) bool {
-	if rp.press == rpPressRender {
+	switch rp.press {
+	case rpPressRender:
 		lx, ly := rp.local(x, y)
 		rp.render.OnEvent(toolkit.Event{Kind: toolkit.EventMouseDrag, X: lx, Y: ly})
+		return true
+	case rpPressLog:
+		lx, ly := rp.localLog(x, y)
+		rp.log.OnEvent(toolkit.Event{Kind: toolkit.EventMouseDrag, X: lx, Y: ly})
 		return true
 	}
 	return false
 }
 
-// release ends a captured drag, delivering the mouse-up to the PagedView.
+// release ends a captured drag, delivering the mouse-up to the widget that owns
+// the press.
 func (rp *rightPane) release(x, y int) bool {
 	was := rp.press
-	if rp.press == rpPressRender {
+	switch rp.press {
+	case rpPressRender:
 		lx, ly := rp.local(x, y)
 		rp.render.OnEvent(toolkit.Event{Kind: toolkit.EventMouseUp, X: lx, Y: ly})
+	case rpPressLog:
+		lx, ly := rp.localLog(x, y)
+		rp.log.OnEvent(toolkit.Event{Kind: toolkit.EventMouseUp, X: lx, Y: ly})
 	}
 	rp.press = rpPressNone
 	return was != rpPressNone
 }
 
-// scrollWheel forwards a wheel/two-finger scroll to the active content: the log
-// view scrolls its own offset vertically; the render PagedView receives a
-// widget-local EventScroll on BOTH axes (so a horizontal swipe pans the page and
-// a vertical wheel scrolls-or-flips pages per its own edge logic). A scroll on
-// the tab strip is consumed but inert.
+// scrollWheel forwards a wheel/two-finger scroll to the active content, each a
+// widget-local EventScroll on BOTH axes: the LogView scrolls its scrollback (and
+// pans a long line sideways), the render PagedView scrolls-or-flips pages per its
+// own edge logic. A scroll on the tab strip is consumed but inert.
 func (rp *rightPane) scrollWheel(x, y, dx, dy int) bool {
 	if !rp.Bounds().Contains(x, y) {
 		return false
@@ -171,10 +192,8 @@ func (rp *rightPane) scrollWheel(x, y, dx, dy int) bool {
 		return true
 	}
 	if rp.isLog() {
-		rp.log.offset += dy * rowStep
-		if rp.log.offset < 0 {
-			rp.log.offset = 0
-		}
+		lx, ly := rp.localLog(x, y)
+		rp.log.OnEvent(toolkit.Event{Kind: toolkit.EventScroll, X: lx, Y: ly, Delta: dy, DeltaX: dx})
 		return true
 	}
 	lx, ly := rp.local(x, y)

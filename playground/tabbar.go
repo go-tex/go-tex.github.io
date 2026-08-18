@@ -147,6 +147,15 @@ func fillTopRoundRect(p painter.Painter, r toolkit.Rect, rad int, c toolkit.RGBA
 	}
 }
 
+// atLeast1 floors v at one device pixel, so a metric-scaled dimension never
+// collapses to nothing (a 1px border stays visible at any scale).
+func atLeast1(v int) int {
+	if v < 1 {
+		return 1
+	}
+	return v
+}
+
 // mixRGBA blends a toward b by t in [0,1], returning an opaque colour.
 func mixRGBA(a, b toolkit.RGBA, t float64) toolkit.RGBA {
 	mix := func(x, y uint8) uint8 { return uint8(float64(x)*(1-t) + float64(y)*t + 0.5) }

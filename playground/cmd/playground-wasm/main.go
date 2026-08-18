@@ -76,6 +76,12 @@ func main() {
 	state := playground.NewState(dw, dh, dark)
 	curDPR := d
 
+	// Stamp each compile's Log entries with the viewer's local wall-clock time,
+	// formatted by the browser (the toolkit LogView never reads a clock itself).
+	state.SetTimeProvider(func() string {
+		return js.Global().Get("Date").New().Call("toLocaleTimeString").String()
+	})
+
 	// Mirror every editor copy/cut to the real OS clipboard.
 	state.SetClipboardWriter(func(s string) {
 		if clip := clipboardAPI(); !clip.IsUndefined() && !clip.IsNull() {
@@ -299,23 +305,23 @@ func main() {
 	// zoom and mode are the PagedView's MVVM observables, surfaced here.
 	js.Global().Set("gotexDebug", js.FuncOf(func(js.Value, []js.Value) any {
 		return map[string]any{
-			"editorW":         state.EditorWidth(),
-			"showLog":         state.ShowLog(),
-			"dividerX":        state.DividerX(),
-			"activeTab":       state.ActiveTab(),
-			"zoomPercent":     state.ZoomPercent(),
-			"selectedScheme":  state.SelectedScheme(),
-			"minimapSegments": state.MinimapSegments(),
-			"pageCount":       state.PageCount(),
-			"drawnPages":      state.DrawnPages(),
-			"renderMode":      state.RenderMode(),
-			"currentPage":     state.RenderCurrentPage(),
-			"visiblePages":    state.RenderVisiblePages(),
-			"renderFocused":   state.RenderFocused(),
-			"cursorLine":      state.CursorLine(),
-			"cursorCol":       state.CursorCol(),
-			"hasSelection":    state.HasSelection(),
-			"selectionText":   state.SelectionText(),
+			"editorW":        state.EditorWidth(),
+			"showLog":        state.ShowLog(),
+			"dividerX":       state.DividerX(),
+			"activeTab":      state.ActiveTab(),
+			"zoomPercent":    state.ZoomPercent(),
+			"selectedScheme": state.SelectedScheme(),
+			"logEntryCount":  state.LogEntryCount(),
+			"pageCount":      state.PageCount(),
+			"drawnPages":     state.DrawnPages(),
+			"renderMode":     state.RenderMode(),
+			"currentPage":    state.RenderCurrentPage(),
+			"visiblePages":   state.RenderVisiblePages(),
+			"renderFocused":  state.RenderFocused(),
+			"cursorLine":     state.CursorLine(),
+			"cursorCol":      state.CursorCol(),
+			"hasSelection":   state.HasSelection(),
+			"selectionText":  state.SelectionText(),
 		}
 	}))
 
