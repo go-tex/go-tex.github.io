@@ -29,8 +29,8 @@ func TestCompileLaTeXHardErrorBranch(t *testing.T) {
 			if res.errText != "boom" {
 				t.Fatalf("errText = %q, want boom", res.errText)
 			}
-			if res.pixels != nil {
-				t.Fatalf("hard error should yield no image")
+			if res.bitmaps != nil {
+				t.Fatalf("hard error should yield no bitmaps")
 			}
 		},
 	)
@@ -45,8 +45,8 @@ func TestCompileLaTeXUnrasterizablePages(t *testing.T) {
 		},
 		func() {
 			res := compileLaTeX("anything", toolkit.DefaultLight())
-			if res.pixels != nil {
-				t.Fatalf("unrasterizable pages should yield no image")
+			if res.bitmaps != nil {
+				t.Fatalf("unrasterizable pages should yield no bitmaps")
 			}
 			if res.pages != 2 {
 				t.Fatalf("pages = %d, want 2 (the engine's page count is kept)", res.pages)
@@ -61,8 +61,8 @@ func TestCompileEmptyDocumentBranch(t *testing.T) {
 	// branch clears the render image.
 	s.editor.SetText(`\documentclass{article}\begin{document}\end{document}`)
 	s.Compile()
-	if s.renderView.basePix != nil || s.renderView.baseW != 0 || s.renderView.baseH != 0 {
-		t.Fatalf("empty document did not clear the render image")
+	if s.renderView.PageCount() != 0 {
+		t.Fatalf("empty document did not clear the render pane (PageCount=%d)", s.renderView.PageCount())
 	}
 	if s.pages != 0 {
 		t.Fatalf("empty document pages = %d, want 0", s.pages)
@@ -80,8 +80,9 @@ func TestDrawErrorOverlay(t *testing.T) {
 	}
 	buf := make([]byte, testW*testH*4)
 	s.Draw(buf)
-	// The error band paints Accent ink somewhere in the render pane's top rows.
-	rr := s.renderRect()
+	// The error band paints Accent ink somewhere in the render content's top rows
+	// (below the PagedView toolbar strip).
+	rr := s.renderContentRect()
 	found := false
 	acc := s.theme.Accent
 	for y := rr.Y; y < rr.Y+22 && !found; y++ {
@@ -111,26 +112,6 @@ func TestLayoutClampsNegativeBody(t *testing.T) {
 	s.Resize(200, 8)
 	if s.paned.Bounds().H != 0 {
 		t.Fatalf("body height = %d, want 0 (clamped)", s.paned.Bounds().H)
-	}
-}
-
-func TestNavRenderToEditorClamps(t *testing.T) {
-	s := newTestState(t, false)
-
-	// A band mapping to a line beyond the buffer clamps to the last line.
-	huge := len(s.editor.Lines) + 50
-	s.lineBands = map[int][2]int{huge: {0, 10}}
-	s.navRenderToEditorAt(5)
-	if s.editor.CursorLine != len(s.editor.Lines)-1 {
-		t.Fatalf("caret not clamped to last line: got %d", s.editor.CursorLine)
-	}
-
-	// No bands => lineAt returns 0 => navigation is a no-op (caret unchanged).
-	s.editor.CursorLine = 3
-	s.lineBands = map[int][2]int{}
-	s.navRenderToEditorAt(5)
-	if s.editor.CursorLine != 3 {
-		t.Fatalf("navigation with no bands moved the caret to %d", s.editor.CursorLine)
 	}
 }
 

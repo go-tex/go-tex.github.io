@@ -4,6 +4,7 @@
 package playground
 
 import (
+	"image"
 	"strings"
 	"testing"
 
@@ -11,6 +12,20 @@ import (
 )
 
 const testW, testH = 1000, 720
+
+// testBitmaps builds n small opaque RGBA pages, the shape compileLaTeX feeds the
+// render pane's PagedView.
+func testBitmaps(n int) []*image.RGBA {
+	pages := make([]*image.RGBA, n)
+	for i := range pages {
+		img := image.NewRGBA(image.Rect(0, 0, 40, 400))
+		for j := 0; j+3 < len(img.Pix); j += 4 {
+			img.Pix[j], img.Pix[j+1], img.Pix[j+2], img.Pix[j+3] = 0xEE, 0xEE, 0xEE, 0xFF
+		}
+		pages[i] = img
+	}
+	return pages
+}
 
 // nonBlank reports whether buf contains any pixel differing from c (i.e. the
 // scene drew something over the background).
@@ -30,25 +45,24 @@ func newTestState(t *testing.T, dark bool) *State {
 	if s.pages <= 0 {
 		t.Fatalf("sample document produced %d pages, want > 0 (errText=%q)", s.pages, s.errText)
 	}
-	if len(s.lineBands) == 0 {
-		t.Fatalf("no per-line bands produced for the sample document")
+	if s.renderView.PageCount() == 0 {
+		t.Fatalf("no page bitmaps reached the render pane for the sample document")
 	}
 	return s
 }
 
-// editorRect / renderRect are test conveniences for the two pane bounds;
-// rscroll reaches the render view's inner scroll for offset assertions.
-func (s *State) editorRect() toolkit.Rect     { return s.editor.Bounds() }
-func (s *State) renderRect() toolkit.Rect     { return s.renderView.contentRect() }
-func (s *State) rscroll() *toolkit.ScrollView { return s.renderView.scroll }
+// editorRect / renderRect are test conveniences for the two pane bounds (the
+// render pane is the whole PagedView, which owns its own toolbar + scroll).
+func (s *State) editorRect() toolkit.Rect { return s.editor.Bounds() }
+func (s *State) renderRect() toolkit.Rect { return s.renderView.Bounds() }
 
 func TestNewStateCompilesSampleAndDraws(t *testing.T) {
 	s := newTestState(t, false)
 	if s.errText != "" {
 		t.Fatalf("sample compile error: %s", s.errText)
 	}
-	if s.renderView.baseW == 0 || s.renderView.baseH == 0 || len(s.renderView.basePix) == 0 {
-		t.Fatalf("render image empty: %dx%d len=%d", s.renderView.baseW, s.renderView.baseH, len(s.renderView.basePix))
+	if s.renderView.PageCount() == 0 {
+		t.Fatalf("render pane got no page bitmaps")
 	}
 	buf := make([]byte, testW*testH*4)
 	s.Draw(buf)
@@ -125,42 +139,13 @@ func TestClickEditorMovesCaret(t *testing.T) {
 	}
 }
 
-func TestClickRenderNavigatesToSource(t *testing.T) {
-	s := newTestState(t, false)
-	// Pick a known rendered source line and its band, click its centre in the
-	// render pane, and assert the editor caret jumps to that line.
-	var line int
-	var band [2]int
-	for l, b := range s.lineBands {
-		if l > line { // deterministic: the last (deepest) line with a band
-			line, band = l, b
-		}
-	}
-	rr := s.renderRect()
-	// Scroll so the band is in view, then click its on-screen centre.
-	s.rscroll().Scroll(0, band[0]-s.rscroll().OffsetY)
-	midContent := (band[0] + band[1]) / 2
-	screenY := rr.Y + (midContent - s.rscroll().OffsetY)
-	if screenY < rr.Y {
-		screenY = rr.Y + 4
-	}
-	if !s.HandleClick(rr.X+rr.W/2, screenY) {
-		t.Fatalf("render click not consumed")
-	}
-	if got := s.editor.CursorLine + 1; got != line {
-		t.Fatalf("render->editor nav landed on line %d, want %d", got, line)
-	}
-}
-
 func TestScrollBothPanes(t *testing.T) {
 	s := newTestState(t, false)
 	rr := s.renderRect()
-	before := s.rscroll().OffsetY
+	// A wheel over the render pane is consumed (the PagedView scrolls its stack or
+	// flips a page — its own tested behaviour; here we assert the routing).
 	if !s.HandleScroll(rr.X+10, rr.Y+10, 0, 5) {
 		t.Fatalf("render scroll not consumed")
-	}
-	if s.rscroll().OffsetY <= before {
-		t.Fatalf("render pane did not scroll down: %d -> %d", before, s.rscroll().OffsetY)
 	}
 	er := s.editorRect()
 	if !s.HandleScroll(er.X+10, er.Y+10, 0, 3) {
@@ -170,24 +155,6 @@ func TestScrollBothPanes(t *testing.T) {
 	if s.HandleScroll(-5, -5, 0, 1) {
 		t.Fatalf("out-of-bounds scroll should not be consumed")
 	}
-}
-
-func TestScrollRenderToLineClampsAndMisses(t *testing.T) {
-	s := newTestState(t, false)
-	// A line with no band is a no-op.
-	before := s.rscroll().OffsetY
-	s.scrollRenderToLine(1 << 20)
-	if s.rscroll().OffsetY != before {
-		t.Fatalf("scrollRenderToLine on a missing line moved the offset")
-	}
-	// The first band scrolls to (near) the top.
-	var minLine int = 1 << 30
-	for l := range s.lineBands {
-		if l < minLine {
-			minLine = l
-		}
-	}
-	s.scrollRenderToLine(minLine)
 }
 
 func TestSetThemeRecompilesAndRecolours(t *testing.T) {
@@ -305,25 +272,5 @@ func TestSetSourceRestoresWithoutFiringOnEdit(t *testing.T) {
 	}
 	if !s.Dirty() {
 		t.Fatalf("SetSource should raise dirty")
-	}
-}
-
-func TestLineAtEmptyBands(t *testing.T) {
-	s := &State{lineBands: map[int][2]int{}}
-	if got := s.lineAt(10); got != 0 {
-		t.Fatalf("lineAt with no bands = %d, want 0", got)
-	}
-}
-
-// TestLineAtBranches pins lineAt's exact-hit AND nearest-band paths regardless of
-// Go's randomized map-iteration order (an exact hit returns early, so a click
-// outside every band is needed to exercise the distance tracking).
-func TestLineAtBranches(t *testing.T) {
-	s := &State{lineBands: map[int][2]int{5: {100, 120}, 9: {200, 220}}}
-	if got := s.lineAt(110); got != 5 { // inside line 5's band -> exact return
-		t.Fatalf("lineAt(110) = %d, want 5", got)
-	}
-	if got := s.lineAt(1000); got != 9 { // below every band -> nearest (line 9)
-		t.Fatalf("lineAt(1000) = %d, want 9 (nearest)", got)
 	}
 }

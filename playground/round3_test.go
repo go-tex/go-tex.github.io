@@ -10,221 +10,22 @@ import (
 	"github.com/go-widgets/toolkit"
 )
 
-// --- #4 renderView: composed zoom toolbar + scrollable zoomable image --------
-
-func newTestRenderView(t *testing.T) *renderView {
-	t.Helper()
-	SetupText(1)
-	rv := newRenderView()
-	rv.SetBounds(toolkit.Rect{X: 0, Y: 0, W: 240, H: 320})
-	pix := make([]byte, 100*400*4)
-	rv.SetContent(pix, 100, 400)
-	return rv
-}
-
-func TestRenderViewZoomButtons(t *testing.T) {
-	rv := newTestRenderView(t)
-	if rv.ZoomPercent() != 100 || rv.Zoom() != 1 {
-		t.Fatalf("initial zoom = %d%% (%v), want 100%% (1.0)", rv.ZoomPercent(), rv.Zoom())
-	}
-	base := rv.img.Bounds().W
-
-	// Zoom + (click the button through the surface-coord router).
-	zin := rv.zoomIn.Bounds()
-	if !rv.click(zin.X+zin.W/2, zin.Y+zin.H/2) {
-		t.Fatalf("zoom-in click not consumed")
-	}
-	if rv.press != rvPressButton {
-		t.Fatalf("zoom-in did not capture a button press")
-	}
-	if rv.ZoomPercent() != 125 {
-		t.Fatalf("after zoom-in: %d%%, want 125%%", rv.ZoomPercent())
-	}
-	if rv.img.Bounds().W <= base {
-		t.Fatalf("zoom-in did not grow the scroll content: %d -> %d", base, rv.img.Bounds().W)
-	}
-	// A release after a button press is consumed but scrolls nothing.
-	if !rv.release(zin.X, zin.Y) {
-		t.Fatalf("release after a button press should report handled")
-	}
-
-	// Zoom - back to 100%.
-	zout := rv.zoomOut.Bounds()
-	rv.click(zout.X+zout.W/2, zout.Y+zout.H/2)
-	if rv.ZoomPercent() != 100 {
-		t.Fatalf("after zoom-out: %d%%, want 100%%", rv.ZoomPercent())
-	}
-
-	// Fit: zoom so a page fits the content width (baseW=100, viewport W=240).
-	fb := rv.fitBtn.Bounds()
-	rv.click(fb.X+fb.W/2, fb.Y+fb.H/2)
-	wantPct := int(float64(rv.scroll.Bounds().W)/100.0*100 + 0.5)
-	if rv.ZoomPercent() != wantPct {
-		t.Fatalf("after Fit: %d%%, want %d%% (fit width)", rv.ZoomPercent(), wantPct)
-	}
-}
-
-func TestRenderViewZoomClamps(t *testing.T) {
-	rv := newTestRenderView(t)
-	rv.setZoom(1000) // clamps to the max
-	if rv.ZoomPercent() != 800 {
-		t.Fatalf("zoom did not clamp to max: %d%%", rv.ZoomPercent())
-	}
-	rv.setZoom(0.0001) // clamps to the min
-	if rv.ZoomPercent() != 10 {
-		t.Fatalf("zoom did not clamp to min: %d%%", rv.ZoomPercent())
-	}
-}
-
-func TestRenderViewFitFallbacks(t *testing.T) {
-	SetupText(1)
-	rv := newRenderView()
-	// No render at all: Fit falls back to 100%.
-	rv.SetBounds(toolkit.Rect{X: 0, Y: 0, W: 200, H: 200})
-	rv.Fit()
-	if rv.ZoomPercent() != 100 {
-		t.Fatalf("Fit with no render = %d%%, want 100%%", rv.ZoomPercent())
-	}
-	// A render but an unmeasured viewport (zero bounds): also 100%.
-	rv.SetContent(make([]byte, 10*10*4), 10, 10)
-	rv.SetBounds(toolkit.Rect{})
-	rv.Fit()
-	if rv.ZoomPercent() != 100 {
-		t.Fatalf("Fit with a zero viewport = %d%%, want 100%%", rv.ZoomPercent())
-	}
-}
-
-func TestRenderViewEmptyContentCollapses(t *testing.T) {
-	rv := newTestRenderView(t)
-	rv.SetContent(nil, 0, 0)
-	if rv.img.Bounds().W != 0 || rv.img.Bounds().H != 0 {
-		t.Fatalf("empty content did not collapse the image size")
-	}
-}
-
-func TestRenderViewScrollAreaDragAndWheel(t *testing.T) {
-	rv := newTestRenderView(t)
-	sb := rv.contentRect()
-
-	// Press in the content area starts a pan capture; a drag then a release run
-	// the scroll-forwarding branches.
-	if !rv.click(sb.X+10, sb.Y+10) {
-		t.Fatalf("content press not consumed")
-	}
-	if rv.press != rvPressScroll {
-		t.Fatalf("content press did not capture the scroll")
-	}
-	if !rv.drag(sb.X+10, sb.Y+80) {
-		t.Fatalf("scroll drag not consumed")
-	}
-	if !rv.release(sb.X+10, sb.Y+80) {
-		t.Fatalf("scroll release not consumed")
-	}
-	// A drag with nothing captured is a no-op.
-	if rv.drag(5, 5) {
-		t.Fatalf("drag with no capture should be a no-op")
-	}
-	// A release with nothing captured reports not-handled.
-	if rv.release(5, 5) {
-		t.Fatalf("release with no capture should be a no-op")
-	}
-
-	// Wheel over the content scrolls; wheel outside is ignored.
-	before := rv.offsetY()
-	if !rv.scrollWheel(sb.X+10, sb.Y+10, 0, 4) {
-		t.Fatalf("wheel over content not consumed")
-	}
-	if rv.offsetY() <= before {
-		t.Fatalf("wheel did not scroll: %d -> %d", before, rv.offsetY())
-	}
-	if rv.scrollWheel(-100, -100, 0, 3) {
-		t.Fatalf("wheel outside content should not be consumed")
-	}
-}
-
-func TestRenderViewEmptyToolbarAndOutsideClick(t *testing.T) {
-	rv := newTestRenderView(t)
-	// A press in the toolbar row but on the (non-interactive) readout gap is
-	// consumed with no capture.
-	rr := rv.readoutRect
-	if !rv.click(rr.X+rr.W/2, rr.Y+rr.H/2) {
-		t.Fatalf("empty toolbar press should be consumed")
-	}
-	if rv.press != rvPressNone {
-		t.Fatalf("empty toolbar press should capture nothing")
-	}
-	// A press below the whole widget is not consumed.
-	b := rv.Bounds()
-	if rv.click(b.X+5, b.Y+b.H+50) {
-		t.Fatalf("press outside the render view should not be consumed")
-	}
-}
-
-func TestRenderViewBaseContentYAt(t *testing.T) {
-	rv := newTestRenderView(t)
-	sb := rv.contentRect()
-
-	// Inside the content, above the scrollbar gutter: maps to a base-render Y.
-	if y, ok := rv.baseContentYAt(sb.X+5, sb.Y+10); !ok || y < 0 {
-		t.Fatalf("baseContentYAt in content = (%d,%v), want ok with y>=0", y, ok)
-	}
-	// Over the scrollbar gutter: not ok.
-	if _, ok := rv.baseContentYAt(sb.X+sb.W-1, sb.Y+10); ok {
-		t.Fatalf("baseContentYAt over the scrollbar gutter should be not-ok")
-	}
-	// Outside the content: not ok.
-	if _, ok := rv.baseContentYAt(-1, -1); ok {
-		t.Fatalf("baseContentYAt outside the content should be not-ok")
-	}
-	// A degenerate zoom of 0 returns the raw content Y unscaled.
-	rv.zoom = 0
-	if y, ok := rv.baseContentYAt(sb.X+5, sb.Y+10); !ok || y < 0 {
-		t.Fatalf("baseContentYAt with zoom 0 = (%d,%v)", y, ok)
-	}
-}
-
-func TestRenderViewScrollToBaseY(t *testing.T) {
-	rv := newTestRenderView(t)
-	// A tiny target clamps to 0 (no negative scroll).
-	rv.scrollToBaseY(0)
-	if rv.offsetY() != 0 {
-		t.Fatalf("scrollToBaseY(0) should stay at the top, got %d", rv.offsetY())
-	}
-	// A large target scrolls down.
-	rv.scrollToBaseY(390)
-	if rv.offsetY() <= 0 {
-		t.Fatalf("scrollToBaseY(deep) did not scroll: %d", rv.offsetY())
-	}
-}
-
-func TestRenderViewSetBoundsTinyHeight(t *testing.T) {
-	SetupText(1)
-	rv := newRenderView()
-	// A height smaller than the toolbar clamps the toolbar and its button height.
-	rv.SetBounds(toolkit.Rect{X: 0, Y: 0, W: 200, H: 4})
-	if rv.toolbarH != 4 {
-		t.Fatalf("toolbarH not clamped to the tiny height: %d", rv.toolbarH)
-	}
-}
-
-func TestRenderViewDrawZeroBounds(t *testing.T) {
-	SetupText(1)
-	rv := newRenderView()
-	rv.SetBounds(toolkit.Rect{})
-	buf := make([]byte, 4)
-	rv.Draw(painter.NewPixelPainter(buf, 1, 1), toolkit.DefaultLight()) // early-return, no panic
-}
-
-// --- #3 rightPane: tab strip over render | log -------------------------------
+// --- rightPane: tab strip over the render PagedView | log --------------------
 
 func newTestRightPane(t *testing.T) *rightPane {
 	t.Helper()
 	SetupText(1)
-	rv := newRenderView()
+	rv := toolkit.NewPagedView(testBitmaps(6))
 	rp := newRightPane(rv, &logView{})
 	rp.SetBounds(toolkit.Rect{X: 0, Y: 0, W: 240, H: 320})
-	rv.SetContent(make([]byte, 100*400*4), 100, 400)
 	return rp
+}
+
+// contentPoint returns a point well inside the render content (below the tab
+// strip AND the PagedView's own toolbar), so a press lands on the scroll pane.
+func contentPoint(rp *rightPane) (int, int) {
+	cr := rp.contentRect()
+	return cr.X + cr.W/2, cr.Y + toolkit.Scaled(30) + 20
 }
 
 func TestRightPaneTabSwitchAndRouting(t *testing.T) {
@@ -240,17 +41,21 @@ func TestRightPaneTabSwitchAndRouting(t *testing.T) {
 	}
 
 	// A click in the log content is consumed but captures nothing (scroll-only).
-	cr := rp.contentRect()
-	if !rp.click(cr.X+10, cr.Y+10) {
+	cx, cy := contentPoint(rp)
+	if !rp.click(cx, cy) {
 		t.Fatalf("log content click should be consumed")
 	}
 	if rp.press != rpPressNone {
 		t.Fatalf("log content click should capture nothing")
 	}
+	// keyDown on the Log tab is not routed to the render viewer.
+	if rp.keyDown("PageDown") {
+		t.Fatalf("keyDown on the Log tab should not route to the render viewer")
+	}
 
 	// Wheel over the log scrolls its own offset; wheel on the tab strip is inert;
 	// wheel outside is not consumed.
-	if !rp.scrollWheel(cr.X+10, cr.Y+10, 0, 4) || rp.log.offset <= 0 {
+	if !rp.scrollWheel(cx, cy, 0, 4) || rp.log.offset <= 0 {
 		t.Fatalf("log wheel did not scroll: offset=%d", rp.log.offset)
 	}
 	strip := rp.Bounds()
@@ -261,22 +66,30 @@ func TestRightPaneTabSwitchAndRouting(t *testing.T) {
 		t.Fatalf("wheel outside the pane should not be consumed")
 	}
 
-	// Back to the render tab: a press in the render's SCROLL area (below its zoom
-	// toolbar) captures the render, then drag + release forward to it.
+	// Back to the render tab: a press in the render content captures the render,
+	// then drag + release forward to the PagedView.
 	rp.setActive(tabRender)
-	rsb := rp.render.contentRect()
-	if !rp.click(rsb.X+10, rsb.Y+10) || rp.press != rpPressRender {
+	cx, cy = contentPoint(rp)
+	if !rp.click(cx, cy) || rp.press != rpPressRender {
 		t.Fatalf("render content press did not capture the render (press=%d)", rp.press)
 	}
-	if !rp.drag(rsb.X+10, rsb.Y+40) {
+	if !rp.drag(cx, cy+40) {
 		t.Fatalf("render drag not routed")
 	}
-	if !rp.release(rsb.X+10, rsb.Y+40) {
+	if !rp.release(cx, cy+40) {
 		t.Fatalf("render release not routed")
 	}
 	// Idle drag / release report not-handled.
 	if rp.drag(1, 1) || rp.release(1, 1) {
 		t.Fatalf("idle drag/release should be no-ops")
+	}
+	// A wheel over the render content routes to the PagedView.
+	if !rp.scrollWheel(cx, cy, 0, 3) {
+		t.Fatalf("render wheel not consumed")
+	}
+	// keyDown on the render tab is routed to the viewer.
+	if !rp.keyDown("PageDown") {
+		t.Fatalf("keyDown on the render tab should route to the viewer")
 	}
 }
 
@@ -363,6 +176,9 @@ func TestRound3Introspection(t *testing.T) {
 	if s.ActiveTab() != tabRender {
 		t.Fatalf("initial tab = %d, want Rendered", s.ActiveTab())
 	}
+	if s.RenderMode() != int(toolkit.PagedContinuous) {
+		t.Fatalf("initial render mode should be continuous")
+	}
 	if n := s.MinimapSegments(); n <= 0 {
 		t.Fatalf("sample document should paint minimap segments, got %d", n)
 	}
@@ -387,7 +203,7 @@ func TestRound3Introspection(t *testing.T) {
 func TestDebugRects(t *testing.T) {
 	s := newTestState(t, false)
 	r := s.DebugRects()
-	for _, name := range []string{"picker", "popover", "renderTab", "logTab", "zoomOut", "zoomIn", "fit", "renderContent"} {
+	for _, name := range []string{"picker", "popover", "renderTab", "logTab", "renderPane", "renderContent"} {
 		v, ok := r[name]
 		if !ok {
 			t.Fatalf("DebugRects missing %q", name)
@@ -404,8 +220,13 @@ func TestDebugRects(t *testing.T) {
 	}
 }
 
-func TestClickZoomAndTabThroughState(t *testing.T) {
+// TestClickTabsAndFocusThroughState drives tab switching AND the render-focus
+// hand-off through the full State router: clicking the render content focuses
+// the PagedView (nav keys flip pages), clicking the editor takes focus back.
+func TestClickTabsAndFocusThroughState(t *testing.T) {
 	s := newTestState(t, false)
+	s.SetSource(multiPageDoc())
+	s.renderView.Mode().Set(toolkit.PagedPaginated)
 
 	// Clicking the Log tab through the full State router switches the pane.
 	logTab := s.rightPane.tabRect(tabLog)
@@ -417,16 +238,39 @@ func TestClickZoomAndTabThroughState(t *testing.T) {
 	}
 	s.HandleRelease(logTab.X+logTab.W/2, logTab.Y+logTab.H/2)
 
-	// Back to Rendered, then click the zoom-in button through State.
+	// Back to Rendered, then click the render content to focus the PagedView.
 	renderTab := s.rightPane.tabRect(tabRender)
 	s.HandleClick(renderTab.X+renderTab.W/2, renderTab.Y+renderTab.H/2)
-	zin := s.renderView.zoomIn.Bounds()
-	if !s.HandleClick(zin.X+zin.W/2, zin.Y+zin.H/2) {
-		t.Fatalf("zoom-in click not consumed by State")
+	rr := s.renderRect()
+	if !s.HandleClick(rr.X+rr.W/2, rr.Y+toolkit.Scaled(30)+40) {
+		t.Fatalf("render content click not consumed by State")
 	}
-	if s.ZoomPercent() != 125 {
-		t.Fatalf("zoom-in through State = %d%%, want 125%%", s.ZoomPercent())
+	if !s.RenderFocused() || s.editor.Focused {
+		t.Fatalf("render click did not move focus to the viewer (focused=%v editorFocused=%v)",
+			s.RenderFocused(), s.editor.Focused)
 	}
-	s.HandleMove(zin.X+zin.W/2, zin.Y+zin.H/2) // pressRight drag path (button: inert)
-	s.HandleRelease(zin.X+zin.W/2, zin.Y+zin.H/2)
+	s.HandleRelease(rr.X+rr.W/2, rr.Y+toolkit.Scaled(30)+40)
+
+	// A nav key now flips the page instead of moving the editor caret.
+	before := s.RenderCurrentPage()
+	if !s.HandleKeyDown("PageDown") {
+		t.Fatalf("PageDown not consumed while the viewer is focused")
+	}
+	if s.RenderCurrentPage() <= before {
+		t.Fatalf("PageDown did not advance the page: %d -> %d", before, s.RenderCurrentPage())
+	}
+
+	// Clicking the editor takes focus back; typing reaches the editor again.
+	er := s.editorRect()
+	s.HandleClick(er.X+20, er.Y+20)
+	if s.RenderFocused() || !s.editor.Focused {
+		t.Fatalf("editor click did not restore editor focus")
+	}
+	page := s.RenderCurrentPage()
+	if !s.HandleChar("Z") {
+		t.Fatalf("editor did not accept typing after regaining focus")
+	}
+	if s.RenderCurrentPage() != page {
+		t.Fatalf("typing stole a page flip: %d -> %d", page, s.RenderCurrentPage())
+	}
 }

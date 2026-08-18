@@ -294,13 +294,12 @@ func main() {
 		return nil
 	}))
 
-	// Read-only introspection for headless verification (asserting a real width /
-	// scroll change after a pointer drag).
+	// Read-only introspection for headless verification (asserting a real state
+	// change after a pointer / wheel / key interaction). The render pane's paging,
+	// zoom and mode are the PagedView's MVVM observables, surfaced here.
 	js.Global().Set("gotexDebug", js.FuncOf(func(js.Value, []js.Value) any {
 		return map[string]any{
 			"editorW":         state.EditorWidth(),
-			"renderOffsetY":   state.RenderOffsetY(),
-			"renderOffsetX":   state.RenderOffsetX(),
 			"showLog":         state.ShowLog(),
 			"dividerX":        state.DividerX(),
 			"activeTab":       state.ActiveTab(),
@@ -309,10 +308,10 @@ func main() {
 			"minimapSegments": state.MinimapSegments(),
 			"pageCount":       state.PageCount(),
 			"drawnPages":      state.DrawnPages(),
-			"contentHeight":   state.RenderContentHeight(),
 			"renderMode":      state.RenderMode(),
 			"currentPage":     state.RenderCurrentPage(),
 			"visiblePages":    state.RenderVisiblePages(),
+			"renderFocused":   state.RenderFocused(),
 			"cursorLine":      state.CursorLine(),
 			"cursorCol":       state.CursorCol(),
 			"hasSelection":    state.HasSelection(),

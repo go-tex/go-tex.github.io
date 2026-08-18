@@ -5,11 +5,11 @@
 // single go-widgets/toolkit canvas application: a toolbar (syntax colour-scheme
 // picker, minimap toggle), a horizontal split of a CodeEditor (line numbers,
 // LaTeX syntax colours, current-line highlight) with an optional code minimap on
-// the left and, on the right, a small Rendered│Log tab strip over either a
-// zoomable live pane of the pure-Go gotex render or a diagnostics Log, and a
-// status bar (caret position, encoding, page count, issue count). The caret
-// scrolls the render to its source line and clicking the render moves the caret
-// there.
+// the left and, on the right, a small Rendered│Log tab strip over either the
+// shared toolkit.PagedView showing the pure-Go gotex render (continuous /
+// paginated modes, zoom, and full wheel + keyboard page navigation, all owned by
+// the widget) or a diagnostics Log, and a status bar (caret position, encoding,
+// page count, issue count).
 //
 // The whole View + logic lives here as a plain, tagless package so a native
 // `go test` exercises construction, layout, compile, rasterize, event dispatch
@@ -107,7 +107,7 @@ type State struct {
 
 	editor     *toolkit.CodeEditor
 	hl         *latexhl.Highlighter
-	renderView *renderView
+	renderView *toolkit.PagedView
 	logView    *logView
 	rightPane  *rightPane
 	minimap    *minimap
@@ -125,10 +125,9 @@ type State struct {
 	showMinimap bool
 
 	// last compile output.
-	lineBands  map[int][2]int
 	errText    string
 	pages      int // engine (logical) page count
-	drawnPages int // pages rasterized + stacked in the render pane
+	drawnPages int // pages rasterized + fed to the render pane
 	diag       engine.Diagnostics
 
 	// chrome heights (device pixels), recomputed each layout at the active scale.
@@ -159,7 +158,7 @@ type State struct {
 // the sample document once and returns the ready scene. The caller installs the
 // text/scale first via SetupText.
 func NewState(w, h int, dark bool) *State {
-	s := &State{w: w, h: h, dark: dark, lineBands: map[int][2]int{}, showMinimap: true}
+	s := &State{w: w, h: h, dark: dark, showMinimap: true}
 	s.setTheme(dark)
 
 	s.hl = latexhl.New()
@@ -179,7 +178,7 @@ func NewState(w, h int, dark bool) *State {
 		}
 	}
 
-	s.renderView = newRenderView()
+	s.renderView = toolkit.NewPagedView(nil)
 	s.logView = &logView{}
 	s.rightPane = newRightPane(s.renderView, s.logView)
 	s.minimap = &minimap{}
@@ -368,38 +367,47 @@ func (s *State) ClearDirty()           { s.dirty = false }
 func (s *State) Theme() *toolkit.Theme { return s.theme }
 
 // Read-only introspection for the host/verification harness: the editor pane
-// width, the render pane's vertical scroll offset, whether the Log is shown, the
-// active tab index, the render zoom percentage, the selected colour scheme index
-// and the minimap's token-segment count. They let a headless test assert real
-// state changes after a pointer interaction.
+// width, whether the Log is shown, the active tab index, the render zoom
+// percentage (read from the PagedView's Zoom observable), the selected colour
+// scheme index and the minimap's token-segment count. They let a headless test
+// assert real state changes after a pointer interaction.
 func (s *State) EditorWidth() int    { return s.editor.Bounds().W }
-func (s *State) RenderOffsetY() int  { return s.renderView.offsetY() }
-func (s *State) RenderOffsetX() int  { return s.renderView.offsetX() }
 func (s *State) ShowLog() bool       { return s.showLog() }
 func (s *State) ActiveTab() int      { return s.rightPane.active }
-func (s *State) ZoomPercent() int    { return s.renderView.ZoomPercent() }
+func (s *State) ZoomPercent() int    { return s.renderView.Zoom().Get() }
 func (s *State) SelectedScheme() int { return s.schemePicker.Selected().Get() }
 
 // PageCount is the engine's logical page count; DrawnPages the number actually
-// rasterized and stacked in the render pane; RenderContentHeight the stacked
-// content height in device pixels (before zoom). They let a headless test assert
-// a multi-page document renders continuously.
-func (s *State) PageCount() int           { return s.pages }
-func (s *State) DrawnPages() int          { return s.drawnPages }
-func (s *State) RenderContentHeight() int { return s.renderView.baseH }
+// rasterized and fed to the render pane. They let a headless test assert a
+// multi-page document reached the viewer.
+func (s *State) PageCount() int  { return s.pages }
+func (s *State) DrawnPages() int { return s.drawnPages }
 
 // RenderMode / RenderCurrentPage / RenderVisiblePages report the render pane's
-// continuous-vs-paginated mode, the current 1-based page (paginated) and how many
-// pages are shown at once (1 paginated, all continuous). CursorLine/CursorCol
-// expose the editor caret for click-accuracy assertions. HasSelection /
-// SelectionText expose the current text selection.
-func (s *State) RenderMode() int         { return s.renderView.mode }
-func (s *State) RenderCurrentPage() int  { return s.renderView.currentPage() + 1 }
-func (s *State) RenderVisiblePages() int { return s.renderView.visiblePages() }
-func (s *State) CursorLine() int         { return s.editor.CursorLine }
-func (s *State) CursorCol() int          { return s.editor.CursorCol }
-func (s *State) HasSelection() bool      { return s.editor.HasSelection() }
-func (s *State) SelectionText() string   { return s.editor.SelectionText() }
+// continuous-vs-paginated mode, the current 1-based page and how many pages are
+// shown at once (1 paginated, all continuous) — all read from the PagedView's
+// MVVM observables. CursorLine/CursorCol expose the editor caret for
+// click-accuracy assertions. HasSelection / SelectionText expose the current
+// text selection.
+func (s *State) RenderMode() int        { return int(s.renderView.Mode().Get()) }
+func (s *State) RenderCurrentPage() int { return s.renderView.CurrentPage().Get() }
+func (s *State) RenderVisiblePages() int {
+	if s.renderView.Mode().Get() == toolkit.PagedPaginated {
+		if s.renderView.PageCount() == 0 {
+			return 0
+		}
+		return 1
+	}
+	return s.renderView.PageCount()
+}
+func (s *State) CursorLine() int       { return s.editor.CursorLine }
+func (s *State) CursorCol() int        { return s.editor.CursorCol }
+func (s *State) HasSelection() bool    { return s.editor.HasSelection() }
+func (s *State) SelectionText() string { return s.editor.SelectionText() }
+
+// RenderFocused reports whether the render pane holds keyboard focus (so nav keys
+// drive the page viewer, not the editor). Host introspection.
+func (s *State) RenderFocused() bool { return s.renderFocused() }
 
 // CaretPixel returns the DEVICE-pixel point just inside the cell of the given
 // 0-based (line, col) caret position, using the editor's monospace layout — so a
@@ -430,26 +438,40 @@ func (s *State) MinimapSegments() int {
 func (s *State) DividerX() int { return s.paned.Bounds().X + s.paned.Position }
 
 // DebugRects returns the DEVICE-pixel [x,y,w,h] rectangles of the interactive
-// targets a headless verification harness needs to click precisely (the colour
-// scheme picker and its open popover, the two right-pane tabs, the render zoom
-// buttons and the render content area). It is host-facing introspection only.
+// targets a headless verification harness needs to click precisely: the colour
+// scheme picker and its open popover, the two right-pane tabs, the whole render
+// pane (the PagedView, which owns its own toolbar + scroll — the harness drives
+// paging with real wheel/key events over this rect) and the render content area
+// below the PagedView's toolbar strip. It is host-facing introspection only.
 func (s *State) DebugRects() map[string][4]int {
 	rect := func(r toolkit.Rect) [4]int { return [4]int{r.X, r.Y, r.W, r.H} }
-	rc := s.renderView.contentRect()
 	return map[string][4]int{
 		"picker":        rect(s.schemePicker.Bounds()),
 		"popover":       rect(s.schemePicker.PopoverBounds()),
 		"renderTab":     rect(s.rightPane.tabRect(tabRender)),
 		"logTab":        rect(s.rightPane.tabRect(tabLog)),
-		"zoomOut":       rect(s.renderView.zoomOut.Bounds()),
-		"zoomIn":        rect(s.renderView.zoomIn.Bounds()),
-		"fit":           rect(s.renderView.fitBtn.Bounds()),
-		"modeCont":      rect(s.renderView.contBtn.Bounds()),
-		"modePage":      rect(s.renderView.pageBtn.Bounds()),
-		"prevPage":      rect(s.renderView.prevBtn.Bounds()),
-		"nextPage":      rect(s.renderView.nextBtn.Bounds()),
-		"renderContent": rect(rc),
+		"renderPane":    rect(s.renderView.Bounds()),
+		"renderContent": rect(s.renderContentRect()),
 	}
+}
+
+// renderContentRect is the render pane area BELOW the PagedView's toolbar strip:
+// where the compile-error overlay is painted. The PagedView reserves a
+// fixed-height toolbar (toolkit.Scaled(30)) at the top of its bounds.
+func (s *State) renderContentRect() toolkit.Rect {
+	r := s.renderView.Bounds()
+	tb := toolkit.Scaled(30)
+	if tb > r.H {
+		tb = r.H
+	}
+	return toolkit.Rect{X: r.X, Y: r.Y + tb, W: r.W, H: r.H - tb}
+}
+
+// renderFocused reports whether the render pane owns the keyboard: it is the
+// active tab and the PagedView holds focus. When true, nav keys flip pages
+// instead of moving the editor caret.
+func (s *State) renderFocused() bool {
+	return !s.showLog() && s.renderView.Focused()
 }
 
 // TakePendingCompile drains the edit latch (once).
@@ -510,22 +532,18 @@ func (s *State) applyLeftSplit() {
 	}
 }
 
-// Compile runs the engine, updates the render image, the per-line bands, the
-// diagnostics Log and the status bar.
+// Compile runs the engine, feeds the freshly rasterized page bitmaps to the
+// render pane's PagedView, updates the diagnostics Log and the status bar. A
+// hard error (or an empty document) yields no bitmaps, which clears the viewer.
 func (s *State) Compile() {
 	res := compileLaTeX(s.editor.Text(), s.theme)
 	s.errText = res.errText
 	s.pages = res.pages
 	s.drawnPages = res.drawnPages
 	s.diag = res.diag
-	s.lineBands = res.lineBands
 	s.logView.set(res.diag, res.errText)
 
-	if res.pixels != nil {
-		s.renderView.SetPages(res.pixels, res.w, res.h, res.pageImgs)
-	} else {
-		s.renderView.SetPages(nil, 0, 0, nil)
-	}
+	s.renderView.SetPages(res.bitmaps) // nil bitmaps clear the viewer
 	s.updateStatus()
 	s.dirty = true
 }
@@ -597,7 +615,7 @@ func (s *State) Draw(buf []byte) {
 // drawError overlays the compile error at the top of the render content area
 // (below the tab strip and the render's own zoom toolbar).
 func (s *State) drawError(p painter.Painter) {
-	r := s.renderView.contentRect()
+	r := s.renderContentRect()
 	band := toolkit.Rect{X: r.X, Y: r.Y, W: r.W, H: toolkit.Scaled(22)}
 	p.FillRect(band, s.theme.SurfaceAlt)
 	toolkit.DrawText(p, r.X+toolkit.Scaled(8), r.Y+toolkit.Scaled(6), "Error: "+s.errText, s.theme.Accent)
@@ -655,9 +673,9 @@ func (s *State) HandleClick(x, y int) bool {
 	er := s.editor.Bounds()
 	if er.Contains(x, y) {
 		s.editor.Focused = true
-		s.selecting = false // a click starts a fresh selection anchor
+		s.renderView.SetFocused(false) // the editor now owns the keyboard
+		s.selecting = false            // a click starts a fresh selection anchor
 		s.editor.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - er.X, Y: y - er.Y})
-		s.scrollRenderToLine(s.editor.CursorLine + 1)
 		s.updateStatus()
 		s.pressKind = pressEditor
 		s.dirty = true
@@ -676,13 +694,12 @@ func (s *State) HandleClick(x, y int) bool {
 	rr := s.rightPane.Bounds()
 	if rr.Contains(x, y) {
 		s.rightPane.click(x, y)
-		// App-level link: a click on the render content jumps the caret to the
-		// nearest source line (ignored on the tab strip, the zoom toolbar or the
-		// scrollbar gutter, where baseContentYAt reports not-ok).
-		if !s.showLog() {
-			if baseY, ok := s.renderView.baseContentYAt(x, y); ok {
-				s.navRenderToEditorAt(baseY)
-			}
+		// A click into the render content gives the PagedView keyboard focus (so
+		// nav keys flip pages) and takes it away from the editor; a tab-strip or
+		// Log click leaves the editor's focus alone.
+		if s.rightPane.press == rpPressRender {
+			s.editor.Focused = false
+			s.renderView.SetFocused(true)
 		}
 		s.pressKind = pressRight
 		s.dirty = true
@@ -770,7 +787,15 @@ const rowStep = 28
 
 // HandleChar routes a printable character to the editor. Typing ends any
 // keyboard selection in progress (the inserted text replaces it if present).
+// When the render pane holds focus instead, a space bar pages the viewer and no
+// character reaches the (unfocused) editor.
 func (s *State) HandleChar(code string) bool {
+	if s.renderFocused() {
+		if code == " " || code == "Space" {
+			return s.rightPane.keyDown("Space")
+		}
+		return false
+	}
 	if !s.editor.Focused {
 		return false
 	}
@@ -794,10 +819,15 @@ func navBase(code string) string {
 	return ""
 }
 
-// HandleKeyDown routes a named key to the editor. A "Shift+"-prefixed navigation
+// HandleKeyDown routes a named key. When the render pane holds keyboard focus it
+// receives the key (PageDown / ArrowUp / Home / End flip pages) and the editor is
+// left untouched. Otherwise it goes to the editor: a "Shift+"-prefixed navigation
 // key extends the selection from an anchor; a plain navigation key moves the
 // caret and collapses any selection; every other key is forwarded as-is.
 func (s *State) HandleKeyDown(code string) bool {
+	if s.renderFocused() {
+		return s.rightPane.keyDown(code)
+	}
 	if !s.editor.Focused {
 		return false
 	}
@@ -834,9 +864,8 @@ func (s *State) shiftSelect(base string) {
 	s.editor.SetSelection(toolkit.SelectionRange(s.selAnchorLine, s.selAnchorCol, s.editor.CursorLine, s.editor.CursorCol))
 }
 
-// afterKey runs the shared post-key bookkeeping (render-follow + status + dirty).
+// afterKey runs the shared post-key bookkeeping (status + dirty).
 func (s *State) afterKey() {
-	s.scrollRenderToLine(s.editor.CursorLine + 1)
 	s.updateStatus()
 	s.dirty = true
 }
@@ -849,53 +878,4 @@ func (s *State) minimapScrollTo(y int) {
 	// only the line count, so the per-line spans are left nil here.
 	s.minimap.update(s.editor.Lines, nil, s.editor.ScrollLine, s.visibleEditorLines())
 	s.editor.ScrollLine = s.minimap.lineAtY(y) // lineAtY already clamps to [0, n-1]
-}
-
-// scrollRenderToLine scrolls the render pane so the band for a 1-based source
-// line is visible. No-op when the Log tab is active or the line has no band.
-func (s *State) scrollRenderToLine(line int) {
-	if s.showLog() {
-		return
-	}
-	band, ok := s.lineBands[line]
-	if !ok {
-		return
-	}
-	s.renderView.scrollToBaseY(band[0])
-}
-
-// navRenderToEditorAt maps a BASE-render content Y (from a render click) to the
-// nearest source line and moves the editor caret there.
-func (s *State) navRenderToEditorAt(baseY int) {
-	line := s.lineAt(baseY)
-	if line <= 0 {
-		return
-	}
-	target := line - 1
-	if target >= len(s.editor.Lines) {
-		target = len(s.editor.Lines) - 1
-	}
-	s.editor.CursorLine = target
-	s.editor.CursorCol = 0
-	s.editor.Focused = true
-	s.updateStatus()
-}
-
-// lineAt returns the 1-based source line whose band contains contentY, or the
-// nearest band's line. Returns 0 when there are no bands.
-func (s *State) lineAt(contentY int) int {
-	best, bestDist := 0, 1<<62
-	for line, b := range s.lineBands {
-		if contentY >= b[0] && contentY < b[1] {
-			return line
-		}
-		d := b[0] - contentY
-		if d < 0 {
-			d = -d
-		}
-		if d < bestDist {
-			bestDist, best = d, line
-		}
-	}
-	return best
 }

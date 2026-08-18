@@ -97,16 +97,6 @@ func TestHandleScrollLogPane(t *testing.T) {
 	}
 }
 
-func TestScrollRenderToLineSkippedWhenLog(t *testing.T) {
-	s := newTestState(t, false)
-	s.toggleLog()
-	before := s.rscroll().OffsetY
-	s.scrollRenderToLine(20) // no-op while the Log is shown
-	if s.rscroll().OffsetY != before {
-		t.Fatalf("scrollRenderToLine moved the render while Log was shown")
-	}
-}
-
 func TestLogViewAlarmsAndDraw(t *testing.T) {
 	lv := &logView{}
 	lv.set(engine.Diagnostics{
@@ -235,9 +225,18 @@ func TestIntrospectionAccessors(t *testing.T) {
 	if s.EditorWidth() != s.editor.Bounds().W {
 		t.Fatalf("EditorWidth mismatch")
 	}
-	s.rscroll().Scroll(0, 40)
-	if s.RenderOffsetY() != s.rscroll().OffsetY {
-		t.Fatalf("RenderOffsetY mismatch")
+	// Zoom / mode / current-page read straight from the PagedView observables.
+	s.renderView.Zoom().Set(150)
+	if s.ZoomPercent() != 150 {
+		t.Fatalf("ZoomPercent = %d, want 150", s.ZoomPercent())
+	}
+	s.renderView.Mode().Set(toolkit.PagedPaginated)
+	if s.RenderMode() != int(toolkit.PagedPaginated) {
+		t.Fatalf("RenderMode = %d, want paginated", s.RenderMode())
+	}
+	s.renderView.CurrentPage().Set(1)
+	if s.RenderCurrentPage() != 1 {
+		t.Fatalf("RenderCurrentPage = %d, want 1", s.RenderCurrentPage())
 	}
 	if s.ShowLog() {
 		t.Fatalf("ShowLog should be false by default")
@@ -248,6 +247,37 @@ func TestIntrospectionAccessors(t *testing.T) {
 	}
 	if s.DividerX() != s.paned.Bounds().X+s.paned.Position {
 		t.Fatalf("DividerX mismatch")
+	}
+}
+
+func TestHandleCharViewerFocusAndContentRectClamp(t *testing.T) {
+	s := newTestState(t, false)
+	s.renderView.SetPages(testBitmaps(6)) // short pages so key-nav flips cleanly
+	s.renderView.Mode().Set(toolkit.PagedPaginated)
+	s.editor.Focused = false
+	s.renderView.SetFocused(true)
+
+	// The space bar pages the viewer when it holds keyboard focus.
+	if !s.HandleChar(" ") {
+		t.Fatalf("space should page the focused viewer")
+	}
+	if s.RenderCurrentPage() != 2 {
+		t.Fatalf("space did not advance the page: %d", s.RenderCurrentPage())
+	}
+	// A non-space character is swallowed (never reaches the unfocused editor) and
+	// leaves the page unchanged.
+	page := s.RenderCurrentPage()
+	if s.HandleChar("Z") {
+		t.Fatalf("a non-space char should not be consumed while the viewer is focused")
+	}
+	if s.RenderCurrentPage() != page {
+		t.Fatalf("a swallowed char changed the page")
+	}
+
+	// renderContentRect clamps its toolbar band to a pane shorter than the strip.
+	s.renderView.SetBounds(toolkit.Rect{X: 0, Y: 0, W: 100, H: 10})
+	if cr := s.renderContentRect(); cr.H != 0 {
+		t.Fatalf("renderContentRect tiny-pane clamp H = %d, want 0", cr.H)
 	}
 }
 
