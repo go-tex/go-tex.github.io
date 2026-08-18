@@ -1,0 +1,148 @@
+// Copyright (c) the go-tex authors.
+// SPDX-License-Identifier: BSD-3-Clause
+
+package playground
+
+import (
+	"image/color"
+	"strconv"
+
+	engine "github.com/go-tex/engine"
+	"github.com/go-tex/go-tex.github.io/playground/svgraster"
+	"github.com/go-widgets/toolkit"
+)
+
+// pageGap is the vertical gap (in device pixels) between stacked pages in the
+// render pane's content image.
+const pageGap = 18
+
+// rasterScale is how many device pixels the engine SVG's point is rasterized to.
+// 2.0 gives crisp glyph outlines without an unreasonably large buffer.
+const rasterScale = 2.0
+
+// compileResult is the outcome of one compile+rasterize pass: the composed
+// content image for the render pane, the per-source-line vertical bands (for
+// click navigation), a page count and either an error string or nil.
+type compileResult struct {
+	pixels    []byte         // RGBA content image, contentW*contentH*4
+	w, h      int            // content image dimensions in device pixels
+	lineBands map[int][2]int // 1-based source line -> [topY, bottomY) in content px
+	pages     int
+	errText   string // "" on success; a human message on a hard compile error
+}
+
+// toColor converts a toolkit/painter RGBA to an image/color.RGBA (both are
+// straight-alpha 8-bit), the form svgraster.Options consumes.
+func toColor(c toolkit.RGBA) color.RGBA { return color.RGBA{R: c.R, G: c.G, B: c.B, A: c.A} }
+
+// compileFn is the engine entry point compileLaTeX calls, kept as a package var
+// so a test can substitute a stub to exercise the hard-error and
+// unrasterizable-page branches the tolerant real engine does not reach.
+var compileFn = engine.CompileToSVGPagesDiag
+
+// compileLaTeX runs the pure-Go TeX engine on src, rasterizes every SVG page
+// with svgraster themed from the given theme (paper = Surface, ink = OnSurface),
+// and stacks the pages into a single tall content image with the pane's
+// Background showing between them. It never panics on bad input: a hard compile
+// error yields a result whose errText is set and whose image is empty.
+func compileLaTeX(src string, theme *toolkit.Theme) compileResult {
+	opt := engine.Options{Size: 11, Lenient: true}
+	pages, diag, err := compileFn([]byte(src), opt)
+	if err != nil {
+		return compileResult{errText: err.Error(), lineBands: map[int][2]int{}}
+	}
+
+	ropt := svgraster.Options{
+		Scale: rasterScale,
+		Ink:   toColor(theme.OnSurface),
+		Paper: toColor(theme.Surface),
+	}
+
+	var raster []*svgraster.Page
+	maxW, totalH := 0, 0
+	for _, svg := range pages {
+		pg, perr := svgraster.Rasterize(svg, ropt)
+		if perr != nil || pg == nil {
+			continue
+		}
+		raster = append(raster, pg)
+		if pg.W > maxW {
+			maxW = pg.W
+		}
+		totalH += pg.H + pageGap
+	}
+	if len(raster) == 0 || maxW == 0 || totalH == 0 {
+		// A compile that produced no drawable page (e.g. an empty document):
+		// report it as a valid zero-page result rather than a blank crash.
+		return compileResult{
+			lineBands: map[int][2]int{},
+			pages:     len(pages),
+			errText:   diagSummaryEmpty(diag),
+		}
+	}
+
+	content := make([]byte, maxW*totalH*4)
+	fillRGBA(content, theme.Background)
+
+	bands := map[int][2]int{}
+	y := 0
+	for _, pg := range raster {
+		ox := (maxW - pg.W) / 2
+		blit(content, maxW, totalH, pg.Pixels, pg.W, pg.H, ox, y)
+		for line, b := range pg.Lines {
+			if _, seen := bands[line]; !seen {
+				bands[line] = [2]int{y + b[0], y + b[1]}
+			}
+		}
+		y += pg.H + pageGap
+	}
+
+	return compileResult{
+		pixels:    content,
+		w:         maxW,
+		h:         totalH,
+		lineBands: bands,
+		pages:     len(pages),
+	}
+}
+
+// diagSummaryEmpty returns an explanatory message for a compile that yielded no
+// page, distinguishing a genuinely empty document from one whose whole body was
+// swallowed (a runaway or unbalanced group the diagnostics flagged).
+func diagSummaryEmpty(d engine.Diagnostics) string {
+	if d.Runaway {
+		return "no pages: a runaway guard tripped (a loop or exponential scan was aborted)"
+	}
+	if d.OpenGroups > 0 {
+		return "no pages: " + strconv.Itoa(d.OpenGroups) + " group(s) left open at end of document"
+	}
+	return ""
+}
+
+// fillRGBA paints the whole RGBA buffer with c (opaque).
+func fillRGBA(buf []byte, c toolkit.RGBA) {
+	for i := 0; i+3 < len(buf); i += 4 {
+		buf[i], buf[i+1], buf[i+2], buf[i+3] = c.R, c.G, c.B, c.A
+	}
+}
+
+// blit copies a srcW*srcH RGBA image into dst (dstW*dstH) at (ox, oy),
+// row by row, clipping to dst. src is treated as opaque (straight copy); the
+// engine pages already carry their own paper background.
+func blit(dst []byte, dstW, dstH int, src []byte, srcW, srcH, ox, oy int) {
+	for sy := 0; sy < srcH; sy++ {
+		dy := oy + sy
+		if dy < 0 || dy >= dstH {
+			continue
+		}
+		for sx := 0; sx < srcW; sx++ {
+			dx := ox + sx
+			if dx < 0 || dx >= dstW {
+				continue
+			}
+			si := (sy*srcW + sx) * 4
+			di := (dy*dstW + dx) * 4
+			dst[di], dst[di+1], dst[di+2], dst[di+3] = src[si], src[si+1], src[si+2], src[si+3]
+		}
+	}
+}
