@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strconv"
 
+	gfxsvg "github.com/go-gfx/gfx/svg"
 	engine "github.com/go-tex/engine"
-	"github.com/go-tex/go-tex.github.io/playground/svgraster"
 	"github.com/go-widgets/toolkit"
 )
 
@@ -30,16 +30,67 @@ type lineBand struct {
 // pageLineMap is the source→render linking data for ONE rendered page: the list
 // of source-line Y-bands present on it, ordered by yTop. The playground searches
 // it to turn a render-pane click into a source line (Y-band containing the click)
-// and a source line into a scroll target (the band's top). Built from
-// [svgraster.Page.Lines] and kept parallel to [compileResult.bitmaps], so page i
-// of the PagedView is described by lineMaps[i].
+// and a source line into a scroll target (the band's top). Built from the shared
+// rasteriser's per-<g> [gfxsvg.Group] bounds (filtered by the go-tex-specific
+// data-l attribute) and kept parallel to [compileResult.bitmaps], so page i of
+// the PagedView is described by lineMaps[i].
 type pageLineMap struct {
 	bands []lineBand
 }
 
-// makeLineMap converts svgraster's per-line Y bands (a map keyed by 1-based source
-// line) into an ordered pageLineMap. Ordering is deterministic: by yTop, then by
-// source line as a tie-break, so the same document always yields the same map.
+// linesFromGroups rebuilds the go-tex-specific source-line→device-Y band map from
+// the shared rasteriser's per-<g> groups. The engine tags each source line's glyph
+// run as <g data-l="N">; the shared [gfxsvg] package reports every <g> with the
+// device-pixel bounds of everything it drew but assigns no meaning to any
+// attribute, so the data-l interpretation lives HERE (it is go-tex-specific). For
+// each group carrying a positive data-l, its bounds' [Min.Y, Max.Y) contributes to
+// that line's band; a line appearing in several groups is unioned on Y. Empty
+// groups (which drew nothing) and non-positive / unparsable data-l are skipped.
+func linesFromGroups(groups []gfxsvg.Group) map[int][2]int {
+	lines := map[int][2]int{}
+	for _, g := range groups {
+		if g.Bounds.Empty() {
+			continue
+		}
+		ln := atoiSafe(g.Attrs["data-l"])
+		if ln <= 0 {
+			continue
+		}
+		b := [2]int{g.Bounds.Min.Y, g.Bounds.Max.Y}
+		if cur, ok := lines[ln]; ok {
+			if cur[0] < b[0] {
+				b[0] = cur[0]
+			}
+			if cur[1] > b[1] {
+				b[1] = cur[1]
+			}
+		}
+		lines[ln] = b
+	}
+	return lines
+}
+
+// atoiSafe parses a non-negative integer, returning 0 on any error (an empty or
+// non-digit string). It guards the data-l parse so a malformed marker never picks
+// up a spurious source line.
+func atoiSafe(s string) int {
+	if len(s) == 0 {
+		return 0
+	}
+	n := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < '0' || c > '9' {
+			return 0
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n
+}
+
+// makeLineMap converts a per-line Y band map (keyed by 1-based source line) into
+// an ordered pageLineMap. Ordering is deterministic: by yTop, then by source line
+// as a tie-break, so the same document always yields the same map.
 func makeLineMap(lines map[int][2]int) pageLineMap {
 	bands := make([]lineBand, 0, len(lines))
 	for ln, band := range lines {
@@ -69,7 +120,7 @@ type compileResult struct {
 }
 
 // toColor converts a toolkit/painter RGBA to an image/color.RGBA (both are
-// straight-alpha 8-bit), the form svgraster.Options consumes.
+// straight-alpha 8-bit), the form gfxsvg.Options consumes.
 func toColor(c toolkit.RGBA) color.RGBA { return color.RGBA{R: c.R, G: c.G, B: c.B, A: c.A} }
 
 // compileFn is the engine entry point compileLaTeX calls, kept as a package var
@@ -78,11 +129,11 @@ func toColor(c toolkit.RGBA) color.RGBA { return color.RGBA{R: c.R, G: c.G, B: c
 var compileFn = engine.CompileToSVGPagesDiag
 
 // compileLaTeX runs the pure-Go TeX engine on src and rasterizes every SVG page
-// with svgraster themed from the given theme (paper = Surface, ink = OnSurface)
-// into a natural-size RGBA bitmap. The bitmaps are handed to the render pane's
-// [toolkit.PagedView], which owns all paging, zoom, card decoration and scroll.
-// It never panics on bad input: a hard compile error yields a result whose
-// errText is set and whose bitmap slice is nil.
+// with the shared [gfxsvg] rasteriser themed from the given theme (paper =
+// Surface, ink = OnSurface) into a natural-size RGBA bitmap. The bitmaps are
+// handed to the render pane's [toolkit.PagedView], which owns all paging, zoom,
+// card decoration and scroll. It never panics on bad input: a hard compile error
+// yields a result whose errText is set and whose bitmap slice is nil.
 func compileLaTeX(src string, theme *toolkit.Theme) compileResult {
 	opt := engine.Options{Size: 11, Lenient: true}
 	pages, diag, err := compileFn([]byte(src), opt)
@@ -90,7 +141,7 @@ func compileLaTeX(src string, theme *toolkit.Theme) compileResult {
 		return compileResult{errText: err.Error()}
 	}
 
-	ropt := svgraster.Options{
+	ropt := gfxsvg.Options{
 		Scale: rasterScale,
 		Ink:   toColor(theme.OnSurface),
 		Paper: toColor(theme.Surface),
@@ -99,21 +150,22 @@ func compileLaTeX(src string, theme *toolkit.Theme) compileResult {
 	var bitmaps []*image.RGBA
 	var lineMaps []pageLineMap
 	for _, svg := range pages {
-		pg, perr := svgraster.Rasterize(svg, ropt)
-		if perr != nil || pg == nil || pg.W <= 0 || pg.H <= 0 {
+		res, perr := gfxsvg.Rasterize(svg, ropt)
+		if perr != nil || res == nil || res.Image == nil || res.Image.W <= 0 || res.Image.H <= 0 {
 			continue
 		}
-		// pg.Pixels is a straight-alpha RGBA buffer of exactly W*H*4 bytes, so it
-		// wraps directly as an *image.RGBA with no copy.
+		// res.Image.Pix is a straight-alpha RGBA buffer of exactly W*H*4 bytes, the
+		// same layout the render pane feeds SetPages, so it wraps directly as an
+		// *image.RGBA with no copy.
 		bitmaps = append(bitmaps, &image.RGBA{
-			Pix:    pg.Pixels,
-			Stride: pg.W * 4,
-			Rect:   image.Rect(0, 0, pg.W, pg.H),
+			Pix:    res.Image.Pix,
+			Stride: res.Image.W * 4,
+			Rect:   image.Rect(0, 0, res.Image.W, res.Image.H),
 		})
-		// The <g data-l="N"> Y-bands svgraster recorded, kept parallel to the bitmap
-		// so the click↔caret linking can map this page's natural pixels to source
-		// lines and back.
-		lineMaps = append(lineMaps, makeLineMap(pg.Lines))
+		// The <g data-l="N"> Y-bands, rebuilt from the shared rasteriser's group
+		// bounds and kept parallel to the bitmap so the click↔caret linking can map
+		// this page's natural pixels to source lines and back.
+		lineMaps = append(lineMaps, makeLineMap(linesFromGroups(res.Groups)))
 	}
 	if len(bitmaps) == 0 {
 		// A compile that produced no drawable page (e.g. an empty document):

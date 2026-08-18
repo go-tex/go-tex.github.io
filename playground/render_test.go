@@ -4,8 +4,10 @@
 package playground
 
 import (
+	"image"
 	"testing"
 
+	gfxsvg "github.com/go-gfx/gfx/svg"
 	engine "github.com/go-tex/engine"
 	"github.com/go-widgets/toolkit"
 )
@@ -53,6 +55,48 @@ func TestDiagSummaryEmpty(t *testing.T) {
 	}
 	if got := diagSummaryEmpty(engine.Diagnostics{OpenGroups: 2}); got == "" {
 		t.Fatalf("open-groups summary empty")
+	}
+}
+
+func TestAtoiSafe(t *testing.T) {
+	cases := map[string]int{
+		"":     0, // empty -> 0
+		"12":   12,
+		"007":  7,
+		"1x":   0, // trailing non-digit -> 0
+		"-3":   0, // leading sign is a non-digit -> 0
+		" 4":   0, // leading space -> 0
+		"9999": 9999,
+	}
+	for in, want := range cases {
+		if got := atoiSafe(in); got != want {
+			t.Fatalf("atoiSafe(%q) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+func TestLinesFromGroups(t *testing.T) {
+	groups := []gfxsvg.Group{
+		{Attrs: map[string]string{"data-l": "2"}, Bounds: image.Rect(0, 10, 100, 30)},
+		{Attrs: map[string]string{"data-l": "2"}, Bounds: image.Rect(0, 25, 100, 45)}, // unions with the first line-2 band
+		{Attrs: map[string]string{"data-l": "5"}, Bounds: image.Rect(0, 60, 100, 80)},
+		{Attrs: map[string]string{"data-l": "0"}, Bounds: image.Rect(0, 90, 100, 100)},   // non-positive line -> skipped
+		{Attrs: map[string]string{"data-l": "bad"}, Bounds: image.Rect(0, 90, 100, 100)}, // unparsable -> skipped
+		{Attrs: map[string]string{}, Bounds: image.Rect(0, 90, 100, 100)},                // no data-l -> skipped
+		{Attrs: map[string]string{"data-l": "7"}, Bounds: image.Rectangle{}},             // empty bounds -> skipped
+	}
+	lines := linesFromGroups(groups)
+	if len(lines) != 2 {
+		t.Fatalf("lines = %v, want exactly {2,5}", lines)
+	}
+	if got := lines[2]; got != [2]int{10, 45} { // Y union of the two line-2 groups
+		t.Fatalf("line 2 band = %v, want [10 45]", got)
+	}
+	if got := lines[5]; got != [2]int{60, 80} {
+		t.Fatalf("line 5 band = %v, want [60 80]", got)
+	}
+	if _, ok := lines[7]; ok {
+		t.Fatalf("empty-bounds group must not register a band")
 	}
 }
 

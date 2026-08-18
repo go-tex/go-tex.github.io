@@ -3,11 +3,11 @@ module github.com/go-tex/go-tex.github.io/playground
 go 1.26.4
 
 require (
-	github.com/go-gfx/gfx v0.6.0
+	github.com/go-gfx/gfx v0.7.0
 	github.com/go-opentype/fonts v0.8.0
 	github.com/go-tex/engine v0.165.0
 	github.com/go-widgets/painter v0.11.0
-	github.com/go-widgets/toolkit v0.205.0
+	github.com/go-widgets/toolkit v0.207.0
 )
 
 require (

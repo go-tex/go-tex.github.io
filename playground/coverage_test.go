@@ -37,7 +37,7 @@ func TestCompileLaTeXHardErrorBranch(t *testing.T) {
 }
 
 func TestCompileLaTeXUnrasterizablePages(t *testing.T) {
-	// Pages that svgraster cannot parse are skipped; with none left, the result
+	// Pages the shared rasteriser cannot parse are skipped; with none left, the result
 	// reports zero drawable pages without an image.
 	withCompileFn(
 		func([]byte, engine.Options) ([]string, engine.Diagnostics, error) {
