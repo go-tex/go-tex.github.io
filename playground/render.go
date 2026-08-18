@@ -4,6 +4,7 @@
 package playground
 
 import (
+	"image"
 	"image/color"
 	"strconv"
 
@@ -12,38 +13,18 @@ import (
 	"github.com/go-widgets/toolkit"
 )
 
-// pageGap is the vertical gap (in device pixels) between stacked pages in the
-// render pane's content image.
-const pageGap = 18
-
 // rasterScale is how many device pixels the engine SVG's point is rasterized to.
 // 2.0 gives crisp glyph outlines without an unreasonably large buffer.
 const rasterScale = 2.0
 
-// pageShadow is the device-pixel offset of each page's drop shadow (down + right),
-// giving the stacked sheets a subtle lift so consecutive pages read as separate
-// cards in the continuous scroll.
-const pageShadow = 4
-
-// pageImg is one page rendered as a standalone centred card (for the paginated
-// render mode): the page centred in a maxW-wide canvas with the same drop-shadow
-// + border as the stacked view.
-type pageImg struct {
-	pixels []byte // RGBA, w*h*4
-	w, h   int
-}
-
-// compileResult is the outcome of one compile+rasterize pass: the composed
-// continuous content image, the per-page card images (paginated mode), the
-// per-source-line vertical bands (for click navigation), a page count and either
-// an error string or nil.
+// compileResult is the outcome of one compile+rasterize pass: the per-page
+// bitmaps (natural device size, fed straight to the render pane's
+// [toolkit.PagedView]), the engine's logical page count, how many pages actually
+// rasterized, and either an error string or nil.
 type compileResult struct {
-	pixels     []byte             // RGBA continuous (stacked) content image, w*h*4
-	w, h       int                // stacked image dimensions in device pixels
-	pageImgs   []pageImg          // per-page centred cards (paginated mode)
-	lineBands  map[int][2]int     // 1-based source line -> [topY, bottomY) in content px
+	bitmaps    []*image.RGBA      // one natural-size RGBA per drawable page
 	pages      int                // engine (logical) page count
-	drawnPages int                // pages actually rasterized + stacked
+	drawnPages int                // pages actually rasterized
 	errText    string             // "" on success; a human message on a hard compile error
 	diag       engine.Diagnostics // undefined commands/environments, dropped math, alarms
 }
@@ -57,16 +38,17 @@ func toColor(c toolkit.RGBA) color.RGBA { return color.RGBA{R: c.R, G: c.G, B: c
 // unrasterizable-page branches the tolerant real engine does not reach.
 var compileFn = engine.CompileToSVGPagesDiag
 
-// compileLaTeX runs the pure-Go TeX engine on src, rasterizes every SVG page
-// with svgraster themed from the given theme (paper = Surface, ink = OnSurface),
-// and stacks the pages into a single tall content image with the pane's
-// Background showing between them. It never panics on bad input: a hard compile
-// error yields a result whose errText is set and whose image is empty.
+// compileLaTeX runs the pure-Go TeX engine on src and rasterizes every SVG page
+// with svgraster themed from the given theme (paper = Surface, ink = OnSurface)
+// into a natural-size RGBA bitmap. The bitmaps are handed to the render pane's
+// [toolkit.PagedView], which owns all paging, zoom, card decoration and scroll.
+// It never panics on bad input: a hard compile error yields a result whose
+// errText is set and whose bitmap slice is nil.
 func compileLaTeX(src string, theme *toolkit.Theme) compileResult {
 	opt := engine.Options{Size: 11, Lenient: true}
 	pages, diag, err := compileFn([]byte(src), opt)
 	if err != nil {
-		return compileResult{errText: err.Error(), lineBands: map[int][2]int{}}
+		return compileResult{errText: err.Error()}
 	}
 
 	ropt := svgraster.Options{
@@ -75,78 +57,36 @@ func compileLaTeX(src string, theme *toolkit.Theme) compileResult {
 		Paper: toColor(theme.Surface),
 	}
 
-	var raster []*svgraster.Page
-	maxW, totalH := 0, 0
+	var bitmaps []*image.RGBA
 	for _, svg := range pages {
 		pg, perr := svgraster.Rasterize(svg, ropt)
-		if perr != nil || pg == nil {
+		if perr != nil || pg == nil || pg.W <= 0 || pg.H <= 0 {
 			continue
 		}
-		raster = append(raster, pg)
-		if pg.W > maxW {
-			maxW = pg.W
-		}
-		totalH += pg.H + pageGap
+		// pg.Pixels is a straight-alpha RGBA buffer of exactly W*H*4 bytes, so it
+		// wraps directly as an *image.RGBA with no copy.
+		bitmaps = append(bitmaps, &image.RGBA{
+			Pix:    pg.Pixels,
+			Stride: pg.W * 4,
+			Rect:   image.Rect(0, 0, pg.W, pg.H),
+		})
 	}
-	if len(raster) == 0 || maxW == 0 || totalH == 0 {
+	if len(bitmaps) == 0 {
 		// A compile that produced no drawable page (e.g. an empty document):
 		// report it as a valid zero-page result rather than a blank crash.
 		return compileResult{
-			lineBands: map[int][2]int{},
-			pages:     len(pages),
-			errText:   diagSummaryEmpty(diag),
-			diag:      diag,
+			pages:   len(pages),
+			errText: diagSummaryEmpty(diag),
+			diag:    diag,
 		}
-	}
-
-	content := make([]byte, maxW*totalH*4)
-	fillRGBA(content, theme.Background)
-
-	// Card decoration: a subtle drop shadow behind each sheet and a 1px border
-	// around it, so the stacked pages read as separate cards (PDF-viewer style).
-	shadowCol := mixRGBA(theme.Background, theme.OnSurface, 0.18)
-	borderCol := theme.Border
-
-	bands := map[int][2]int{}
-	pageImgs := make([]pageImg, 0, len(raster))
-	y := 0
-	for _, pg := range raster {
-		blitPageCard(content, maxW, totalH, pg, y, shadowCol, borderCol)
-		for line, b := range pg.Lines {
-			if _, seen := bands[line]; !seen {
-				bands[line] = [2]int{y + b[0], y + b[1]}
-			}
-		}
-		// Standalone centred card for the paginated mode (page height + room for
-		// the drop shadow below).
-		ch := pg.H + pageShadow
-		card := make([]byte, maxW*ch*4)
-		fillRGBA(card, theme.Background)
-		blitPageCard(card, maxW, ch, pg, 0, shadowCol, borderCol)
-		pageImgs = append(pageImgs, pageImg{pixels: card, w: maxW, h: ch})
-
-		y += pg.H + pageGap
 	}
 
 	return compileResult{
-		pixels:     content,
-		w:          maxW,
-		h:          totalH,
-		pageImgs:   pageImgs,
-		lineBands:  bands,
+		bitmaps:    bitmaps,
 		pages:      len(pages),
-		drawnPages: len(raster),
+		drawnPages: len(bitmaps),
 		diag:       diag,
 	}
-}
-
-// blitPageCard draws one page centred at vertical offset y into dst: a drop
-// shadow (offset down-right), the page pixels, then a 1px border.
-func blitPageCard(dst []byte, dstW, dstH int, pg *svgraster.Page, y int, shadowCol, borderCol toolkit.RGBA) {
-	ox := (dstW - pg.W) / 2
-	fillRectBuf(dst, dstW, dstH, toolkit.Rect{X: ox + pageShadow, Y: y + pageShadow, W: pg.W, H: pg.H}, shadowCol)
-	blit(dst, dstW, dstH, pg.Pixels, pg.W, pg.H, ox, y)
-	strokeRectBuf(dst, dstW, dstH, toolkit.Rect{X: ox, Y: y, W: pg.W, H: pg.H}, borderCol, 1)
 }
 
 // diagSummaryEmpty returns an explanatory message for a compile that yielded no
@@ -162,58 +102,10 @@ func diagSummaryEmpty(d engine.Diagnostics) string {
 	return ""
 }
 
-// fillRGBA paints the whole RGBA buffer with c (opaque).
+// fillRGBA paints the whole RGBA buffer with c (opaque). It is the app's
+// full-frame background clear (State.Draw).
 func fillRGBA(buf []byte, c toolkit.RGBA) {
 	for i := 0; i+3 < len(buf); i += 4 {
 		buf[i], buf[i+1], buf[i+2], buf[i+3] = c.R, c.G, c.B, c.A
-	}
-}
-
-// fillRectBuf fills the (clipped) rectangle r of the dst RGBA buffer with c.
-func fillRectBuf(dst []byte, dstW, dstH int, r toolkit.Rect, c toolkit.RGBA) {
-	for yy := r.Y; yy < r.Y+r.H; yy++ {
-		if yy < 0 || yy >= dstH {
-			continue
-		}
-		for xx := r.X; xx < r.X+r.W; xx++ {
-			if xx < 0 || xx >= dstW {
-				continue
-			}
-			i := (yy*dstW + xx) * 4
-			dst[i], dst[i+1], dst[i+2], dst[i+3] = c.R, c.G, c.B, c.A
-		}
-	}
-}
-
-// strokeRectBuf draws a t-thick border around r into the dst RGBA buffer (four
-// filled bands, each clipped by fillRectBuf).
-func strokeRectBuf(dst []byte, dstW, dstH int, r toolkit.Rect, c toolkit.RGBA, t int) {
-	if t < 1 {
-		t = 1
-	}
-	fillRectBuf(dst, dstW, dstH, toolkit.Rect{X: r.X, Y: r.Y, W: r.W, H: t}, c)           // top
-	fillRectBuf(dst, dstW, dstH, toolkit.Rect{X: r.X, Y: r.Y + r.H - t, W: r.W, H: t}, c) // bottom
-	fillRectBuf(dst, dstW, dstH, toolkit.Rect{X: r.X, Y: r.Y, W: t, H: r.H}, c)           // left
-	fillRectBuf(dst, dstW, dstH, toolkit.Rect{X: r.X + r.W - t, Y: r.Y, W: t, H: r.H}, c) // right
-}
-
-// blit copies a srcW*srcH RGBA image into dst (dstW*dstH) at (ox, oy),
-// row by row, clipping to dst. src is treated as opaque (straight copy); the
-// engine pages already carry their own paper background.
-func blit(dst []byte, dstW, dstH int, src []byte, srcW, srcH, ox, oy int) {
-	for sy := 0; sy < srcH; sy++ {
-		dy := oy + sy
-		if dy < 0 || dy >= dstH {
-			continue
-		}
-		for sx := 0; sx < srcW; sx++ {
-			dx := ox + sx
-			if dx < 0 || dx >= dstW {
-				continue
-			}
-			si := (sy*srcW + sx) * 4
-			di := (dy*dstW + dx) * 4
-			dst[di], dst[di+1], dst[di+2], dst[di+3] = src[si], src[si+1], src[si+2], src[si+3]
-		}
 	}
 }

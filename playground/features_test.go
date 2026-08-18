@@ -54,50 +54,67 @@ func TestDividerDragChangesEditorWidth(t *testing.T) {
 	}
 }
 
-// --- #6 scrollbar: dragging the render pane's thumb scrolls it ----------------
+// --- #6 render pane: pointer drag + wheel routed to the PagedView -------------
 
-func TestScrollbarThumbDragScrollsRender(t *testing.T) {
+// TestRenderDragRoutedToPagedView proves a press-drag-release over the render
+// pane is captured and forwarded to the PagedView (the routing that makes its
+// inner scrollbar thumb + content pan draggable). The PagedView owns the scroll
+// offset, so we assert the app-level routing, not the offset.
+func TestRenderDragRoutedToPagedView(t *testing.T) {
 	s := newTestState(t, false)
-	rr := s.renderView.contentRect()
-	// The sample render is far taller than the viewport, so a draggable thumb
-	// exists at the top (OffsetY 0). Press ON the thumb (right gutter, near top).
-	thumbX := rr.X + rr.W - 3
-	thumbY := rr.Y + 3
-
-	if s.rscroll().OffsetY != 0 {
-		t.Fatalf("precondition: render should start unscrolled, got OffsetY=%d", s.rscroll().OffsetY)
-	}
-	if !s.HandleClick(thumbX, thumbY) {
-		t.Fatalf("press on scrollbar thumb not consumed")
+	rr := s.renderRect()
+	// Press inside the render content (below the PagedView toolbar strip).
+	px, py := rr.X+rr.W/2, rr.Y+toolkit.Scaled(30)+40
+	if !s.HandleClick(px, py) {
+		t.Fatalf("press on the render pane not consumed")
 	}
 	if s.pressKind != pressRight {
 		t.Fatalf("press did not capture the right pane (pressKind=%d)", s.pressKind)
 	}
-	// Drag the thumb down by 200 device px.
-	if !s.HandleMove(thumbX, thumbY+200) {
-		t.Fatalf("thumb drag (move) not consumed")
+	if !s.HandleMove(px, py+200) {
+		t.Fatalf("render drag (move) not routed")
 	}
-	got := s.rscroll().OffsetY
-	if !s.HandleRelease(thumbX, thumbY+200) {
-		t.Fatalf("thumb release not consumed")
+	if !s.HandleRelease(px, py+200) {
+		t.Fatalf("render release not routed")
 	}
-	// The pointer-driven drag must have scrolled the render pane. RED without the
-	// HandleMove routing (the old no-op stub left OffsetY at 0).
-	if got <= 0 {
-		t.Fatalf("dragging the scrollbar thumb did not scroll the render: OffsetY=%d", got)
+	if s.pressKind != pressNone {
+		t.Fatalf("capture not cleared after release")
 	}
 }
 
-// A wheel scroll is the already-working control (pointer-independent path).
-func TestWheelScrollControl(t *testing.T) {
+// TestWheelFlipsPageInPaginatedMode is the round-6 point: a vertical wheel notch
+// over the render pane, in paginated mode on a multi-page document, flips the
+// current page (the PagedView's edge-flip). This is real pointer input through
+// the full State router.
+func TestWheelFlipsPageInPaginatedMode(t *testing.T) {
 	s := newTestState(t, false)
-	rr := s.renderView.contentRect()
-	before := s.rscroll().OffsetY
-	if !s.HandleScroll(rr.X+10, rr.Y+10, 0, 5) {
-		t.Fatalf("wheel scroll not consumed")
+	// Deterministic short pages (each fits the pane) so a single wheel notch flips
+	// at the page edge rather than scrolling within a tall page.
+	s.renderView.SetPages(testBitmaps(6))
+	s.renderView.Mode().Set(toolkit.PagedPaginated)
+	if s.RenderCurrentPage() != 1 {
+		t.Fatalf("precondition: current page = %d, want 1", s.RenderCurrentPage())
 	}
-	if s.rscroll().OffsetY <= before {
-		t.Fatalf("wheel did not scroll render: %d -> %d", before, s.rscroll().OffsetY)
+	rr := s.renderRect()
+	// A downward wheel over the render content flips to the next page.
+	if !s.HandleScroll(rr.X+rr.W/2, rr.Y+toolkit.Scaled(30)+40, 0, 3) {
+		t.Fatalf("wheel over render not consumed")
+	}
+	if s.RenderCurrentPage() != 2 {
+		t.Fatalf("wheel did not flip to page 2: current=%d (pages=%d)",
+			s.RenderCurrentPage(), s.renderView.PageCount())
+	}
+	// An upward wheel flips back.
+	if !s.HandleScroll(rr.X+rr.W/2, rr.Y+toolkit.Scaled(30)+40, 0, -3) {
+		t.Fatalf("upward wheel not consumed")
+	}
+	if s.RenderCurrentPage() != 1 {
+		t.Fatalf("upward wheel did not flip back to page 1: current=%d", s.RenderCurrentPage())
+	}
+	// A wheel over the editor is still consumed by the editor path.
+	er := s.editorRect()
+	if !s.HandleScroll(er.X+10, er.Y+10, 0, 3) {
+		t.Fatalf("editor wheel not consumed")
 	}
 }
 

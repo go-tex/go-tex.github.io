@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/go-widgets/painter"
 	"github.com/go-widgets/toolkit"
 )
 
@@ -160,193 +159,35 @@ func TestNavBaseAndSelectionAccessors(t *testing.T) {
 	}
 }
 
-// --- #4 continuous vs paginated render --------------------------------------
+// --- #4 continuous vs paginated render (PagedView-owned) --------------------
 
-func fakePages(n int) (stacked []byte, w, h int, pages []pageImg) {
-	w, h = 20, 12
-	pages = make([]pageImg, n)
-	for i := range pages {
-		pages[i] = pageImg{pixels: make([]byte, w*h*4), w: w, h: h}
-	}
-	stacked = make([]byte, w*(h*n)*4)
-	return stacked, w, h * n, pages
-}
-
-func TestRenderViewPaginationToggle(t *testing.T) {
-	SetupText(1)
-	rv := newRenderView()
-	rv.SetBounds(toolkit.Rect{X: 0, Y: 0, W: 300, H: 400})
-	stacked, w, h, pages := fakePages(6)
-	rv.SetPages(stacked, w, h, pages)
-
-	// Default is continuous: all pages visible, base height == stacked height.
-	if rv.mode != renderContinuous || rv.visiblePages() != 6 || rv.pageCount() != 6 {
-		t.Fatalf("default mode wrong: mode=%d visible=%d count=%d", rv.mode, rv.visiblePages(), rv.pageCount())
-	}
-	if rv.baseH != h {
-		t.Fatalf("continuous base height = %d, want %d", rv.baseH, h)
-	}
-
-	// Toggle to paginated: exactly one page shown, current page 1.
-	rv.setMode(renderPaginated)
-	if rv.mode != renderPaginated || rv.visiblePages() != 1 {
-		t.Fatalf("paginated: visiblePages=%d, want 1", rv.visiblePages())
-	}
-	if !rv.pageBtn.Selected || rv.contBtn.Selected {
-		t.Fatalf("mode toggle Selected states not updated")
-	}
-	if rv.currentPage() != 0 {
-		t.Fatalf("current page = %d, want 0", rv.currentPage())
-	}
-	if rv.baseH != pages[0].h {
-		t.Fatalf("paginated base height = %d, want one page %d", rv.baseH, pages[0].h)
-	}
-
-	// Next advances; clamps at the last page.
-	rv.step(+1)
-	if rv.currentPage() != 1 {
-		t.Fatalf("after Next: page %d, want 1", rv.currentPage())
-	}
-	for i := 0; i < 20; i++ {
-		rv.step(+1)
-	}
-	if rv.currentPage() != 5 {
-		t.Fatalf("Next past the end should clamp to 5, got %d", rv.currentPage())
-	}
-	// Prev steps back and clamps at 0.
-	for i := 0; i < 20; i++ {
-		rv.step(-1)
-	}
-	if rv.currentPage() != 0 {
-		t.Fatalf("Prev past the start should clamp to 0, got %d", rv.currentPage())
-	}
-
-	// Back to continuous restores all pages.
-	rv.setMode(renderContinuous)
-	if rv.visiblePages() != 6 || rv.baseH != h {
-		t.Fatalf("back to continuous did not restore the stacked view")
-	}
-
-	// step is a no-op in continuous mode and with no pages.
-	rv.step(+1)
-	if rv.currentPage() != 0 {
-		t.Fatalf("step in continuous mode should be a no-op")
-	}
-	empty := newRenderView()
-	empty.step(+1)                 // no pages: no panic, no-op
-	empty.setMode(renderPaginated) // paginated with zero pages
-	if empty.visiblePages() != 0 {
-		t.Fatalf("empty paginated visiblePages should be 0, got %d", empty.visiblePages())
-	}
-}
-
-func TestRenderViewPaginatedClickAndDraw(t *testing.T) {
-	SetupText(1)
-	rv := newRenderView()
-	rv.SetBounds(toolkit.Rect{X: 0, Y: 0, W: 320, H: 400})
-	stacked, w, h, pages := fakePages(4)
-	rv.SetPages(stacked, w, h, pages)
-
-	// Click the "Page" mode button through the router.
-	pb := rv.pageBtn.Bounds()
-	if !rv.click(pb.X+pb.W/2, pb.Y+pb.H/2) {
-		t.Fatalf("mode button click not consumed")
-	}
-	if rv.mode != renderPaginated {
-		t.Fatalf("clicking Page did not switch to paginated")
-	}
-	// Click Next through the router (only hit in paginated mode).
-	nb := rv.nextBtn.Bounds()
-	if !rv.click(nb.X+nb.W/2, nb.Y+nb.H/2) {
-		t.Fatalf("Next click not consumed")
-	}
-	if rv.currentPage() != 1 {
-		t.Fatalf("Next via click did not advance: page %d", rv.currentPage())
-	}
-	// Click Prev.
-	pv := rv.prevBtn.Bounds()
-	rv.click(pv.X+pv.W/2, pv.Y+pv.H/2)
-	if rv.currentPage() != 0 {
-		t.Fatalf("Prev via click did not go back: page %d", rv.currentPage())
-	}
-
-	// Draw while PAGINATED (exercises the prev/next buttons + chevron icons + the
-	// "n / N" indicator).
-	buf := make([]byte, 320*400*4)
-	p := painter.NewPixelPainter(buf, 320, 400)
-	th := toolkit.DefaultLight()
-	rv.Draw(p, th)
-
-	// Click the "Cont" mode button (fires its OnClick closure), then draw
-	// continuous.
-	cb := rv.contBtn.Bounds()
-	rv.click(cb.X+cb.W/2, cb.Y+cb.H/2)
-	if rv.mode != renderContinuous {
-		t.Fatalf("clicking Cont did not switch to continuous")
-	}
-	rv.Draw(p, th)
-}
-
-func TestRenderViewSetPagesClampsStalePage(t *testing.T) {
-	rv := newRenderView()
-	rv.SetBounds(toolkit.Rect{X: 0, Y: 0, W: 300, H: 400})
-	_, w, h, pages := fakePages(6)
-	stacked6, _, _, _ := fakePages(6)
-	rv.SetPages(stacked6, w, h, pages)
-	rv.setMode(renderPaginated)
-	rv.step(+1)
-	rv.step(+1) // page 2
-	// Recompile to a 1-page doc: the stale current page clamps back to 0.
-	_, w1, h1, pages1 := fakePages(1)
-	stacked1, _, _, _ := fakePages(1)
-	rv.SetPages(stacked1, w1, h1, pages1)
-	if rv.currentPage() != 0 {
-		t.Fatalf("stale current page not clamped: %d", rv.currentPage())
-	}
-}
-
+// TestStatePaginationIntrospection drives the render pane's mode / current-page /
+// visible-page introspection, which now reads the PagedView's MVVM observables.
 func TestStatePaginationIntrospection(t *testing.T) {
 	s := newTestState(t, false)
 	s.SetSource(multiPageDoc())
-	if s.RenderMode() != renderContinuous {
+	if s.RenderMode() != int(toolkit.PagedContinuous) {
 		t.Fatalf("default render mode should be continuous")
 	}
 	if s.RenderVisiblePages() < 2 {
 		t.Fatalf("continuous should show all pages, got %d", s.RenderVisiblePages())
 	}
-	// Switch to paginated via the render view; assert one page and stepping.
-	s.renderView.setMode(renderPaginated)
+	// Switch to paginated via the PagedView's Mode observable: one page shown.
+	s.renderView.Mode().Set(toolkit.PagedPaginated)
 	if s.RenderVisiblePages() != 1 || s.RenderCurrentPage() != 1 {
 		t.Fatalf("paginated: visible=%d page=%d", s.RenderVisiblePages(), s.RenderCurrentPage())
 	}
-	s.renderView.step(+1)
+	// A PageDown through the focused viewer advances the 1-based page.
+	s.renderView.SetFocused(true)
+	if !s.HandleKeyDown("PageDown") {
+		t.Fatalf("PageDown not consumed while the viewer is focused")
+	}
 	if s.RenderCurrentPage() != 2 {
-		t.Fatalf("Next did not advance the 1-based page: %d", s.RenderCurrentPage())
+		t.Fatalf("PageDown did not advance the 1-based page: %d", s.RenderCurrentPage())
 	}
-	// DebugRects exposes the new controls.
-	r := s.DebugRects()
-	for _, name := range []string{"modeCont", "modePage", "prevPage", "nextPage"} {
-		if v, ok := r[name]; !ok || v[2] <= 0 {
-			t.Fatalf("DebugRects missing/empty %q: %v", name, v)
-		}
-	}
-}
-
-func TestDrawChevron(t *testing.T) {
-	buf := make([]byte, 40*40*4)
-	p := painter.NewPixelPainter(buf, 40, 40)
-	ink := toolkit.RGB(0, 0, 0)
-	drawChevron(p, toolkit.Rect{X: 0, Y: 0, W: 20, H: 20}, ink, false) // <
-	drawChevron(p, toolkit.Rect{X: 0, Y: 0, W: 20, H: 20}, ink, true)  // >
-	// A painted pixel proves it drew something.
-	nonblank := false
-	for i := 0; i+3 < len(buf); i += 4 {
-		if buf[i+3] != 0 {
-			nonblank = true
-			break
-		}
-	}
-	if !nonblank {
-		t.Fatalf("drawChevron painted nothing")
+	// An empty document reports zero visible pages in paginated mode.
+	s.SetSource(`\documentclass{article}\begin{document}\end{document}`)
+	if s.RenderVisiblePages() != 0 {
+		t.Fatalf("empty paginated visiblePages = %d, want 0", s.RenderVisiblePages())
 	}
 }

@@ -136,9 +136,12 @@ func TestCompileLaTeXStacksAllPages(t *testing.T) {
 	if multi.pages != multi.drawnPages {
 		t.Fatalf("pages(%d) != drawnPages(%d) for a clean multi-page compile", multi.pages, multi.drawnPages)
 	}
-	// The stacked content is far taller than a single page (all pages stacked).
-	if multi.h <= single.h*2 {
-		t.Fatalf("stacked height %d not >> single-page height %d", multi.h, single.h)
+	// One bitmap per drawn page; the multi-page doc yields more than the single.
+	if len(multi.bitmaps) != multi.drawnPages {
+		t.Fatalf("bitmaps(%d) != drawnPages(%d)", len(multi.bitmaps), multi.drawnPages)
+	}
+	if len(multi.bitmaps) <= len(single.bitmaps) {
+		t.Fatalf("multi-page bitmaps %d not > single-page %d", len(multi.bitmaps), len(single.bitmaps))
 	}
 }
 
@@ -147,66 +150,16 @@ func TestPaginationIntrospection(t *testing.T) {
 	if s.PageCount() != 1 || s.DrawnPages() != 1 {
 		t.Fatalf("sample doc should be 1 page: pages=%d drawn=%d", s.PageCount(), s.DrawnPages())
 	}
-	h1 := s.RenderContentHeight()
+	if s.renderView.PageCount() != 1 {
+		t.Fatalf("render pane should hold 1 page, got %d", s.renderView.PageCount())
+	}
 
 	s.SetSource(multiPageDoc())
 	if s.PageCount() < 2 || s.DrawnPages() < 2 {
 		t.Fatalf("multi-page: pages=%d drawn=%d, want >=2", s.PageCount(), s.DrawnPages())
 	}
-	if s.RenderContentHeight() <= h1 {
-		t.Fatalf("multi-page content height %d not taller than single %d", s.RenderContentHeight(), h1)
-	}
-}
-
-// --- #6 horizontal swipe -> horizontal scrollbar ----------------------------
-
-func TestHorizontalSwipeScrollsRender(t *testing.T) {
-	s := newTestState(t, false)
-	// Zoom well past 100% so the render content overflows the pane horizontally
-	// (a horizontal scrollbar exists to move).
-	for i := 0; i < 6; i++ {
-		s.renderView.zoomBy(zoomStep)
-	}
-	rr := s.renderRect()
-
-	if s.RenderOffsetX() != 0 {
-		t.Fatalf("precondition: horizontal offset should start at 0, got %d", s.RenderOffsetX())
-	}
-	// A horizontal swipe (dx>0) moves the horizontal scrollbar right.
-	if !s.HandleScroll(rr.X+10, rr.Y+10, 3, 0) {
-		t.Fatalf("horizontal swipe not consumed")
-	}
-	afterRight := s.RenderOffsetX()
-	if afterRight <= 0 {
-		t.Fatalf("horizontal swipe did not move OffsetX: %d", afterRight)
-	}
-	// A swipe the other way (dx<0) moves it back left.
-	s.HandleScroll(rr.X+10, rr.Y+10, -3, 0)
-	if s.RenderOffsetX() >= afterRight {
-		t.Fatalf("reverse swipe did not decrease OffsetX: %d -> %d", afterRight, s.RenderOffsetX())
-	}
-	// A pure vertical wheel (dx==0) leaves OffsetX unchanged.
-	xBefore := s.RenderOffsetX()
-	s.HandleScroll(rr.X+10, rr.Y+10, 0, 4)
-	if s.RenderOffsetX() != xBefore {
-		t.Fatalf("vertical wheel changed OffsetX: %d -> %d", xBefore, s.RenderOffsetX())
-	}
-}
-
-func TestBufDrawHelpersClip(t *testing.T) {
-	dst := make([]byte, 4*4*4) // 4x4 RGBA
-	red := toolkit.RGB(0xFF, 0, 0)
-	// A rect straddling every edge exercises all four clip branches.
-	fillRectBuf(dst, 4, 4, toolkit.Rect{X: -1, Y: -1, W: 6, H: 6}, red)
-	if dst[0] != 0xFF { // (0,0) painted
-		t.Fatalf("fillRectBuf did not paint the in-bounds region")
-	}
-	// strokeRectBuf: t<1 clamps to 1; a border that overflows is clipped.
-	blue := toolkit.RGB(0, 0, 0xFF)
-	strokeRectBuf(dst, 4, 4, toolkit.Rect{X: 0, Y: 0, W: 4, H: 4}, blue, 0)
-	i := (0*4 + 0) * 4
-	if dst[i+2] != 0xFF {
-		t.Fatalf("strokeRectBuf did not paint the top-left border")
+	if s.renderView.PageCount() != s.DrawnPages() {
+		t.Fatalf("render pane page count %d != drawn %d", s.renderView.PageCount(), s.DrawnPages())
 	}
 }
 
@@ -276,32 +229,4 @@ func TestFillTopRoundRectBranches(t *testing.T) {
 	fillTopRoundRect(p, toolkit.Rect{X: 0, Y: 0, W: 20, H: 3}, 6, red)  // H<=rad -> no bottom square
 	fillTopRoundRect(p, toolkit.Rect{X: 0, Y: 0, W: 20, H: 20}, 6, red) // normal top-round
 	fillTopRoundRect(p, toolkit.Rect{X: 0, Y: 0, W: 0, H: 20}, 6, red)  // W<=0 -> plain fill
-}
-
-// --- #3 zoom/fit icons ------------------------------------------------------
-
-func TestZoomIconsDraw(t *testing.T) {
-	SetupText(1)
-	buf := make([]byte, 60*40*4)
-	p := painter.NewPixelPainter(buf, 60, 40)
-	ink := toolkit.RGB(0x20, 0x20, 0x20)
-	drawZoomIcon(p, toolkit.Rect{X: 0, Y: 0, W: 28, H: 24}, ink, true)   // loupe +
-	drawZoomIcon(p, toolkit.Rect{X: 28, Y: 0, W: 28, H: 24}, ink, false) // loupe -
-	drawFitIcon(p, toolkit.Rect{X: 0, Y: 0, W: 28, H: 24}, ink)          // fit width
-
-	// drawLine degenerate (start==end) hits the steps==0 branch; a steep line
-	// (|dy|>|dx|) hits the dy-dominant branch.
-	drawLine(p, 5, 5, 5, 5, 1, ink)
-	drawLine(p, 0, 0, 3, 30, 1, ink)
-
-	// iconSquare: tiny rect clamps the side up; wide vs tall pick different sides.
-	if _, _, d := iconSquare(toolkit.Rect{X: 0, Y: 0, W: 4, H: 4}); d < 6 {
-		t.Fatalf("iconSquare should clamp a tiny side up to >=6, got %d", d)
-	}
-	iconSquare(toolkit.Rect{X: 0, Y: 0, W: 100, H: 40}) // W not the smaller side
-	iconSquare(toolkit.Rect{X: 0, Y: 0, W: 20, H: 100}) // W is the smaller side
-
-	if absI(-3) != 3 || absI(3) != 3 {
-		t.Fatalf("absI wrong")
-	}
 }

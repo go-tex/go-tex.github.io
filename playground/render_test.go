@@ -15,18 +15,20 @@ func TestCompileLaTeXSampleProducesContent(t *testing.T) {
 	if res.errText != "" {
 		t.Fatalf("sample compile error: %s", res.errText)
 	}
-	if res.pages <= 0 || res.w <= 0 || res.h <= 0 {
-		t.Fatalf("bad result: pages=%d w=%d h=%d", res.pages, res.w, res.h)
+	if res.pages <= 0 || res.drawnPages <= 0 {
+		t.Fatalf("bad result: pages=%d drawn=%d", res.pages, res.drawnPages)
 	}
-	if len(res.pixels) != res.w*res.h*4 {
-		t.Fatalf("pixel length %d, want %d", len(res.pixels), res.w*res.h*4)
+	if len(res.bitmaps) != res.drawnPages {
+		t.Fatalf("bitmaps %d != drawnPages %d", len(res.bitmaps), res.drawnPages)
 	}
-	if len(res.lineBands) == 0 {
-		t.Fatalf("no line bands")
-	}
-	for line, b := range res.lineBands {
-		if b[0] < 0 || b[1] > res.h || b[0] >= b[1] {
-			t.Fatalf("bad band for line %d: %v (h=%d)", line, b, res.h)
+	// Each page bitmap is a well-formed natural-size RGBA (Pix == W*H*4).
+	for i, img := range res.bitmaps {
+		if img == nil {
+			t.Fatalf("page %d bitmap is nil", i)
+		}
+		w, h := img.Rect.Dx(), img.Rect.Dy()
+		if w <= 0 || h <= 0 || len(img.Pix) != w*h*4 {
+			t.Fatalf("page %d bad bitmap: %dx%d, Pix=%d", i, w, h, len(img.Pix))
 		}
 	}
 }
@@ -36,8 +38,8 @@ func TestCompileLaTeXHardError(t *testing.T) {
 	// uses lenient mode; force a genuine structural error instead.
 	res := compileLaTeX(`\documentclass{article}\begin{document}\end{document}\end{document}`, toolkit.DefaultLight())
 	// Whatever the engine decides, the function must not panic and must return a
-	// coherent result (either an error string or a valid image).
-	if res.errText == "" && res.pixels == nil && res.pages == 0 {
+	// coherent result (either an error string or valid bitmaps).
+	if res.errText == "" && res.bitmaps == nil && res.pages == 0 {
 		t.Logf("empty-but-clean result (acceptable)")
 	}
 }
@@ -58,24 +60,6 @@ func TestToColor(t *testing.T) {
 	c := toColor(toolkit.RGB(0x12, 0x34, 0x56))
 	if c.R != 0x12 || c.G != 0x34 || c.B != 0x56 || c.A != 0xFF {
 		t.Fatalf("toColor mismatch: %+v", c)
-	}
-}
-
-func TestBlitClips(t *testing.T) {
-	dst := make([]byte, 4*4*4) // 4x4
-	src := []byte{
-		1, 1, 1, 1, 2, 2, 2, 2,
-		3, 3, 3, 3, 4, 4, 4, 4,
-	} // 2x2
-	// Place partly off the top-left (negative origin) and off the bottom-right.
-	blit(dst, 4, 4, src, 2, 2, -1, -1) // only src(1,1)=4 lands at dst(0,0)
-	if dst[0] != 4 {
-		t.Fatalf("clip top-left: dst(0,0)=%d want 4", dst[0])
-	}
-	blit(dst, 4, 4, src, 2, 2, 3, 3) // only src(0,0)=1 lands at dst(3,3)
-	i := (3*4 + 3) * 4
-	if dst[i] != 1 {
-		t.Fatalf("clip bottom-right: dst(3,3)=%d want 1", dst[i])
 	}
 }
 
