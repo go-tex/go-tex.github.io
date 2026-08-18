@@ -3,12 +3,13 @@
 
 // Package playground is the go-tex WebAssembly LaTeX playground rendered as a
 // single go-widgets/toolkit canvas application: a toolbar (syntax colour-scheme
-// picker, minimap toggle, Rendered/Log toggle), a horizontal split of a
-// CodeEditor (line numbers, LaTeX syntax colours, current-line highlight) with
-// an optional minimap on the left and a live, scrollable pane of the pure-Go
-// gotex render (or a diagnostics Log) on the right, and a status bar (caret
-// position, encoding, page count, issue count). The caret scrolls the render to
-// its source line and clicking the render moves the caret there.
+// picker, minimap toggle), a horizontal split of a CodeEditor (line numbers,
+// LaTeX syntax colours, current-line highlight) with an optional code minimap on
+// the left and, on the right, a small Rendered│Log tab strip over either a
+// zoomable live pane of the pure-Go gotex render or a diagnostics Log, and a
+// status bar (caret position, encoding, page count, issue count). The caret
+// scrolls the render to its source line and clicking the render moves the caret
+// there.
 //
 // The whole View + logic lives here as a plain, tagless package so a native
 // `go test` exercises construction, layout, compile, rasterize, event dispatch
@@ -95,21 +96,19 @@ type State struct {
 	theme *toolkit.Theme
 	dark  bool
 
-	editor       *toolkit.CodeEditor
-	hl           *latexhl.Highlighter
-	renderImg    *toolkit.Image
-	renderScroll *toolkit.ScrollView
-	logView      *logView
-	minimap      *minimap
-	paned        *toolkit.Paned
-	status       *toolkit.Statusbar
+	editor     *toolkit.CodeEditor
+	hl         *latexhl.Highlighter
+	renderView *renderView
+	logView    *logView
+	rightPane  *rightPane
+	minimap    *minimap
+	paned      *toolkit.Paned
+	status     *toolkit.Statusbar
 
 	schemePicker *toolkit.DropDown
 	minimapBtn   *toolkit.Button
-	logBtn       *toolkit.Button
 
 	showMinimap bool
-	showLog     bool
 
 	// last compile output.
 	lineBands map[int][2]int
@@ -155,11 +154,11 @@ func NewState(w, h int, dark bool) *State {
 		}
 	}
 
-	s.renderImg = toolkit.NewImage(nil, 0, 0)
-	s.renderScroll = toolkit.NewScrollView(s.renderImg)
+	s.renderView = newRenderView()
 	s.logView = &logView{}
+	s.rightPane = newRightPane(s.renderView, s.logView)
 	s.minimap = &minimap{}
-	s.paned = toolkit.NewHPaned(s.editor, s.renderScroll)
+	s.paned = toolkit.NewHPaned(s.editor, s.rightPane)
 
 	s.schemePicker = toolkit.NewDropDown(latexhl.ThemeNames(), 0)
 	s.schemePicker.OnSelect = func(idx int) { s.applyScheme(idx) }
@@ -168,7 +167,6 @@ func NewState(w, h int, dark bool) *State {
 		s.layout()
 		s.dirty = true
 	})
-	s.logBtn = toolkit.NewButton("Log", func() { s.toggleLog() })
 
 	s.status = toolkit.NewStatusbar([]string{"Ln 1, Col 1", "UTF-8", "0 pages", ""})
 
@@ -192,15 +190,17 @@ func (s *State) applyScheme(idx int) {
 	s.dirty = true
 }
 
-// toggleLog swaps the right pane between the render and the diagnostics Log.
+// showLog reports whether the diagnostics Log tab is the active right-pane tab.
+func (s *State) showLog() bool { return s.rightPane.isLog() }
+
+// toggleLog swaps the active right-pane tab between the render and the
+// diagnostics Log.
 func (s *State) toggleLog() {
-	s.showLog = !s.showLog
-	if s.showLog {
-		s.paned.Second = s.logView
+	if s.rightPane.isLog() {
+		s.rightPane.setActive(tabRender)
 	} else {
-		s.paned.Second = s.renderScroll
+		s.rightPane.setActive(tabLog)
 	}
-	s.layout()
 	s.dirty = true
 }
 
@@ -248,14 +248,49 @@ func (s *State) ClearDirty()           { s.dirty = false }
 func (s *State) Theme() *toolkit.Theme { return s.theme }
 
 // Read-only introspection for the host/verification harness: the editor pane
-// width, the render pane's vertical scroll offset, and whether the Log is shown.
-// They let a headless test assert a real width/scroll change after a drag.
-func (s *State) EditorWidth() int   { return s.editor.Bounds().W }
-func (s *State) RenderOffsetY() int { return s.renderScroll.OffsetY }
-func (s *State) ShowLog() bool      { return s.showLog }
+// width, the render pane's vertical scroll offset, whether the Log is shown, the
+// active tab index, the render zoom percentage, the selected colour scheme index
+// and the minimap's token-segment count. They let a headless test assert real
+// state changes after a pointer interaction.
+func (s *State) EditorWidth() int    { return s.editor.Bounds().W }
+func (s *State) RenderOffsetY() int  { return s.renderView.offsetY() }
+func (s *State) ShowLog() bool       { return s.showLog() }
+func (s *State) ActiveTab() int      { return s.rightPane.active }
+func (s *State) ZoomPercent() int    { return s.renderView.ZoomPercent() }
+func (s *State) SelectedScheme() int { return s.schemePicker.Selected }
+
+// MinimapSegments returns how many coloured token segments the minimap paints
+// for the current buffer (proving it renders per-token rows, not one solid bar
+// per line). It refreshes the overview inputs first, so it is valid after layout.
+func (s *State) MinimapSegments() int {
+	spans := s.hl.Highlight("latex", s.editor.Lines, s.theme)
+	s.minimap.update(s.editor.Lines, spans, s.editor.ScrollLine, s.visibleEditorLines())
+	return s.minimap.segmentCount(s.theme.OnSurface)
+}
 
 // DividerX is the surface x of the resize grip's leading edge.
 func (s *State) DividerX() int { return s.paned.Bounds().X + s.paned.Position }
+
+// DebugRects returns the DEVICE-pixel [x,y,w,h] rectangles of the interactive
+// targets a headless verification harness needs to click precisely (the colour
+// scheme picker and its open popover, the two right-pane tabs, the render zoom
+// buttons and the render content area). It is host-facing introspection only.
+func (s *State) DebugRects() map[string][4]int {
+	rect := func(r toolkit.Rect) [4]int { return [4]int{r.X, r.Y, r.W, r.H} }
+	tb := s.rightPane.tabs.Bounds()
+	half := tb.W / 2
+	rc := s.renderView.contentRect()
+	return map[string][4]int{
+		"picker":        rect(s.schemePicker.Bounds()),
+		"popover":       rect(s.schemePicker.PopoverBounds()),
+		"renderTab":     {tb.X, tb.Y, half, tb.H},
+		"logTab":        {tb.X + half, tb.Y, tb.W - half, tb.H},
+		"zoomOut":       rect(s.renderView.zoomOut.Bounds()),
+		"zoomIn":        rect(s.renderView.zoomIn.Bounds()),
+		"fit":           rect(s.renderView.fitBtn.Bounds()),
+		"renderContent": rect(rc),
+	}
+}
 
 // TakePendingCompile drains the edit latch (once).
 func (s *State) TakePendingCompile() bool {
@@ -282,7 +317,9 @@ func (s *State) layout() {
 	s.applyLeftSplit()
 }
 
-// layoutToolbar places the three controls left-to-right in the toolbar row.
+// layoutToolbar places the colour-scheme picker and the minimap toggle
+// left-to-right in the toolbar row (the former standalone "Log" toggle is now a
+// tab in the right pane).
 func (s *State) layoutToolbar() {
 	pad := toolkit.Scaled(6)
 	gap := toolkit.Scaled(8)
@@ -294,8 +331,6 @@ func (s *State) layoutToolbar() {
 	x += pw + gap
 	bw := toolkit.Scaled(84)
 	s.minimapBtn.SetBounds(toolkit.Rect{X: x, Y: yy, W: bw, H: h})
-	x += bw + gap
-	s.logBtn.SetBounds(toolkit.Rect{X: x, Y: yy, W: bw, H: h})
 }
 
 // applyLeftSplit reserves a strip of the left pane for the minimap (when shown),
@@ -326,14 +361,9 @@ func (s *State) Compile() {
 	s.logView.set(res.diag, res.errText)
 
 	if res.pixels != nil {
-		s.renderImg.Pixels = res.pixels
-		s.renderImg.W, s.renderImg.H = res.w, res.h
-		s.renderImg.SetBounds(toolkit.Rect{X: 0, Y: 0, W: res.w, H: res.h})
-		s.renderScroll.SetContentSize(res.w, res.h)
+		s.renderView.SetContent(res.pixels, res.w, res.h)
 	} else {
-		s.renderImg.Pixels = nil
-		s.renderImg.W, s.renderImg.H = 0, 0
-		s.renderScroll.SetContentSize(0, 0)
+		s.renderView.SetContent(nil, 0, 0)
 	}
 	s.updateStatus()
 	s.dirty = true
@@ -382,15 +412,16 @@ func (s *State) Draw(buf []byte) {
 	p.FillRect(toolkit.Rect{X: 0, Y: s.toolbarH - toolkit.Scaled(1), W: s.w, H: toolkit.Scaled(1)}, s.theme.Border)
 	s.schemePicker.Draw(p, s.theme)
 	s.minimapBtn.Draw(p, s.theme)
-	s.logBtn.Draw(p, s.theme)
 
-	// Body: editor + (render|log) + handle, then the minimap overlay.
+	// Body: editor + right pane (tabs over render|log) + handle, then the
+	// minimap overlay.
 	s.paned.Draw(p, s.theme)
 	if s.showMinimap && s.minimap.Bounds().W > 0 {
-		s.minimap.update(s.editor.Lines, s.editor.ScrollLine, s.visibleEditorLines())
+		spans := s.hl.Highlight("latex", s.editor.Lines, s.theme)
+		s.minimap.update(s.editor.Lines, spans, s.editor.ScrollLine, s.visibleEditorLines())
 		s.minimap.Draw(p, s.theme)
 	}
-	if s.errText != "" && !s.showLog {
+	if s.errText != "" && !s.showLog() {
 		s.drawError(p)
 	}
 	s.status.Draw(p, s.theme)
@@ -402,9 +433,10 @@ func (s *State) Draw(buf []byte) {
 	s.dirty = false
 }
 
-// drawError overlays the compile error at the top of the render pane.
+// drawError overlays the compile error at the top of the render content area
+// (below the tab strip and the render's own zoom toolbar).
 func (s *State) drawError(p painter.Painter) {
-	r := s.paned.Second.Bounds()
+	r := s.renderView.contentRect()
 	band := toolkit.Rect{X: r.X, Y: r.Y, W: r.W, H: toolkit.Scaled(22)}
 	p.FillRect(band, s.theme.SurfaceAlt)
 	toolkit.DrawText(p, r.X+toolkit.Scaled(8), r.Y+toolkit.Scaled(6), "Error: "+s.errText, s.theme.Accent)
@@ -424,13 +456,6 @@ func (s *State) onDivider(x, y int) bool {
 	return x >= d0 && x < d1
 }
 
-// onRenderScrollbar reports whether x falls in the render pane's vertical
-// scrollbar gutter (so a press there scrolls rather than navigates).
-func (s *State) onRenderScrollbar(x int) bool {
-	r := s.paned.Second.Bounds()
-	return x >= r.X+r.W-toolkit.Scaled(16)
-}
-
 // HandleClick routes a pointer press and captures it for a following drag.
 func (s *State) HandleClick(x, y int) bool {
 	s.pressKind = pressNone
@@ -444,7 +469,7 @@ func (s *State) HandleClick(x, y int) bool {
 
 	// Toolbar controls.
 	if y < s.toolbarH {
-		for _, w := range []toolkit.Widget{s.schemePicker, s.minimapBtn, s.logBtn} {
+		for _, w := range []toolkit.Widget{s.schemePicker, s.minimapBtn} {
 			r := w.Bounds()
 			if r.Contains(x, y) {
 				w.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - r.X, Y: y - r.Y})
@@ -485,12 +510,17 @@ func (s *State) HandleClick(x, y int) bool {
 		return true
 	}
 
-	// Right pane (render ScrollView or Log view).
-	rr := s.paned.Second.Bounds()
+	// Right pane (tab strip over the render view or the Log view).
+	rr := s.rightPane.Bounds()
 	if rr.Contains(x, y) {
-		s.paned.Second.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - rr.X, Y: y - rr.Y})
-		if !s.showLog && !s.onRenderScrollbar(x) {
-			s.navRenderToEditor(x, y)
+		s.rightPane.click(x, y)
+		// App-level link: a click on the render content jumps the caret to the
+		// nearest source line (ignored on the tab strip, the zoom toolbar or the
+		// scrollbar gutter, where baseContentYAt reports not-ok).
+		if !s.showLog() {
+			if baseY, ok := s.renderView.baseContentYAt(x, y); ok {
+				s.navRenderToEditorAt(baseY)
+			}
 		}
 		s.pressKind = pressRight
 		s.dirty = true
@@ -520,8 +550,7 @@ func (s *State) HandleMove(x, y int) bool {
 		s.dirty = true
 		return true
 	case pressRight:
-		rr := s.paned.Second.Bounds()
-		s.paned.Second.OnEvent(toolkit.Event{Kind: toolkit.EventMouseDrag, X: x - rr.X, Y: y - rr.Y})
+		s.rightPane.drag(x, y)
 		s.dirty = true
 		return true
 	}
@@ -539,8 +568,7 @@ func (s *State) HandleRelease(x, y int) bool {
 		er := s.editor.Bounds()
 		s.editor.OnEvent(toolkit.Event{Kind: toolkit.EventMouseUp, X: x - er.X, Y: y - er.Y})
 	case pressRight:
-		rr := s.paned.Second.Bounds()
-		s.paned.Second.OnEvent(toolkit.Event{Kind: toolkit.EventMouseUp, X: x - rr.X, Y: y - rr.Y})
+		s.rightPane.release(x, y)
 	}
 	s.pressKind = pressNone
 	if kind != pressNone {
@@ -553,16 +581,9 @@ func (s *State) HandleRelease(x, y int) bool {
 // HandleScroll forwards a wheel scroll (delta in rows) to the pane under the
 // pointer.
 func (s *State) HandleScroll(x, y, delta int) bool {
-	rr := s.paned.Second.Bounds()
+	rr := s.rightPane.Bounds()
 	if rr.Contains(x, y) {
-		if s.showLog {
-			s.logView.offset += delta * rowStep
-			if s.logView.offset < 0 {
-				s.logView.offset = 0
-			}
-		} else {
-			s.renderScroll.Scroll(0, delta*rowStep)
-		}
+		s.rightPane.scrollWheel(x, y, delta)
 		s.dirty = true
 		return true
 	}
@@ -610,35 +631,29 @@ func (s *State) HandleKeyDown(code string) bool {
 // the top of the viewport.
 func (s *State) minimapScrollTo(y int) {
 	// Refresh the overview's line cache so a click maps correctly even before the
-	// first paint (Draw also refreshes it every frame).
-	s.minimap.update(s.editor.Lines, s.editor.ScrollLine, s.visibleEditorLines())
+	// first paint (Draw also refreshes it every frame). The pointer mapping needs
+	// only the line count, so the per-line spans are left nil here.
+	s.minimap.update(s.editor.Lines, nil, s.editor.ScrollLine, s.visibleEditorLines())
 	s.editor.ScrollLine = s.minimap.lineAtY(y) // lineAtY already clamps to [0, n-1]
 }
 
 // scrollRenderToLine scrolls the render pane so the band for a 1-based source
-// line is visible. No-op when the render pane is hidden or the line has no band.
+// line is visible. No-op when the Log tab is active or the line has no band.
 func (s *State) scrollRenderToLine(line int) {
-	if s.showLog {
+	if s.showLog() {
 		return
 	}
 	band, ok := s.lineBands[line]
 	if !ok {
 		return
 	}
-	rr := s.paned.Second.Bounds()
-	target := band[0] - rr.H/3
-	if target < 0 {
-		target = 0
-	}
-	s.renderScroll.Scroll(0, target-s.renderScroll.OffsetY)
+	s.renderView.scrollToBaseY(band[0])
 }
 
-// navRenderToEditor maps a click in the render pane to the nearest source line
-// and moves the editor caret there.
-func (s *State) navRenderToEditor(x, y int) {
-	rr := s.paned.Second.Bounds()
-	contentY := (y - rr.Y) + s.renderScroll.OffsetY
-	line := s.lineAt(contentY)
+// navRenderToEditorAt maps a BASE-render content Y (from a render click) to the
+// nearest source line and moves the editor caret there.
+func (s *State) navRenderToEditorAt(baseY int) {
+	line := s.lineAt(baseY)
 	if line <= 0 {
 		return
 	}

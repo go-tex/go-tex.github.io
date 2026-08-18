@@ -240,11 +240,25 @@ func main() {
 	// scroll change after a pointer drag).
 	js.Global().Set("gotexDebug", js.FuncOf(func(js.Value, []js.Value) any {
 		return map[string]any{
-			"editorW":       state.EditorWidth(),
-			"renderOffsetY": state.RenderOffsetY(),
-			"showLog":       state.ShowLog(),
-			"dividerX":      state.DividerX(),
+			"editorW":         state.EditorWidth(),
+			"renderOffsetY":   state.RenderOffsetY(),
+			"showLog":         state.ShowLog(),
+			"dividerX":        state.DividerX(),
+			"activeTab":       state.ActiveTab(),
+			"zoomPercent":     state.ZoomPercent(),
+			"selectedScheme":  state.SelectedScheme(),
+			"minimapSegments": state.MinimapSegments(),
 		}
+	}))
+
+	// gotexRects exposes the device-pixel rectangles of the interactive targets
+	// so a headless harness can click them precisely.
+	js.Global().Set("gotexRects", js.FuncOf(func(js.Value, []js.Value) any {
+		out := map[string]any{}
+		for name, r := range state.DebugRects() {
+			out[name] = []any{r[0], r[1], r[2], r[3]}
+		}
+		return out
 	}))
 
 	render()

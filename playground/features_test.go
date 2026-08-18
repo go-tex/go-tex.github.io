@@ -58,14 +58,14 @@ func TestDividerDragChangesEditorWidth(t *testing.T) {
 
 func TestScrollbarThumbDragScrollsRender(t *testing.T) {
 	s := newTestState(t, false)
-	rr := s.paned.Second.Bounds()
+	rr := s.renderView.contentRect()
 	// The sample render is far taller than the viewport, so a draggable thumb
 	// exists at the top (OffsetY 0). Press ON the thumb (right gutter, near top).
 	thumbX := rr.X + rr.W - 3
 	thumbY := rr.Y + 3
 
-	if s.renderScroll.OffsetY != 0 {
-		t.Fatalf("precondition: render should start unscrolled, got OffsetY=%d", s.renderScroll.OffsetY)
+	if s.rscroll().OffsetY != 0 {
+		t.Fatalf("precondition: render should start unscrolled, got OffsetY=%d", s.rscroll().OffsetY)
 	}
 	if !s.HandleClick(thumbX, thumbY) {
 		t.Fatalf("press on scrollbar thumb not consumed")
@@ -77,7 +77,7 @@ func TestScrollbarThumbDragScrollsRender(t *testing.T) {
 	if !s.HandleMove(thumbX, thumbY+200) {
 		t.Fatalf("thumb drag (move) not consumed")
 	}
-	got := s.renderScroll.OffsetY
+	got := s.rscroll().OffsetY
 	if !s.HandleRelease(thumbX, thumbY+200) {
 		t.Fatalf("thumb release not consumed")
 	}
@@ -91,13 +91,13 @@ func TestScrollbarThumbDragScrollsRender(t *testing.T) {
 // A wheel scroll is the already-working control (pointer-independent path).
 func TestWheelScrollControl(t *testing.T) {
 	s := newTestState(t, false)
-	rr := s.paned.Second.Bounds()
-	before := s.renderScroll.OffsetY
+	rr := s.renderView.contentRect()
+	before := s.rscroll().OffsetY
 	if !s.HandleScroll(rr.X+10, rr.Y+10, 5) {
 		t.Fatalf("wheel scroll not consumed")
 	}
-	if s.renderScroll.OffsetY <= before {
-		t.Fatalf("wheel did not scroll render: %d -> %d", before, s.renderScroll.OffsetY)
+	if s.rscroll().OffsetY <= before {
+		t.Fatalf("wheel did not scroll render: %d -> %d", before, s.rscroll().OffsetY)
 	}
 }
 
@@ -185,18 +185,20 @@ func TestLogPanelListsDiagnostics(t *testing.T) {
 		t.Fatalf("status issue segment = %q", s.status.Segments[3])
 	}
 
-	// Toggle to the Log view: the right pane becomes the logView.
-	lb := s.logBtn.Bounds()
-	s.HandleClick(lb.X+2, lb.Y+2)
-	if !s.showLog || s.paned.Second != toolkit.Widget(s.logView) {
-		t.Fatalf("Log toggle did not swap in the log view")
+	// Click the "Log" tab: the right pane switches to the diagnostics log.
+	tb := s.rightPane.tabs.Bounds()
+	logSegX := tb.X + tb.W*3/4 // right half = second segment ("Log")
+	tabY := tb.Y + tb.H/2
+	s.HandleClick(logSegX, tabY)
+	if !s.showLog() || s.rightPane.active != tabLog {
+		t.Fatalf("Log tab did not switch the right pane to the log view")
 	}
 	buf := make([]byte, testW*testH*4)
 	s.Draw(buf) // exercises the log view draw path
-	// Toggle back.
-	s.HandleClick(lb.X+2, lb.Y+2)
-	if s.showLog || s.paned.Second != toolkit.Widget(s.renderScroll) {
-		t.Fatalf("Log toggle back did not restore the render view")
+	// Click the "Rendered" tab (left half) to switch back.
+	s.HandleClick(tb.X+tb.W/4, tabY)
+	if s.showLog() || s.rightPane.active != tabRender {
+		t.Fatalf("Rendered tab did not restore the render view")
 	}
 }
 
