@@ -6,6 +6,7 @@ package playground
 import (
 	"image"
 	"image/color"
+	"sort"
 	"strconv"
 
 	engine "github.com/go-tex/engine"
@@ -17,12 +18,50 @@ import (
 // 2.0 gives crisp glyph outlines without an unreasonably large buffer.
 const rasterScale = 2.0
 
+// lineBand is one source line's natural-pixel Y extent on a single rendered page.
+// [yTop, yBot) are page-natural (un-zoomed bitmap) pixels — the exact coordinate
+// space [toolkit.PagedView.PageAt] returns and [toolkit.PagedView.ScrollToPage]
+// consumes, so a band maps to/from the widget with no rescaling.
+type lineBand struct {
+	line       int // 1-based source line
+	yTop, yBot int // page-natural (un-zoomed bitmap) pixels
+}
+
+// pageLineMap is the source→render linking data for ONE rendered page: the list
+// of source-line Y-bands present on it, ordered by yTop. The playground searches
+// it to turn a render-pane click into a source line (Y-band containing the click)
+// and a source line into a scroll target (the band's top). Built from
+// [svgraster.Page.Lines] and kept parallel to [compileResult.bitmaps], so page i
+// of the PagedView is described by lineMaps[i].
+type pageLineMap struct {
+	bands []lineBand
+}
+
+// makeLineMap converts svgraster's per-line Y bands (a map keyed by 1-based source
+// line) into an ordered pageLineMap. Ordering is deterministic: by yTop, then by
+// source line as a tie-break, so the same document always yields the same map.
+func makeLineMap(lines map[int][2]int) pageLineMap {
+	bands := make([]lineBand, 0, len(lines))
+	for ln, band := range lines {
+		bands = append(bands, lineBand{line: ln, yTop: band[0], yBot: band[1]})
+	}
+	sort.Slice(bands, func(i, j int) bool {
+		if bands[i].yTop != bands[j].yTop {
+			return bands[i].yTop < bands[j].yTop
+		}
+		return bands[i].line < bands[j].line
+	})
+	return pageLineMap{bands: bands}
+}
+
 // compileResult is the outcome of one compile+rasterize pass: the per-page
 // bitmaps (natural device size, fed straight to the render pane's
-// [toolkit.PagedView]), the engine's logical page count, how many pages actually
-// rasterized, and either an error string or nil.
+// [toolkit.PagedView]), the per-page source-line maps (parallel to bitmaps, for
+// source↔render linking), the engine's logical page count, how many pages
+// actually rasterized, and either an error string or nil.
 type compileResult struct {
 	bitmaps    []*image.RGBA      // one natural-size RGBA per drawable page
+	lineMaps   []pageLineMap      // source-line Y-bands per drawn page, parallel to bitmaps
 	pages      int                // engine (logical) page count
 	drawnPages int                // pages actually rasterized
 	errText    string             // "" on success; a human message on a hard compile error
@@ -58,6 +97,7 @@ func compileLaTeX(src string, theme *toolkit.Theme) compileResult {
 	}
 
 	var bitmaps []*image.RGBA
+	var lineMaps []pageLineMap
 	for _, svg := range pages {
 		pg, perr := svgraster.Rasterize(svg, ropt)
 		if perr != nil || pg == nil || pg.W <= 0 || pg.H <= 0 {
@@ -70,6 +110,10 @@ func compileLaTeX(src string, theme *toolkit.Theme) compileResult {
 			Stride: pg.W * 4,
 			Rect:   image.Rect(0, 0, pg.W, pg.H),
 		})
+		// The <g data-l="N"> Y-bands svgraster recorded, kept parallel to the bitmap
+		// so the click↔caret linking can map this page's natural pixels to source
+		// lines and back.
+		lineMaps = append(lineMaps, makeLineMap(pg.Lines))
 	}
 	if len(bitmaps) == 0 {
 		// A compile that produced no drawable page (e.g. an empty document):
@@ -83,6 +127,7 @@ func compileLaTeX(src string, theme *toolkit.Theme) compileResult {
 
 	return compileResult{
 		bitmaps:    bitmaps,
+		lineMaps:   lineMaps,
 		pages:      len(pages),
 		drawnPages: len(bitmaps),
 		diag:       diag,
