@@ -314,3 +314,16 @@ func TestLineAtEmptyBands(t *testing.T) {
 		t.Fatalf("lineAt with no bands = %d, want 0", got)
 	}
 }
+
+// TestLineAtBranches pins lineAt's exact-hit AND nearest-band paths regardless of
+// Go's randomized map-iteration order (an exact hit returns early, so a click
+// outside every band is needed to exercise the distance tracking).
+func TestLineAtBranches(t *testing.T) {
+	s := &State{lineBands: map[int][2]int{5: {100, 120}, 9: {200, 220}}}
+	if got := s.lineAt(110); got != 5 { // inside line 5's band -> exact return
+		t.Fatalf("lineAt(110) = %d, want 5", got)
+	}
+	if got := s.lineAt(1000); got != 9 { // below every band -> nearest (line 9)
+		t.Fatalf("lineAt(1000) = %d, want 9 (nearest)", got)
+	}
+}
