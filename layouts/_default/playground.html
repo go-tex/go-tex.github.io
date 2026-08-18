@@ -2,7 +2,7 @@
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>go-tex — Try it: live LaTeX in your browser</title>
-<meta name="description" content="Type LaTeX and see it typeset by the pure-Go go-tex engine compiled to WebAssembly — the genuine article.cls, executed in your browser, with no TeXLive and no server.">
+<meta name="description" content="Type LaTeX and watch the pure-Go go-tex engine typeset it — a single go-widgets canvas app (editor + renderer) compiled to WebAssembly, no TeXLive and no server.">
 <link rel="icon" type="image/svg+xml" href="{{ "favicon.svg" | relURL }}">
 <link rel="stylesheet" href="{{ "css/brand.css" | relURL }}">
 <script src="{{ "js/theme.js" | relURL }}"></script>
@@ -12,69 +12,19 @@
 .hero.mini h1{font-size:40px}
 .hero .caption{font-size:14px;opacity:.9;max-width:680px;margin:14px auto 0}
 .hero .caption code{background:rgba(255,255,255,.16);padding:1px 6px;border-radius:5px}
-/* Sit the panels BELOW the banner with clear breathing room. A former negative
-   top margin pulled them up into the blue banner, clipping the panel labels. */
 .pg{max-width:1200px;margin:24px auto 56px;padding:0 24px}
 .pg-bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;color:var(--muted);
   font-size:13px;margin:0 2px 12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .pg-bar .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:0 0 auto}
 .pg-bar .dot.ok{background:var(--from)}
 .pg-bar .grow{flex:1}
-.panes{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-.pane{background:var(--card);border:1px solid var(--line);border-radius:16px;
-  box-shadow:0 10px 30px var(--shadow);display:flex;flex-direction:column;overflow:hidden;min-width:0}
-.pane .label{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);
-  padding:8px 10px 8px 16px;border-bottom:1px solid var(--line);font-weight:700;
-  display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:37px}
-/* Segmented control that switches the render pane between the two page views. */
-.viewtoggle{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;flex:0 0 auto}
-.viewtoggle button{appearance:none;-webkit-appearance:none;border:0;background:transparent;cursor:pointer;
-  color:var(--muted);padding:5px 10px;letter-spacing:.5px;text-transform:uppercase;
-  font:700 10px/1 ui-monospace,SFMono-Regular,Menlo,monospace}
-.viewtoggle button+button{border-left:1px solid var(--line)}
-.viewtoggle button.on{background:var(--from);color:#fff}
-/* Rendered / Log tabs for the right pane. */
-.tabs{display:inline-flex;gap:2px}
-.tabs .tab{appearance:none;-webkit-appearance:none;border:0;background:transparent;cursor:pointer;
-  color:var(--muted);padding:5px 4px;letter-spacing:.6px;text-transform:uppercase;font-weight:700;
-  font:700 11px/1 inherit;border-bottom:2px solid transparent;display:inline-flex;align-items:center;gap:6px}
-.tabs .tab.on{color:var(--ink);border-bottom-color:var(--from)}
-.badge{display:inline-block;min-width:16px;padding:0 5px;border-radius:9px;
-  background:var(--line);color:var(--ink);font:700 10px/16px ui-monospace,Menlo,monospace;text-align:center}
-.badge:empty{display:none}
-.badge.bad{background:#e0b400;color:#3a2c00}
-#log{flex:1;overflow:auto;padding:16px;min-height:520px;background:var(--bg);
-  font:12.5px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace;color:var(--ink)}
-.pg[data-view="compact"] #log{flex:none;height:72vh;min-height:0}
-.log-ok{color:#2e7d32}
-.log-warn{margin:0 0 8px;padding:9px 12px;border-radius:9px;background:#fff6e0;color:#7a5a00;
-  border:1px solid #f0d68a}
-.log-err{margin:0 0 10px;padding:9px 12px;border-radius:9px;background:#fdecec;color:#9b1c1c}
-.log-h{margin:12px 0 6px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-size:11px}
-.log-tab{border-collapse:collapse;width:100%}
-.log-tab td{padding:2px 8px 2px 0;vertical-align:top}
-.log-tab td.c{color:var(--muted);text-align:right;width:3.5em;font-variant-numeric:tabular-nums}
-:root:not([data-theme="light"]) .log-warn{background:#3a2f10;color:#f0d68a;border-color:#5a4a1a}
-:root:not([data-theme="light"]) .log-err{background:#3a1a1a;color:#f3b0b0}
-:root[data-theme="dark"] .log-warn{background:#3a2f10;color:#f0d68a;border-color:#5a4a1a}
-:root[data-theme="dark"] .log-err{background:#3a1a1a;color:#f3b0b0}
-#src{flex:1;border:0;outline:0;resize:none;padding:16px;min-height:520px;
-  background:transparent;color:var(--ink);tab-size:2;
-  font:13px/1.55 ui-monospace,"SF Mono",Menlo,Consolas,monospace}
-#preview{flex:1;overflow:auto;padding:18px;min-height:520px;background:var(--bg)}
-/* Compact view: the preview is a fixed-height frame that scrolls its pages
-   internally, so the page never grows as pages are appended. Continuous view
-   (the default) keeps the pages stacked and lets the whole page scroll. */
-.pg[data-view="compact"] #preview{flex:none;height:72vh;min-height:0}
-/* The engine's SVG is theme-neutral: content painted with fill="currentColor"
-   and no baked-in page background (see the render() transform below). The colour
-   and the "paper" background come from the theme here, so the preview is a white
-   page with black text in Light mode and a dark page with light text in Dark
-   mode — a proper dark rendering, no page-inverting extension needed. currentColor
-   is an inherited property, so it reaches the nested <svg> that carries each
-   formula (a CSS filter would not). */
-#preview svg{color:var(--ink);background:var(--card);box-shadow:0 2px 14px var(--shadow2);
-  display:block;margin:0 auto 16px;max-width:100%;height:auto}
+/* The whole playground is ONE go-widgets canvas: editor on the left, the live
+   gotex render on the right, and a status bar — all painted by the toolkit in
+   WebAssembly. It fills a fixed-height frame so the page never reflows as pages
+   are typeset. */
+.stage{background:var(--card);border:1px solid var(--line);border-radius:16px;
+  box-shadow:0 10px 30px var(--shadow);overflow:hidden;height:76vh;min-height:460px}
+#gotex-canvas{display:block;width:100%;height:100%;background:var(--bg)}
 #err{display:none;margin:0 0 14px;padding:11px 13px;border-radius:10px;
   background:#fdecec;color:#9b1c1c;white-space:pre-wrap;
   font:12.5px/1.45 ui-monospace,Menlo,monospace}
@@ -83,10 +33,6 @@
 #err.show{display:block}
 .pg-note{color:var(--muted);font-size:13px;margin:16px 2px 0;text-align:center}
 .pg-back{display:inline-block;margin-top:6px;font-weight:600}
-@media (max-width:860px){
-  .panes{grid-template-columns:1fr}
-  #src,#preview{min-height:360px}
-}
 </style>
 </head><body>
 <section class="hero mini">
@@ -94,75 +40,22 @@
   <img src="{{ "img/go-tex-white.png" | relURL }}" alt="go-tex" style="width:76px;height:76px">
   <h1>Try it in your browser</h1>
   <p>Type LaTeX on the left, watch the pure-Go engine typeset it on the right.</p>
-  <p class="caption">The genuine LaTeX <code>article.cls</code>, executed in WebAssembly — no TeXLive, no server.</p>
+  <p class="caption">One <code>go-widgets</code> canvas app — editor and renderer — executed in WebAssembly. No TeXLive, no server.</p>
 </section>
 
-<div class="pg" data-view="continuous">
+<div class="pg">
   <div class="pg-bar">
     <span class="dot" id="statusdot"></span>
-    <span id="status">loading the engine (~8.5&nbsp;MB, one time)…</span>
+    <span id="status">loading the engine (~10&nbsp;MB, one time)…</span>
     <span class="grow"></span>
     <span id="ver"></span>
-    <span id="count"></span>
   </div>
-  <div class="panes">
-    <section class="pane">
-      <div class="label">LaTeX source — editable</div>
-      <textarea id="src" spellcheck="false" autocomplete="off" autocapitalize="off">\documentclass{article}
-
-\title{Live \LaTeX{} in WebAssembly}
-\author{the go-tex authors}
-\date{2026}
-
-\begin{document}
-\maketitle
-\tableofcontents
-
-\section{Introduction}
-This page is typeset by the genuine \texttt{article.cls}, executed as
-WebAssembly directly in your browser --- no TeX Live, no server.
-
-\subsection{What runs here}
-The pure-Go TeX engine performs Knuth--Plass line breaking and lays out
-the document exactly as a real \LaTeX{} run would.
-
-\section{Features on display}
-\begin{itemize}
-  \item The real title block from \texttt{maketitle}.
-  \item A dotted table of contents.
-  \item Numbered section and subsection headings.
-  \item An \texttt{itemize} list (this one).
-  \item An inline equation: the quadratic root
-        $x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}$.
-\end{itemize}
-
-\subsection{Why it matters}
-Client-side live preview that a TeX Live install can never offer, because
-there is no server round-trip at all.
-
-\end{document}</textarea>
-    </section>
-    <section class="pane">
-      <div class="label">
-        <span class="tabs" role="tablist">
-          <button type="button" id="tab-rendered" class="tab on" role="tab" aria-selected="true">Rendered</button>
-          <button type="button" id="tab-log" class="tab" role="tab" aria-selected="false">Log<span id="logbadge" class="badge"></span></button>
-        </span>
-        <span class="viewtoggle" id="viewtoggle" role="group" aria-label="Page view mode">
-          <button type="button" id="vw-cont" class="on" aria-pressed="true">Continuous</button>
-          <button type="button" id="vw-comp" aria-pressed="false">Compact</button>
-        </span>
-      </div>
-      <div id="preview">
-        <div id="err"></div>
-        <div id="pages"></div>
-      </div>
-      <div id="log" hidden></div>
-    </section>
-  </div>
+  <div id="err"></div>
+  <div class="stage"><canvas id="gotex-canvas"></canvas></div>
   <p class="pg-note">
-    Real LaTeX class rendering, client-side, from the pure-Go
-    <a href="https://github.com/go-tex/engine">go-tex/engine</a>.<br>
+    A single go-widgets/toolkit canvas app driving the pure-Go
+    <a href="https://github.com/go-tex/engine">go-tex/engine</a> — click the
+    render to jump the caret, and the caret to scroll the render.<br>
     <a class="pg-back" href="{{ "" | relURL }}">← Back to go-tex</a>
   </p>
 </div>
@@ -174,150 +67,53 @@ there is no server round-trip at all.
 "use strict";
 (function(){
   var $=function(id){return document.getElementById(id);};
-  var src=$("src"), preview=$("pages"), errBox=$("err");
-  // The 9.6 MB engine is served from jsDelivr, pinned to this build's commit, with
-  // the same file on GitHub Pages as a fallback. Why not Pages alone: every Pages
-  // deploy purges its Fastly cache, and during the post-deploy propagation window the
-  // origin briefly 404s — Fastly then NEGATIVELY CACHES that 404 with a long TTL, so
-  // the engine keeps 404ing ("Failed to load gotex.wasm: HTTP 404") long after the
-  // deploy finished, which is the recurring failure seen here. jsDelivr pins the
-  // asset to an immutable per-commit URL on an independent CDN that our deploys never
-  // purge, so it stays available across every redeploy. wasmURL is primary; if it
-  // ever fails we fall back to the Pages copy.
-  {{ $local := printf "%s" ("gotex.wasm" | absURL) }}
+  var errBox=$("err");
+  // The ~10 MB app wasm is served from jsDelivr, pinned to this build's commit
+  // (an immutable per-commit URL on an independent CDN our Pages deploys never
+  // purge), with the Pages copy as a fallback — see the engine-only playground's
+  // note on Pages' post-deploy negative caching.
+  {{ $local := printf "%s" ("playground.wasm" | absURL) }}
   {{ $primary := $local }}
-  {{ with .Site.Params.wasmsha }}{{ $primary = printf "https://cdn.jsdelivr.net/gh/go-tex/go-tex.github.io@%s/static/gotex.wasm" . }}{{ end }}
-  // No jsonify: in a <script> context html/template already emits a properly
-  // escaped, quoted JS string literal. Piping through jsonify too double-encodes
-  // it into "\"https://…\"" — a quoted URL that fetch() cannot resolve (the
-  // long-standing "HTTP 404 fetching the engine" bug).
+  {{ with .Site.Params.wasmsha }}{{ $primary = printf "https://cdn.jsdelivr.net/gh/go-tex/go-tex.github.io@%s/static/playground.wasm" . }}{{ end }}
   var wasmURL={{ $primary }};
   var wasmFallback={{ $local }};
-  var ready=false, started=false;
+  var started=false;
 
-  // Page view mode: "continuous" (pages append and the whole page scrolls) or
-  // "compact" (pages scroll inside a fixed-height frame). Persisted across visits.
-  (function(){
-    var pg=document.querySelector(".pg"), bc=$("vw-cont"), bp=$("vw-comp");
-    function setView(mode){
-      var compact=mode==="compact";
-      pg.setAttribute("data-view",compact?"compact":"continuous");
-      bp.classList.toggle("on",compact); bc.classList.toggle("on",!compact);
-      bp.setAttribute("aria-pressed",compact); bc.setAttribute("aria-pressed",!compact);
-      try{ localStorage.setItem("gotex-pg-view",compact?"compact":"continuous"); }catch(e){}
-    }
-    bc.addEventListener("click",function(){ setView("continuous"); });
-    bp.addEventListener("click",function(){ setView("compact"); });
-    var saved; try{ saved=localStorage.getItem("gotex-pg-view"); }catch(e){}
-    setView(saved==="compact"?"compact":"continuous");
-  })();
-
-  // Rendered / Log tab clicks.
-  $("tab-rendered").addEventListener("click",function(){ selectTab(false); });
-  $("tab-log").addEventListener("click",function(){ selectTab(true); });
-
-  // Make one page's SVG theme-neutral so the CSS theme colours it: drop the
-  // default white "paper" rect (so #preview svg's background var(--card) shows —
-  // white in Light, dark in Dark) and repaint black content with currentColor (so
-  // #preview svg's color var(--ink) drives it — dark on light, light on dark).
-  // An explicit \pagecolor (any non-white rect) and \textcolor (any #rrggbb fill)
-  // are left untouched.
-  function themeSVG(s){
-    return s.replace('<rect width="100%" height="100%" fill="white"/>','')
-            .split('fill="black"').join('fill="currentColor"');
+  // Resolve the host page's theme (data-theme, else prefers-color-scheme) to a
+  // dark boolean, and keep the canvas app in sync as theme.js flips it.
+  function isDark(){
+    var t=document.documentElement.getAttribute("data-theme");
+    if(t==="dark") return true;
+    if(t==="light") return false;
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
   }
-
-  function render(){
-    if(!ready||!globalThis.gotexToSVG) return;
-    var t0=performance.now(), res;
-    try{ res=globalThis.gotexToSVG(src.value,{size:11}); }
-    catch(e){ res={error:String(e)}; }
-    if(res.error){
-      errBox.textContent="Error: "+res.error+
-        (res.errorLine?"  (line "+res.errorLine+", col "+res.errorCol+")":"");
-      errBox.classList.add("show");
-      $("count").textContent="· compile error";
-      renderLog(res);
-      return;
-    }
-    errBox.classList.remove("show"); errBox.textContent="";
-    preview.innerHTML=res.pages.map(themeSVG).join("");
-    $("count").textContent="· "+res.pages.length+" page(s) · "+
-      (performance.now()-t0).toFixed(0)+" ms";
-    renderLog(res);
-  }
-
-  function esc(s){ return String(s).replace(/[&<>]/g,function(c){
-    return c==="&"?"&amp;":c==="<"?"&lt;":"&gt;"; }); }
-
-  // renderLog fills the Log tab from the compile's diagnostics: the undefined
-  // commands it skipped (their content was dropped) and the silent-swallow alarms —
-  // a runaway that tripped, groups left open, a page-count explosion — that no
-  // skipped command reveals. The Log tab's badge shows the count (amber if an alarm
-  // or error fired).
-  function renderLog(res){
-    var d=res.diagnostics||{}, out=[], alarms=0;
-    if(res.error){
-      out.push('<div class="log-err">Compile error: '+esc(res.error)+
-        (res.errorLine?" (line "+res.errorLine+", col "+res.errorCol+")":"")+"</div>");
-      alarms++;
-    }
-    function warn(msg){ out.push('<div class="log-warn">⚠ '+esc(msg)+"</div>"); alarms++; }
-    if(d.runaway) warn("Runaway guard tripped — a loop or exponential scan was aborted; some content may be lost.");
-    if(d.openGroups>0) warn(d.openGroups+" group(s) still open at end of document — an unbalanced { or \\begingroup (a likely swallow).");
-    if(d.pageCapHit) warn("Pagination hit the page cap — a page-count explosion.");
-    var sk=d.skipped||{}, names=Object.keys(sk).sort(function(a,b){ return sk[b]-sk[a] || (a<b?-1:1); });
-    if(names.length){
-      out.push('<div class="log-h">'+names.length+" undefined command(s) skipped — most frequent first (their content was dropped):</div>");
-      out.push('<table class="log-tab">'+names.map(function(n){
-        return "<tr><td class=\"c\">"+sk[n]+"</td><td>\\"+esc(n)+"</td></tr>"; }).join("")+"</table>");
-    }
-    if(!alarms && !names.length) out.push('<div class="log-ok">✓ No undefined commands and no swallow alarms — clean compile.</div>');
-    $("log").innerHTML=out.join("");
-    var n=names.length+alarms, badge=$("logbadge");
-    badge.textContent=n?String(n):"";
-    badge.className="badge"+(alarms?" bad":"");
-  }
-
-  // Rendered / Log tab switch.
-  function selectTab(log){
-    $("tab-rendered").classList.toggle("on",!log);
-    $("tab-rendered").setAttribute("aria-selected",String(!log));
-    $("tab-log").classList.toggle("on",log);
-    $("tab-log").setAttribute("aria-selected",String(log));
-    $("preview").hidden=log;
-    $("log").hidden=!log;
-    $("viewtoggle").style.visibility=log?"hidden":"";
-  }
-
-  var timer=null;
-  function scheduleRender(){ clearTimeout(timer); timer=setTimeout(render,300); }
+  function syncTheme(){ if(globalThis.gotexSetTheme) globalThis.gotexSetTheme(isDark()); }
+  new MutationObserver(syncTheme).observe(document.documentElement,{attributes:true,attributeFilter:["data-theme"]});
+  if(window.matchMedia){ try{ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change",syncTheme); }catch(e){} }
 
   function loadEngine(){
     if(started) return; started=true;
     var go=new Go();
     var boot=function(result){
       go.run(result.instance);
-      ready=true;
-      $("statusdot").classList.add("ok");
-      $("status").textContent="engine ready";
-      $("ver").textContent=globalThis.gotexVersion();
-      src.addEventListener("input",scheduleRender);
-      render();
+      var t=setInterval(function(){
+        if(globalThis.gotexPlaygroundReady){
+          clearInterval(t);
+          $("statusdot").classList.add("ok");
+          $("status").textContent="engine ready";
+          $("ver").textContent="pure-Go · go-widgets canvas";
+          syncTheme();
+        }
+      },50);
     };
     var fail=function(e){
       $("status").textContent="engine failed to load";
       var hint = location.protocol==="file:"
         ? "\n(open this page over http:// — file:// blocks fetching the engine.)"
         : "\n(try a hard refresh — the engine asset may be cached stale.)";
-      errBox.textContent="Failed to load gotex.wasm: "+String(e)+hint;
+      errBox.textContent="Failed to load playground.wasm: "+String(e)+hint;
       errBox.classList.add("show");
     };
-    // Fetch a given URL, verify we actually got the WebAssembly module (a 404 on a
-    // static host returns an HTML page, whose first bytes fail the wasm magic-number
-    // check with a confusing error), then instantiate — streaming when the server
-    // sends application/wasm, else from an ArrayBuffer. A single delayed retry absorbs
-    // a brief propagation blip; on outright failure the caller tries the next source.
     function attempt(url,triesLeft){
       return fetch(url,{cache:"reload"}).then(function(r){
         if(!r.ok){
@@ -331,8 +127,6 @@ there is no server round-trip at all.
           return WebAssembly.instantiateStreaming(r,go.importObject);
         }
         return r.arrayBuffer().then(function(b){
-          // Guard against a non-wasm body (e.g. an HTML error page) reaching the
-          // compiler, which would otherwise report an opaque magic-number error.
           var m=new Uint8Array(b,0,4);
           if(!(m[0]===0x00&&m[1]===0x61&&m[2]===0x73&&m[3]===0x6d))
             throw new Error("the engine URL did not return a WebAssembly module (got "+(ct||"unknown type")+")");
@@ -340,16 +134,13 @@ there is no server round-trip at all.
         });
       });
     }
-    // Primary source (jsDelivr, immutable per-commit) then the Pages fallback, so a
-    // Pages negatively-cached 404 can never take the playground down on its own.
     attempt(wasmURL,1).catch(function(){
       return wasmFallback===wasmURL ? Promise.reject() : attempt(wasmFallback,1);
     }).then(boot).catch(fail);
   }
 
-  // Lazy-load: only fetch the 8.5 MB engine once the playground scrolls into
-  // view. It is above the fold here, so this fires right after first paint —
-  // the page renders before the wasm stream begins.
+  // Lazy-load: fetch the wasm once the stage scrolls into view (it is above the
+  // fold, so this fires right after first paint).
   function arm(){
     if("IntersectionObserver" in window){
       var io=new IntersectionObserver(function(entries){
@@ -357,10 +148,8 @@ there is no server round-trip at all.
           if(entries[i].isIntersecting){ io.disconnect(); loadEngine(); return; }
         }
       },{rootMargin:"200px"});
-      io.observe(document.querySelector(".panes"));
-    } else {
-      loadEngine();
-    }
+      io.observe(document.querySelector(".stage"));
+    } else { loadEngine(); }
   }
   if(document.readyState!=="loading") arm();
   else document.addEventListener("DOMContentLoaded",arm);
