@@ -20,14 +20,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.4"
+      # Build the playground wasm FRESH from the current source into static/, so the
+      # deployed Pages artifact always matches the committed Go code. The compiled
+      # wasm is a build artifact — not reproducible byte-for-byte across machines —
+      # so it must be built here, not trusted from a hand-committed copy (which is
+      # how the round-3 UI shipped silently stale: the source and CI were correct
+      # but the committed wasm, which jsDelivr served, was the round-2 binary).
+      - name: build playground wasm
+        working-directory: playground
+        env:
+          GOWORK: "off"
+        run: GOOS=js GOARCH=wasm go build -trimpath -o ../static/playground.wasm ./cmd/playground-wasm
       - uses: peaceiris/actions-hugo@v3
         with:
           hugo-version: "0.161.1"
           extended: true
       - run: hugo --gc --minify
         env:
-          # Pins the playground's engine wasm to this commit on jsDelivr's immutable
-          # CDN, decoupling the 9.6 MB asset from Pages' post-deploy negative caching.
+          # wasmsha cache-busts the freshly-built Pages copy of the wasm (the primary
+          # source) and pins the jsDelivr fallback to this commit.
           HUGO_PARAMS_WASMSHA: ${{ github.sha }}
       - uses: actions/upload-pages-artifact@v3
         with:
