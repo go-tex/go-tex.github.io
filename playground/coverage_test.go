@@ -61,7 +61,7 @@ func TestCompileEmptyDocumentBranch(t *testing.T) {
 	// branch clears the render image.
 	s.editor.SetText(`\documentclass{article}\begin{document}\end{document}`)
 	s.Compile()
-	if s.renderImg.Pixels != nil || s.renderImg.W != 0 || s.renderImg.H != 0 {
+	if s.renderView.basePix != nil || s.renderView.baseW != 0 || s.renderView.baseH != 0 {
 		t.Fatalf("empty document did not clear the render image")
 	}
 	if s.pages != 0 {
@@ -116,13 +116,11 @@ func TestLayoutClampsNegativeBody(t *testing.T) {
 
 func TestNavRenderToEditorClamps(t *testing.T) {
 	s := newTestState(t, false)
-	rr := s.renderRect()
 
 	// A band mapping to a line beyond the buffer clamps to the last line.
 	huge := len(s.editor.Lines) + 50
 	s.lineBands = map[int][2]int{huge: {0, 10}}
-	s.renderScroll.OffsetY = 0
-	s.navRenderToEditor(rr.X+5, rr.Y+2)
+	s.navRenderToEditorAt(5)
 	if s.editor.CursorLine != len(s.editor.Lines)-1 {
 		t.Fatalf("caret not clamped to last line: got %d", s.editor.CursorLine)
 	}
@@ -130,7 +128,7 @@ func TestNavRenderToEditorClamps(t *testing.T) {
 	// No bands => lineAt returns 0 => navigation is a no-op (caret unchanged).
 	s.editor.CursorLine = 3
 	s.lineBands = map[int][2]int{}
-	s.navRenderToEditor(rr.X+5, rr.Y+2)
+	s.navRenderToEditorAt(5)
 	if s.editor.CursorLine != 3 {
 		t.Fatalf("navigation with no bands moved the caret to %d", s.editor.CursorLine)
 	}

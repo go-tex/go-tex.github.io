@@ -6,7 +6,7 @@ require (
 	github.com/go-gfx/gfx v0.5.0
 	github.com/go-tex/engine v0.159.0
 	github.com/go-widgets/painter v0.11.0
-	github.com/go-widgets/toolkit v0.186.0
+	github.com/go-widgets/toolkit v0.191.0
 )
 
 require (

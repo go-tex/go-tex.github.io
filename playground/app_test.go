@@ -36,17 +36,19 @@ func newTestState(t *testing.T, dark bool) *State {
 	return s
 }
 
-// editorRect / renderRect are test conveniences for the two pane bounds.
-func (s *State) editorRect() toolkit.Rect { return s.editor.Bounds() }
-func (s *State) renderRect() toolkit.Rect { return s.paned.Second.Bounds() }
+// editorRect / renderRect are test conveniences for the two pane bounds;
+// rscroll reaches the render view's inner scroll for offset assertions.
+func (s *State) editorRect() toolkit.Rect     { return s.editor.Bounds() }
+func (s *State) renderRect() toolkit.Rect     { return s.renderView.contentRect() }
+func (s *State) rscroll() *toolkit.ScrollView { return s.renderView.scroll }
 
 func TestNewStateCompilesSampleAndDraws(t *testing.T) {
 	s := newTestState(t, false)
 	if s.errText != "" {
 		t.Fatalf("sample compile error: %s", s.errText)
 	}
-	if s.renderImg.W == 0 || s.renderImg.H == 0 || len(s.renderImg.Pixels) == 0 {
-		t.Fatalf("render image empty: %dx%d len=%d", s.renderImg.W, s.renderImg.H, len(s.renderImg.Pixels))
+	if s.renderView.baseW == 0 || s.renderView.baseH == 0 || len(s.renderView.basePix) == 0 {
+		t.Fatalf("render image empty: %dx%d len=%d", s.renderView.baseW, s.renderView.baseH, len(s.renderView.basePix))
 	}
 	buf := make([]byte, testW*testH*4)
 	s.Draw(buf)
@@ -136,9 +138,9 @@ func TestClickRenderNavigatesToSource(t *testing.T) {
 	}
 	rr := s.renderRect()
 	// Scroll so the band is in view, then click its on-screen centre.
-	s.renderScroll.Scroll(0, band[0]-s.renderScroll.OffsetY)
+	s.rscroll().Scroll(0, band[0]-s.rscroll().OffsetY)
 	midContent := (band[0] + band[1]) / 2
-	screenY := rr.Y + (midContent - s.renderScroll.OffsetY)
+	screenY := rr.Y + (midContent - s.rscroll().OffsetY)
 	if screenY < rr.Y {
 		screenY = rr.Y + 4
 	}
@@ -153,12 +155,12 @@ func TestClickRenderNavigatesToSource(t *testing.T) {
 func TestScrollBothPanes(t *testing.T) {
 	s := newTestState(t, false)
 	rr := s.renderRect()
-	before := s.renderScroll.OffsetY
+	before := s.rscroll().OffsetY
 	if !s.HandleScroll(rr.X+10, rr.Y+10, 5) {
 		t.Fatalf("render scroll not consumed")
 	}
-	if s.renderScroll.OffsetY <= before {
-		t.Fatalf("render pane did not scroll down: %d -> %d", before, s.renderScroll.OffsetY)
+	if s.rscroll().OffsetY <= before {
+		t.Fatalf("render pane did not scroll down: %d -> %d", before, s.rscroll().OffsetY)
 	}
 	er := s.editorRect()
 	if !s.HandleScroll(er.X+10, er.Y+10, 3) {
@@ -173,9 +175,9 @@ func TestScrollBothPanes(t *testing.T) {
 func TestScrollRenderToLineClampsAndMisses(t *testing.T) {
 	s := newTestState(t, false)
 	// A line with no band is a no-op.
-	before := s.renderScroll.OffsetY
+	before := s.rscroll().OffsetY
 	s.scrollRenderToLine(1 << 20)
-	if s.renderScroll.OffsetY != before {
+	if s.rscroll().OffsetY != before {
 		t.Fatalf("scrollRenderToLine on a missing line moved the offset")
 	}
 	// The first band scrolls to (near) the top.

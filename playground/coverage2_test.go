@@ -83,7 +83,7 @@ func TestHandleScrollRegionsAndOutside(t *testing.T) {
 func TestHandleScrollLogPane(t *testing.T) {
 	s := newTestState(t, false)
 	s.toggleLog()
-	rr := s.paned.Second.Bounds()
+	rr := s.rightPane.contentRect()
 	if !s.HandleScroll(rr.X+10, rr.Y+10, 4) {
 		t.Fatalf("scroll over log not consumed")
 	}
@@ -100,9 +100,9 @@ func TestHandleScrollLogPane(t *testing.T) {
 func TestScrollRenderToLineSkippedWhenLog(t *testing.T) {
 	s := newTestState(t, false)
 	s.toggleLog()
-	before := s.renderScroll.OffsetY
+	before := s.rscroll().OffsetY
 	s.scrollRenderToLine(20) // no-op while the Log is shown
-	if s.renderScroll.OffsetY != before {
+	if s.rscroll().OffsetY != before {
 		t.Fatalf("scrollRenderToLine moved the render while Log was shown")
 	}
 }
@@ -154,7 +154,7 @@ func TestMinimapLineAtYEdges(t *testing.T) {
 	if got := m.lineAtY(150); got != 0 {
 		t.Fatalf("lineAtY with no lines = %d, want 0", got)
 	}
-	m.update([]string{"a", "b", "c", "d"}, 0, 2)
+	m.update([]string{"a", "b", "c", "d"}, nil, 0, 2)
 	if got := m.lineAtY(50); got != 0 { // above the top clamps to 0
 		t.Fatalf("lineAtY above top = %d, want 0", got)
 	}
@@ -169,39 +169,64 @@ func TestMinimapDrawBranches(t *testing.T) {
 	p := painter.NewPixelPainter(buf, 100, 400)
 	th := toolkit.DefaultLight()
 
-	// Zero-size: no-op.
+	// Zero-size: no-op (also exercises segmentCount's empty guard).
 	m.Draw(p, th)
+	if m.segmentCount(th.OnSurface) != 0 {
+		t.Fatalf("segmentCount on a zero-size minimap should be 0")
+	}
 
-	// Empty line list: paints the ground but no bars.
+	// Empty line list: paints the ground but no segments.
 	m.SetBounds(toolkit.Rect{X: 0, Y: 0, W: 80, H: 400})
-	m.update(nil, 0, 0)
+	m.update(nil, nil, 0, 0)
 	m.Draw(p, th)
+	if m.segmentCount(th.OnSurface) != 0 {
+		t.Fatalf("segmentCount with no lines should be 0")
+	}
 
-	// Real content incl a blank line + a long line; viewport indicator visible.
-	m.update([]string{"", "short", strings.Repeat("x", 200), "mid"}, 1, 2)
+	// Real content: an indented line (leading spaces -> gap), a comment, a
+	// multi-token line whose per-rune spans force a colour-run split, and a
+	// blank line. The viewport indicator is visible.
+	lines := []string{
+		"    indented word", // leading whitespace, then two space-separated runs
+		"%comment",          // one dimmed run (no internal spaces)
+		"ab",                // two adjacent runes of DIFFERENT colours -> a run split
+		"",                  // blank line -> no segments
+	}
+	red := toolkit.RGB(0xFF, 0, 0)
+	blue := toolkit.RGB(0, 0, 0xFF)
+	spans := [][]toolkit.TextSpan{
+		nil, // line 0 falls back to the neutral ink
+		{{Start: 0, End: 8, Color: toolkit.RGB(0x80, 0x80, 0x80)}},
+		{{Start: 0, End: 1, Color: red}, {Start: 1, End: 2, Color: blue}}, // 'a' red, 'b' blue
+		nil,
+	}
+	m.update(lines, spans, 1, 2)
 	m.Draw(p, th)
+	// Segments: line0 has 2 runs, line1 has 1 run, line2 splits into 2 runs,
+	// line3 (blank) has 0 -> 5 in total.
+	if got := m.segmentCount(th.OnSurface); got != 5 {
+		t.Fatalf("segmentCount = %d, want 5 (2+1+2+0)", got)
+	}
 
 	// A viewport taller than the widget clamps the indicator height.
-	m.update([]string{"a", "b"}, 0, 100)
+	m.update([]string{"a", "b"}, nil, 0, 100)
 	m.Draw(p, th)
 
-	// A 1-char line beside a very long one rounds its bar width below 1 (clamped);
-	// a comment line takes the dimmed colour.
-	m.update([]string{"x", "% a comment", strings.Repeat("y", 400)}, 0, 1)
-	m.Draw(p, th)
-
-	// More lines than pixels of height (rowH/barH clamp to 1) with a tiny visible
-	// window so the viewport indicator height clamps up to its minimum.
+	// More lines than pixel rows: lines that collapse onto an already-drawn row
+	// are sampled out (the y==prevY branch) rather than overflowing.
 	many := make([]string, 600)
 	for i := range many {
 		many[i] = "z"
 	}
-	m.update(many, 0, 1)
+	m.update(many, nil, 0, 1)
 	m.Draw(p, th)
+	if got := m.segmentCount(th.OnSurface); got >= len(many) {
+		t.Fatalf("more lines than rows should sample: got %d segments for %d lines", got, len(many))
+	}
 
-	// A near-zero width clamps usableW to 1.
+	// A near-zero width clamps usableW/maxCols to 1 (a long line is clipped).
 	m.SetBounds(toolkit.Rect{X: 0, Y: 0, W: 4, H: 100})
-	m.update([]string{"a", "bb", "ccc"}, 0, 1)
+	m.update([]string{strings.Repeat("y", 400)}, nil, 0, 1)
 	m.Draw(p, th)
 }
 
@@ -210,8 +235,8 @@ func TestIntrospectionAccessors(t *testing.T) {
 	if s.EditorWidth() != s.editor.Bounds().W {
 		t.Fatalf("EditorWidth mismatch")
 	}
-	s.renderScroll.Scroll(0, 40)
-	if s.RenderOffsetY() != s.renderScroll.OffsetY {
+	s.rscroll().Scroll(0, 40)
+	if s.RenderOffsetY() != s.rscroll().OffsetY {
 		t.Fatalf("RenderOffsetY mismatch")
 	}
 	if s.ShowLog() {
