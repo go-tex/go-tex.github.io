@@ -145,6 +145,16 @@ type State struct {
 	selecting                   bool
 	selAnchorLine, selAnchorCol int
 
+	// source↔render linking. lineMaps is the per-rendered-page source-line
+	// Y-band table (parallel to the PagedView's pages), rebuilt every Compile.
+	// lastCaretLine remembers the caret's line so a caret MOVE (not every edit)
+	// triggers a render scroll. syncing guards the linking against feedback: it is
+	// raised while a render-click drives the caret, so the caret-move that results
+	// does NOT re-scroll the render underneath the click.
+	lineMaps      []pageLineMap
+	lastCaretLine int
+	syncing       bool
+
 	dirty          bool
 	pendingCompile bool
 
@@ -205,6 +215,7 @@ func NewState(w, h int, dark bool) *State {
 
 	s.layout()
 	s.Compile()
+	s.lastCaretLine = s.editor.CursorLine // seed the caret-move tracker
 	return s
 }
 
@@ -541,6 +552,7 @@ func (s *State) Compile() {
 	s.pages = res.pages
 	s.drawnPages = res.drawnPages
 	s.diag = res.diag
+	s.lineMaps = res.lineMaps // per-page source-line bands for click↔caret linking
 	s.logView.set(res.diag, res.errText)
 
 	s.renderView.SetPages(res.bitmaps) // nil bitmaps clear the viewer
@@ -677,6 +689,7 @@ func (s *State) HandleClick(x, y int) bool {
 		s.selecting = false            // a click starts a fresh selection anchor
 		s.editor.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - er.X, Y: y - er.Y})
 		s.updateStatus()
+		s.caretMaybeChanged() // caret → scroll the render to the clicked source line
 		s.pressKind = pressEditor
 		s.dirty = true
 		return true
@@ -694,10 +707,12 @@ func (s *State) HandleClick(x, y int) bool {
 	rr := s.rightPane.Bounds()
 	if rr.Contains(x, y) {
 		s.rightPane.click(x, y)
-		// A click into the render content gives the PagedView keyboard focus (so
-		// nav keys flip pages) and takes it away from the editor; a tab-strip or
-		// Log click leaves the editor's focus alone.
-		if s.rightPane.press == rpPressRender {
+		// A click into the render content either lands on a rendered source line —
+		// jumping the editor caret there (click-to-source) and giving the editor
+		// focus — or, on bare page margin / gutter / toolbar, gives the PagedView
+		// keyboard focus so nav keys flip pages. A tab-strip or Log click leaves the
+		// editor's focus alone.
+		if s.rightPane.press == rpPressRender && !s.tryClickToSource(x, y) {
 			s.editor.Focused = false
 			s.renderView.SetFocused(true)
 		}
@@ -722,6 +737,7 @@ func (s *State) HandleMove(x, y int) bool {
 	case pressEditor:
 		er := s.editor.Bounds()
 		s.editor.OnEvent(toolkit.Event{Kind: toolkit.EventMouseDrag, X: x - er.X, Y: y - er.Y})
+		s.caretMaybeChanged() // a drag that moves the caret line scrolls the render
 		s.dirty = true
 		return true
 	case pressMinimap:
@@ -831,24 +847,29 @@ func (s *State) HandleKeyDown(code string) bool {
 	if !s.editor.Focused {
 		return false
 	}
-	if len(code) > 6 && code[:6] == "Shift+" {
-		if base := navBase(code[6:]); base != "" {
-			s.shiftSelect(base)
-			s.afterKey()
-			return true
-		}
-	}
-	if navBase(code) != "" && s.editor.HasSelection() {
+	// nav records whether this key moved the caret (as opposed to editing text), so
+	// only a genuine caret MOVE scrolls the render to the new source line — typing
+	// leaves the render alone until the debounced recompile catches up.
+	nav := false
+	switch {
+	case len(code) > 6 && code[:6] == "Shift+" && navBase(code[6:]) != "":
+		s.shiftSelect(navBase(code[6:]))
+		nav = true
+	case navBase(code) != "" && s.editor.HasSelection():
 		// A plain navigation key collapses the selection as the caret moves.
 		s.editor.OnEvent(toolkit.Event{Kind: toolkit.EventKeyDown, Code: code})
 		s.editor.ClearSelection()
 		s.selecting = false
-		s.afterKey()
-		return true
+		nav = true
+	default:
+		s.selecting = false
+		s.editor.OnEvent(toolkit.Event{Kind: toolkit.EventKeyDown, Code: code})
+		nav = navBase(code) != ""
 	}
-	s.selecting = false
-	s.editor.OnEvent(toolkit.Event{Kind: toolkit.EventKeyDown, Code: code})
 	s.afterKey()
+	if nav {
+		s.caretMaybeChanged() // caret → scroll the render to follow the moved caret
+	}
 	return true
 }
 
@@ -878,4 +899,198 @@ func (s *State) minimapScrollTo(y int) {
 	// only the line count, so the per-line spans are left nil here.
 	s.minimap.update(s.editor.Lines, nil, s.editor.ScrollLine, s.visibleEditorLines())
 	s.editor.ScrollLine = s.minimap.lineAtY(y) // lineAtY already clamps to [0, n-1]
+}
+
+// --- source ↔ render linking --------------------------------------------
+
+// sourceClickTolY is how far (in page-natural pixels) a render-pane click may
+// fall from the nearest source-line band and still resolve to that line, so a
+// click in the small leading between two glyph rows of a paragraph snaps to the
+// closest line while a click far out in a page margin does not (it leaves the
+// render owning the keyboard for paging instead).
+const sourceClickTolY = 40
+
+// renderSourceLineAt maps a SURFACE point over the render pane to the source line
+// rendered under it. It translates the point into the PagedView's widget-local
+// frame and asks the widget which page + natural point sits there (PageAt is false
+// over the toolbar, a gap or the gutter — i.e. exactly when a click WAS consumed
+// as a control), then looks that natural-Y up against the page's source-line
+// bands. ok is false when the point is not over a linked page line.
+func (s *State) renderSourceLineAt(x, y int) (int, bool) {
+	b := s.renderView.Bounds()
+	page, _, localY, ok := s.renderView.PageAt(x-b.X, y-b.Y)
+	if !ok {
+		return 0, false
+	}
+	return s.lineAtPageY(page, localY)
+}
+
+// tryClickToSource turns a click on the render pane into an editor caret jump,
+// returning true (and moving the caret) only when the click resolved to a source
+// line.
+func (s *State) tryClickToSource(x, y int) bool {
+	line, ok := s.renderSourceLineAt(x, y)
+	if !ok {
+		return false
+	}
+	s.jumpCaretToLine(line)
+	return true
+}
+
+// lineAtPageY resolves a page-natural Y on a 1-based rendered page to the source
+// line drawn there: the band whose [yTop, yBot) contains y, else the nearest band
+// within sourceClickTolY. It reports ok=false for an out-of-range page, a page
+// with no recorded lines, or a Y too far from every band.
+func (s *State) lineAtPageY(page, y int) (int, bool) {
+	idx := page - 1
+	if idx < 0 || idx >= len(s.lineMaps) {
+		return 0, false
+	}
+	bands := s.lineMaps[idx].bands
+	best, bestDist := -1, 0
+	for i, bd := range bands {
+		if y >= bd.yTop && y < bd.yBot {
+			return bd.line, true // inside the band: an exact hit
+		}
+		d := bd.yTop - y
+		if y >= bd.yBot {
+			d = y - bd.yBot + 1
+		}
+		if best < 0 || d < bestDist {
+			best, bestDist = i, d
+		}
+	}
+	if best < 0 || bestDist > sourceClickTolY {
+		return 0, false
+	}
+	return bands[best].line, true
+}
+
+// pageYForLine finds where a 1-based source line was rendered: the first page
+// carrying a band for that exact line, at the band's top (natural pixels). Lines
+// that drew nothing (blank or purely structural, e.g. \begin{document}) carry no
+// band, so it falls back to the present line nearest in number — the caret always
+// scrolls the render to the closest rendered output rather than silently doing
+// nothing. ok is false only when NO page has any band at all.
+func (s *State) pageYForLine(srcLine int) (page, y int, ok bool) {
+	for i, lm := range s.lineMaps {
+		for _, bd := range lm.bands {
+			if bd.line == srcLine {
+				return i + 1, bd.yTop, true
+			}
+		}
+	}
+	bestPage, bestY, bestLine, found := 0, 0, 0, false
+	for i, lm := range s.lineMaps {
+		for _, bd := range lm.bands {
+			if !found || absInt(bd.line-srcLine) < absInt(bestLine-srcLine) {
+				bestPage, bestY, bestLine, found = i+1, bd.yTop, bd.line, true
+			}
+		}
+	}
+	if !found {
+		return 0, 0, false
+	}
+	return bestPage, bestY, true
+}
+
+// jumpCaretToLine places the editor caret at column 0 of a 1-based source line,
+// clears any selection, focuses the editor and scrolls it so the line shows. The
+// syncing guard is raised for the whole move so the caret change it produces does
+// NOT bounce back into a render scroll (the click already picked the page) —
+// lastCaretLine is updated directly instead. This is the anti-feedback seam.
+func (s *State) jumpCaretToLine(line int) {
+	li := line - 1
+	if li < 0 {
+		li = 0
+	}
+	if n := len(s.editor.Lines); li >= n {
+		li = n - 1
+	}
+	if li < 0 {
+		return // empty buffer: nothing to place the caret on
+	}
+	s.syncing = true
+	s.editor.CursorLine = li
+	s.editor.CursorCol = 0
+	s.editor.ClearSelection()
+	s.selecting = false
+	s.editor.Focused = true
+	s.renderView.SetFocused(false)
+	s.scrollEditorToLine(li)
+	s.lastCaretLine = li
+	s.updateStatus()
+	s.syncing = false
+}
+
+// scrollEditorToLine nudges the editor's vertical scroll so 0-based line li is
+// visible, centring it when it currently sits off-screen. A line already in view
+// is left where it is (no jump).
+func (s *State) scrollEditorToLine(li int) {
+	vis := s.visibleEditorLines()
+	if li >= s.editor.ScrollLine && li < s.editor.ScrollLine+vis {
+		return
+	}
+	top := li - vis/2
+	if top < 0 {
+		top = 0
+	}
+	s.editor.ScrollLine = top
+}
+
+// caretMaybeChanged scrolls the render to follow the editor caret, but only when
+// the caret's LINE actually moved and the move was not itself driven by a render
+// click (syncing). It is the caret → render half of the linking; because it only
+// ever scrolls the render (never moves the caret) it cannot form a feedback loop
+// with the click → caret half.
+func (s *State) caretMaybeChanged() {
+	if s.syncing || s.editor.CursorLine == s.lastCaretLine {
+		return
+	}
+	s.lastCaretLine = s.editor.CursorLine
+	if page, y, ok := s.pageYForLine(s.editor.CursorLine + 1); ok {
+		s.renderView.ScrollToPage(page, y)
+	}
+}
+
+// Read-only introspection for the headless verification harness of the
+// source↔render linking. RenderLineAt maps a device-pixel render-pane point to
+// the source line drawn there (0 = none), LineToRenderPage the inverse page
+// lookup (0 = nothing rendered for the line), RenderScrollY the render pane's
+// vertical scroll offset. SetRenderPaginated flips the viewer's mode so a
+// caret-driven scroll shows up crisply as a current-page change.
+func (s *State) RenderLineAt(x, y int) int {
+	if line, ok := s.renderSourceLineAt(x, y); ok {
+		return line
+	}
+	return 0
+}
+
+func (s *State) LineToRenderPage(line int) int {
+	if page, _, ok := s.pageYForLine(line); ok {
+		return page
+	}
+	return 0
+}
+
+func (s *State) RenderScrollY() int {
+	_, y := s.renderView.ScrollOffset()
+	return y
+}
+
+func (s *State) SetRenderPaginated(on bool) {
+	if on {
+		s.renderView.Mode().Set(toolkit.PagedPaginated)
+	} else {
+		s.renderView.Mode().Set(toolkit.PagedContinuous)
+	}
+	s.dirty = true
+}
+
+// absInt is the integer absolute value.
+func absInt(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }

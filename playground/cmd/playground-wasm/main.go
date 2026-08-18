@@ -355,6 +355,36 @@ func main() {
 		return []any{x, y}
 	}))
 
+	// Source↔render linking introspection. gotexRenderLineAt(x,y) -> the 1-based
+	// source line drawn at a device-pixel render-pane point (0 = none), so a
+	// harness can find a glyph to click and assert the caret jumped there.
+	js.Global().Set("gotexRenderLineAt", js.FuncOf(func(_ js.Value, a []js.Value) any {
+		if len(a) < 2 {
+			return -1
+		}
+		return state.RenderLineAt(a[0].Int(), a[1].Int())
+	}))
+	// gotexLineToPage(line) -> the 1-based render page a source line's output lands
+	// on (0 = none), so a harness can pick a caret target on a LATER page.
+	js.Global().Set("gotexLineToPage", js.FuncOf(func(_ js.Value, a []js.Value) any {
+		if len(a) < 1 {
+			return 0
+		}
+		return state.LineToRenderPage(a[0].Int())
+	}))
+	// gotexRenderScrollY() -> the render pane's vertical scroll offset, so a caret
+	// move that scrolls the render is observable even in continuous mode.
+	js.Global().Set("gotexRenderScrollY", js.FuncOf(func(js.Value, []js.Value) any {
+		return state.RenderScrollY()
+	}))
+	// gotexSetPaginated(on) flips the render viewer's mode, so a caret-driven scroll
+	// shows up as a crisp current-page change.
+	js.Global().Set("gotexSetPaginated", js.FuncOf(func(_ js.Value, a []js.Value) any {
+		state.SetRenderPaginated(len(a) > 0 && a[0].Bool())
+		render()
+		return nil
+	}))
+
 	render()
 	js.Global().Set("gotexPlaygroundReady", true)
 	select {} // keep the Go runtime alive so the callbacks live
