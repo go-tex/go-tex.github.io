@@ -175,6 +175,15 @@ there is no server round-trip at all.
 (function(){
   var $=function(id){return document.getElementById(id);};
   var src=$("src"), preview=$("pages"), errBox=$("err");
+  // Persist the editor buffer in localStorage so an edited document survives a page
+  // reload (the built-in demo is only the first-visit seed). Restore it here, before
+  // the first render; saving happens on every edit (see scheduleRender).
+  var SRCKEY="gotex-pg-src";
+  try{ var savedSrc=localStorage.getItem(SRCKEY); if(savedSrc!==null) src.value=savedSrc; }catch(e){}
+  // Save on every edit, independent of the engine load (the render listener is only
+  // wired once the engine is ready — the buffer must persist even before that, and
+  // even if the engine never loads).
+  src.addEventListener("input",function(){ try{ localStorage.setItem(SRCKEY,src.value); }catch(e){} });
   // The 9.6 MB engine is served from jsDelivr, pinned to this build's commit, with
   // the same file on GitHub Pages as a fallback. Why not Pages alone: every Pages
   // deploy purges its Fastly cache, and during the post-deploy propagation window the
