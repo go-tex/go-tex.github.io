@@ -28,7 +28,8 @@ type compileResult struct {
 	w, h      int            // content image dimensions in device pixels
 	lineBands map[int][2]int // 1-based source line -> [topY, bottomY) in content px
 	pages     int
-	errText   string // "" on success; a human message on a hard compile error
+	errText   string             // "" on success; a human message on a hard compile error
+	diag      engine.Diagnostics // undefined commands/environments, dropped math, alarms
 }
 
 // toColor converts a toolkit/painter RGBA to an image/color.RGBA (both are
@@ -78,6 +79,7 @@ func compileLaTeX(src string, theme *toolkit.Theme) compileResult {
 			lineBands: map[int][2]int{},
 			pages:     len(pages),
 			errText:   diagSummaryEmpty(diag),
+			diag:      diag,
 		}
 	}
 
@@ -103,6 +105,7 @@ func compileLaTeX(src string, theme *toolkit.Theme) compileResult {
 		h:         totalH,
 		lineBands: bands,
 		pages:     len(pages),
+		diag:      diag,
 	}
 }
 

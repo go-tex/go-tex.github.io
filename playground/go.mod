@@ -4,7 +4,7 @@ go 1.26.4
 
 require (
 	github.com/go-gfx/gfx v0.5.0
-	github.com/go-tex/engine v0.157.1-0.20260818092935-04e1b56a5cc8
+	github.com/go-tex/engine v0.158.0
 	github.com/go-widgets/painter v0.11.0
 	github.com/go-widgets/toolkit v0.186.0
 )

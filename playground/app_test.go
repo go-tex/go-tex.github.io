@@ -25,6 +25,7 @@ func nonBlank(buf []byte, c toolkit.RGBA) bool {
 
 func newTestState(t *testing.T, dark bool) *State {
 	t.Helper()
+	SetupText(1) // install the OT font at scale 1 (resets any HiDPI scale a prior test set)
 	s := NewState(testW, testH, dark)
 	if s.pages <= 0 {
 		t.Fatalf("sample document produced %d pages, want > 0 (errText=%q)", s.pages, s.errText)
@@ -34,6 +35,10 @@ func newTestState(t *testing.T, dark bool) *State {
 	}
 	return s
 }
+
+// editorRect / renderRect are test conveniences for the two pane bounds.
+func (s *State) editorRect() toolkit.Rect { return s.editor.Bounds() }
+func (s *State) renderRect() toolkit.Rect { return s.paned.Second.Bounds() }
 
 func TestNewStateCompilesSampleAndDraws(t *testing.T) {
 	s := newTestState(t, false)
