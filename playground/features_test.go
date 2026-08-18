@@ -251,7 +251,7 @@ func TestSchemePickerPopover(t *testing.T) {
 	pb := s.schemePicker.Bounds()
 	// Open the popover by clicking the picker.
 	s.HandleClick(pb.X+2, pb.Y+2)
-	if !s.schemePicker.Open {
+	if !s.schemePicker.Open().Get() {
 		t.Fatalf("clicking the picker did not open it")
 	}
 	buf := make([]byte, testW*testH*4)
@@ -259,7 +259,7 @@ func TestSchemePickerPopover(t *testing.T) {
 	// A second click inside the popover selects a row (and closes it).
 	pop := s.schemePicker.PopoverBounds()
 	s.HandleClick(pop.X+4, pop.Y+s.schemePicker.PopoverBounds().H-2)
-	if s.schemePicker.Open {
+	if s.schemePicker.Open().Get() {
 		t.Fatalf("popover click did not close it")
 	}
 }

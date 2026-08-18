@@ -186,7 +186,11 @@ func NewState(w, h int, dark bool) *State {
 	s.paned = toolkit.NewHPaned(s.editor, s.rightPane)
 
 	s.schemePicker = toolkit.NewDropDown(latexhl.ThemeNames(), 0)
-	s.schemePicker.OnSelect = func(idx int) { s.applyScheme(idx) }
+	// DropDown is MVVM in v0.196: react to a selection change by subscribing to
+	// its Selected observable (Subscribe does not fire on registration, so the
+	// initial scheme is applied by the first compile, not here). The picker lives
+	// for the whole app, so the unsubscribe handle is intentionally dropped.
+	s.schemePicker.Selected().Subscribe(func(idx int) { s.applyScheme(idx) })
 	s.minimapBtn = toolkit.NewButton("Minimap", func() {
 		s.showMinimap = !s.showMinimap
 		s.layout()
@@ -374,7 +378,7 @@ func (s *State) RenderOffsetX() int  { return s.renderView.offsetX() }
 func (s *State) ShowLog() bool       { return s.showLog() }
 func (s *State) ActiveTab() int      { return s.rightPane.active }
 func (s *State) ZoomPercent() int    { return s.renderView.ZoomPercent() }
-func (s *State) SelectedScheme() int { return s.schemePicker.Selected }
+func (s *State) SelectedScheme() int { return s.schemePicker.Selected().Get() }
 
 // PageCount is the engine's logical page count; DrawnPages the number actually
 // rasterized and stacked in the render pane; RenderContentHeight the stacked
@@ -584,7 +588,7 @@ func (s *State) Draw(buf []byte) {
 	s.status.Draw(p, s.theme)
 
 	// Popover floats above everything.
-	if s.schemePicker.Open {
+	if s.schemePicker.Open().Get() {
 		s.schemePicker.DrawPopover(p, s.theme)
 	}
 	s.dirty = false
@@ -618,7 +622,7 @@ func (s *State) HandleClick(x, y int) bool {
 	s.pressKind = pressNone
 
 	// An open colour-scheme popover intercepts the next click.
-	if s.schemePicker.Open {
+	if s.schemePicker.Open().Get() {
 		s.schemePicker.PopoverClick(x, y)
 		s.dirty = true
 		return true
