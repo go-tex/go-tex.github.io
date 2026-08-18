@@ -25,12 +25,22 @@ const rasterScale = 2.0
 // cards in the continuous scroll.
 const pageShadow = 4
 
+// pageImg is one page rendered as a standalone centred card (for the paginated
+// render mode): the page centred in a maxW-wide canvas with the same drop-shadow
+// + border as the stacked view.
+type pageImg struct {
+	pixels []byte // RGBA, w*h*4
+	w, h   int
+}
+
 // compileResult is the outcome of one compile+rasterize pass: the composed
-// content image for the render pane, the per-source-line vertical bands (for
-// click navigation), a page count and either an error string or nil.
+// continuous content image, the per-page card images (paginated mode), the
+// per-source-line vertical bands (for click navigation), a page count and either
+// an error string or nil.
 type compileResult struct {
-	pixels     []byte             // RGBA content image, contentW*contentH*4
-	w, h       int                // content image dimensions in device pixels
+	pixels     []byte             // RGBA continuous (stacked) content image, w*h*4
+	w, h       int                // stacked image dimensions in device pixels
+	pageImgs   []pageImg          // per-page centred cards (paginated mode)
 	lineBands  map[int][2]int     // 1-based source line -> [topY, bottomY) in content px
 	pages      int                // engine (logical) page count
 	drawnPages int                // pages actually rasterized + stacked
@@ -98,19 +108,23 @@ func compileLaTeX(src string, theme *toolkit.Theme) compileResult {
 	borderCol := theme.Border
 
 	bands := map[int][2]int{}
+	pageImgs := make([]pageImg, 0, len(raster))
 	y := 0
 	for _, pg := range raster {
-		ox := (maxW - pg.W) / 2
-		// Shadow first (offset down-right); the page then covers all but the
-		// offset L-shaped band, leaving a soft drop shadow.
-		fillRectBuf(content, maxW, totalH, toolkit.Rect{X: ox + pageShadow, Y: y + pageShadow, W: pg.W, H: pg.H}, shadowCol)
-		blit(content, maxW, totalH, pg.Pixels, pg.W, pg.H, ox, y)
-		strokeRectBuf(content, maxW, totalH, toolkit.Rect{X: ox, Y: y, W: pg.W, H: pg.H}, borderCol, 1)
+		blitPageCard(content, maxW, totalH, pg, y, shadowCol, borderCol)
 		for line, b := range pg.Lines {
 			if _, seen := bands[line]; !seen {
 				bands[line] = [2]int{y + b[0], y + b[1]}
 			}
 		}
+		// Standalone centred card for the paginated mode (page height + room for
+		// the drop shadow below).
+		ch := pg.H + pageShadow
+		card := make([]byte, maxW*ch*4)
+		fillRGBA(card, theme.Background)
+		blitPageCard(card, maxW, ch, pg, 0, shadowCol, borderCol)
+		pageImgs = append(pageImgs, pageImg{pixels: card, w: maxW, h: ch})
+
 		y += pg.H + pageGap
 	}
 
@@ -118,11 +132,21 @@ func compileLaTeX(src string, theme *toolkit.Theme) compileResult {
 		pixels:     content,
 		w:          maxW,
 		h:          totalH,
+		pageImgs:   pageImgs,
 		lineBands:  bands,
 		pages:      len(pages),
 		drawnPages: len(raster),
 		diag:       diag,
 	}
+}
+
+// blitPageCard draws one page centred at vertical offset y into dst: a drop
+// shadow (offset down-right), the page pixels, then a 1px border.
+func blitPageCard(dst []byte, dstW, dstH int, pg *svgraster.Page, y int, shadowCol, borderCol toolkit.RGBA) {
+	ox := (dstW - pg.W) / 2
+	fillRectBuf(dst, dstW, dstH, toolkit.Rect{X: ox + pageShadow, Y: y + pageShadow, W: pg.W, H: pg.H}, shadowCol)
+	blit(dst, dstW, dstH, pg.Pixels, pg.W, pg.H, ox, y)
+	strokeRectBuf(dst, dstW, dstH, toolkit.Rect{X: ox, Y: y, W: pg.W, H: pg.H}, borderCol, 1)
 }
 
 // diagSummaryEmpty returns an explanatory message for a compile that yielded no

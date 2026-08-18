@@ -230,11 +230,30 @@ func main() {
 			}
 		}
 
+		// A dead key or an in-flight IME composition is committed by a following
+		// composition/EventChar, so ignore the raw keydown. A bare modifier
+		// (Shift/Control/Alt/Meta, which auto-repeats while held) carries no
+		// character and must NOT reach the editor — forwarding it would reset an
+		// in-progress Shift+Arrow selection between arrow presses.
+		if key == "Dead" || e.Get("isComposing").Bool() || isModifierKey(key) {
+			return nil
+		}
+
 		var changed bool
-		if len([]rune(key)) == 1 && !mod && !e.Get("altKey").Bool() {
+		if len([]rune(key)) == 1 && !mod {
+			// Insert a single character whenever there is no Ctrl/Cmd. Do NOT
+			// exclude Alt/Option: on a Mac a backslash (and @, #, {, }, …) is
+			// typed with Option, so those keydowns carry altKey=true and would
+			// otherwise be dropped.
 			changed = state.HandleChar(key)
 		} else {
-			changed = state.HandleKeyDown(key)
+			// Shift-prefix a NAVIGATION key so the editor extends its selection;
+			// other keys pass through untouched.
+			code := key
+			if e.Get("shiftKey").Bool() && isNavKey(key) {
+				code = "Shift+" + key
+			}
+			changed = state.HandleKeyDown(code)
 		}
 		if changed {
 			e.Call("preventDefault")
@@ -291,6 +310,13 @@ func main() {
 			"pageCount":       state.PageCount(),
 			"drawnPages":      state.DrawnPages(),
 			"contentHeight":   state.RenderContentHeight(),
+			"renderMode":      state.RenderMode(),
+			"currentPage":     state.RenderCurrentPage(),
+			"visiblePages":    state.RenderVisiblePages(),
+			"cursorLine":      state.CursorLine(),
+			"cursorCol":       state.CursorCol(),
+			"hasSelection":    state.HasSelection(),
+			"selectionText":   state.SelectionText(),
 		}
 	}))
 
@@ -320,9 +346,38 @@ func main() {
 		return nil
 	}))
 
+	// gotexCaretPixel(line, col) -> [deviceX, deviceY] of that caret cell, so a
+	// harness can click there and assert the caret round-trips (click accuracy).
+	js.Global().Set("gotexCaretPixel", js.FuncOf(func(_ js.Value, a []js.Value) any {
+		if len(a) < 2 {
+			return nil
+		}
+		x, y := state.CaretPixel(a[0].Int(), a[1].Int())
+		return []any{x, y}
+	}))
+
 	render()
 	js.Global().Set("gotexPlaygroundReady", true)
 	select {} // keep the Go runtime alive so the callbacks live
+}
+
+// isModifierKey reports whether key is a bare modifier keydown (no character).
+func isModifierKey(key string) bool {
+	switch key {
+	case "Shift", "Control", "Alt", "Meta", "AltGraph", "CapsLock", "NumLock", "ScrollLock":
+		return true
+	}
+	return false
+}
+
+// isNavKey reports whether key is a caret-navigation key that Shift can extend
+// into a selection.
+func isNavKey(key string) bool {
+	switch key {
+	case "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End":
+		return true
+	}
+	return false
 }
 
 // signRows maps a wheel delta to +3 / -3 / 0 rows by sign, so a flat axis sends

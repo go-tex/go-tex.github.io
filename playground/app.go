@@ -23,12 +23,21 @@ package playground
 import (
 	"strconv"
 
+	"github.com/go-opentype/fonts/jetbrainsmono"
 	engine "github.com/go-tex/engine"
 	"github.com/go-widgets/painter"
 	"github.com/go-widgets/toolkit"
 
 	"github.com/go-tex/go-tex.github.io/playground/latexhl"
 )
+
+// editorFontTTF is the monospace face the CodeEditor renders with. A code editor
+// MUST be monospace: the toolkit's caret placement and click-to-column mapping
+// both step by ONE glyph advance, so the toolkit's default proportional face
+// (Atkinson Hyperlegible) makes the caret and clicks drift along wide glyphs
+// (a click over column 6 could land on column 13). It is a package var so a test
+// can swap a bad blob to exercise the font-load error branch.
+var editorFontTTF = jetbrainsmono.TTF
 
 // SampleLaTeX is the document the playground opens with — the same article the
 // legacy textarea playground shipped, so the two render identically.
@@ -128,6 +137,15 @@ type State struct {
 	// pointer drag capture.
 	pressKind int
 
+	// monoScale is the metric scale the editor's monospace font was last built
+	// for, so applyEditorFont rebuilds it only on a real HiDPI scale change.
+	monoScale float64
+
+	// keyboard selection anchor: selecting is true while a Shift+navigation
+	// selection is in progress; the anchor is where it began.
+	selecting                   bool
+	selAnchorLine, selAnchorCol int
+
 	dirty          bool
 	pendingCompile bool
 
@@ -149,6 +167,7 @@ func NewState(w, h int, dark bool) *State {
 	s.editor.Language = "latex"
 	s.editor.Syntax = s.hl
 	s.editor.Focused = true
+	s.applyEditorFont() // monospace so the caret + clicks land on exact columns
 	s.editor.OnChange = func() {
 		if s.OnEdit != nil {
 			s.OnEdit(s.editor.Text())
@@ -303,8 +322,26 @@ func (s *State) SetTheme(dark bool) {
 // Resize re-lays out to a new surface size and repaints.
 func (s *State) Resize(w, h int) {
 	s.w, s.h = w, h
+	s.applyEditorFont() // rebuild the editor's mono font if the HiDPI scale changed
 	s.layout()
 	s.dirty = true
+}
+
+// applyEditorFont installs a monospace face on the CodeEditor sized to the active
+// metric scale (rebuilding only when the scale changed). A load failure leaves
+// the editor on the inherited proportional font rather than crashing.
+func (s *State) applyEditorFont() {
+	scale := toolkit.MetricScale()
+	if s.monoScale == scale && s.editor.Font != nil {
+		return
+	}
+	size := int(float64(baseFontPx)*scale + 0.5)
+	f, err := toolkit.NewTrueTypeFont(editorFontTTF, size)
+	if err != nil {
+		return
+	}
+	s.editor.SetFont(f)
+	s.monoScale = scale
 }
 
 // Size returns the current surface size.
@@ -347,6 +384,35 @@ func (s *State) PageCount() int           { return s.pages }
 func (s *State) DrawnPages() int          { return s.drawnPages }
 func (s *State) RenderContentHeight() int { return s.renderView.baseH }
 
+// RenderMode / RenderCurrentPage / RenderVisiblePages report the render pane's
+// continuous-vs-paginated mode, the current 1-based page (paginated) and how many
+// pages are shown at once (1 paginated, all continuous). CursorLine/CursorCol
+// expose the editor caret for click-accuracy assertions. HasSelection /
+// SelectionText expose the current text selection.
+func (s *State) RenderMode() int         { return s.renderView.mode }
+func (s *State) RenderCurrentPage() int  { return s.renderView.currentPage() + 1 }
+func (s *State) RenderVisiblePages() int { return s.renderView.visiblePages() }
+func (s *State) CursorLine() int         { return s.editor.CursorLine }
+func (s *State) CursorCol() int          { return s.editor.CursorCol }
+func (s *State) HasSelection() bool      { return s.editor.HasSelection() }
+func (s *State) SelectionText() string   { return s.editor.SelectionText() }
+
+// CaretPixel returns the DEVICE-pixel point just inside the cell of the given
+// 0-based (line, col) caret position, using the editor's monospace layout — so a
+// headless harness can click there and assert the caret round-trips exactly
+// (proving the click→column mapping is accurate, which the old proportional font
+// broke). It mirrors the toolkit's TextView layout (4px pad + gutter + advance).
+func (s *State) CaretPixel(line, col int) (int, int) {
+	er := s.editor.Bounds()
+	f := s.editor.EffectiveFont()
+	gutter := f.Measure(strconv.Itoa(len(s.editor.Lines))) + 8
+	adv := f.Advance()
+	lineH := f.Height() + 4
+	x := er.X + 4 + gutter + col*adv + 1
+	y := er.Y + 4 + (line-s.editor.ScrollLine)*lineH + f.Height()/2
+	return x, y
+}
+
 // MinimapSegments returns how many coloured token segments the minimap paints
 // for the current buffer (proving it renders per-token rows, not one solid bar
 // per line). It refreshes the overview inputs first, so it is valid after layout.
@@ -374,6 +440,10 @@ func (s *State) DebugRects() map[string][4]int {
 		"zoomOut":       rect(s.renderView.zoomOut.Bounds()),
 		"zoomIn":        rect(s.renderView.zoomIn.Bounds()),
 		"fit":           rect(s.renderView.fitBtn.Bounds()),
+		"modeCont":      rect(s.renderView.contBtn.Bounds()),
+		"modePage":      rect(s.renderView.pageBtn.Bounds()),
+		"prevPage":      rect(s.renderView.prevBtn.Bounds()),
+		"nextPage":      rect(s.renderView.nextBtn.Bounds()),
 		"renderContent": rect(rc),
 	}
 }
@@ -448,9 +518,9 @@ func (s *State) Compile() {
 	s.logView.set(res.diag, res.errText)
 
 	if res.pixels != nil {
-		s.renderView.SetContent(res.pixels, res.w, res.h)
+		s.renderView.SetPages(res.pixels, res.w, res.h, res.pageImgs)
 	} else {
-		s.renderView.SetContent(nil, 0, 0)
+		s.renderView.SetPages(nil, 0, 0, nil)
 	}
 	s.updateStatus()
 	s.dirty = true
@@ -581,6 +651,7 @@ func (s *State) HandleClick(x, y int) bool {
 	er := s.editor.Bounds()
 	if er.Contains(x, y) {
 		s.editor.Focused = true
+		s.selecting = false // a click starts a fresh selection anchor
 		s.editor.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - er.X, Y: y - er.Y})
 		s.scrollRenderToLine(s.editor.CursorLine + 1)
 		s.updateStatus()
@@ -693,27 +764,77 @@ func (s *State) HandleScroll(x, y, dx, dy int) bool {
 // rowStep is the pixel distance one wheel row scrolls.
 const rowStep = 28
 
-// HandleChar routes a printable character to the editor.
+// HandleChar routes a printable character to the editor. Typing ends any
+// keyboard selection in progress (the inserted text replaces it if present).
 func (s *State) HandleChar(code string) bool {
 	if !s.editor.Focused {
 		return false
 	}
+	if s.editor.HasSelection() {
+		s.editor.DeleteSelection() // typing over a selection replaces it
+	}
+	s.selecting = false
 	s.editor.OnEvent(toolkit.Event{Kind: toolkit.EventChar, Code: code})
 	s.updateStatus()
 	s.dirty = true
 	return true
 }
 
-// HandleKeyDown routes a named key to the editor.
+// navBase maps a navigation key that can be Shift-extended to its bare form, or
+// "" when the key is not a Shift-selectable navigation key.
+func navBase(code string) string {
+	switch code {
+	case "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End":
+		return code
+	}
+	return ""
+}
+
+// HandleKeyDown routes a named key to the editor. A "Shift+"-prefixed navigation
+// key extends the selection from an anchor; a plain navigation key moves the
+// caret and collapses any selection; every other key is forwarded as-is.
 func (s *State) HandleKeyDown(code string) bool {
 	if !s.editor.Focused {
 		return false
 	}
+	if len(code) > 6 && code[:6] == "Shift+" {
+		if base := navBase(code[6:]); base != "" {
+			s.shiftSelect(base)
+			s.afterKey()
+			return true
+		}
+	}
+	if navBase(code) != "" && s.editor.HasSelection() {
+		// A plain navigation key collapses the selection as the caret moves.
+		s.editor.OnEvent(toolkit.Event{Kind: toolkit.EventKeyDown, Code: code})
+		s.editor.ClearSelection()
+		s.selecting = false
+		s.afterKey()
+		return true
+	}
+	s.selecting = false
 	s.editor.OnEvent(toolkit.Event{Kind: toolkit.EventKeyDown, Code: code})
+	s.afterKey()
+	return true
+}
+
+// shiftSelect anchors a keyboard selection on its first Shift+navigation key,
+// moves the caret with the bare key, then extends Selection from the anchor to
+// the new caret.
+func (s *State) shiftSelect(base string) {
+	if !s.selecting {
+		s.selAnchorLine, s.selAnchorCol = s.editor.CursorLine, s.editor.CursorCol
+		s.selecting = true
+	}
+	s.editor.OnEvent(toolkit.Event{Kind: toolkit.EventKeyDown, Code: base})
+	s.editor.SetSelection(toolkit.SelectionRange(s.selAnchorLine, s.selAnchorCol, s.editor.CursorLine, s.editor.CursorCol))
+}
+
+// afterKey runs the shared post-key bookkeeping (render-follow + status + dirty).
+func (s *State) afterKey() {
 	s.scrollRenderToLine(s.editor.CursorLine + 1)
 	s.updateStatus()
 	s.dirty = true
-	return true
 }
 
 // minimapScrollTo scrolls the editor so the buffer line under minimap-y sits at

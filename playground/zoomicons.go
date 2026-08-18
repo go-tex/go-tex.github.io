@@ -106,3 +106,17 @@ func drawFitIcon(p painter.Painter, r toolkit.Rect, ink toolkit.RGBA) {
 	drawLine(p, rightX, midY, rightX-ah, midY-ah, lw, ink)
 	drawLine(p, rightX, midY, rightX-ah, midY+ah, lw, ink)
 }
+
+// drawChevron paints a < or > chevron (page Prev / Next). right=true points right.
+func drawChevron(p painter.Painter, r toolkit.Rect, ink toolkit.RGBA, right bool) {
+	x, y, d := iconSquare(r)
+	lw := stroke()
+	cy := y + d/2
+	// The tip and the two arms of the chevron.
+	tipX, backX := x+d/3, x+2*d/3
+	if right {
+		tipX, backX = x+2*d/3, x+d/3
+	}
+	drawLine(p, backX, y+d/4, tipX, cy, lw, ink)
+	drawLine(p, backX, y+3*d/4, tipX, cy, lw, ink)
+}

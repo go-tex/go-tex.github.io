@@ -32,9 +32,23 @@ type renderView struct {
 	zoomIn  *toolkit.Button
 	fitBtn  *toolkit.Button
 
+	// mode toggle + page stepping (paginated mode).
+	contBtn  *toolkit.Button
+	pageBtn  *toolkit.Button
+	prevBtn  *toolkit.Button
+	nextBtn  *toolkit.Button
+	pageRect toolkit.Rect // "n / N" indicator area (paginated mode)
+
 	basePix      []byte // base RGBA render, baseW*baseH*4
 	baseW, baseH int    // base render size (device px at the engine raster scale)
 	zoom         float64
+
+	// continuous (stacked) content + per-page cards, and the render mode.
+	stackedPix         []byte
+	stackedW, stackedH int
+	pages              []pageImg
+	mode               int // renderContinuous | renderPaginated
+	curPage            int // current page index in paginated mode
 
 	toolbarH    int
 	readoutRect toolkit.Rect
@@ -47,6 +61,12 @@ const (
 	rvPressNone = iota
 	rvPressButton
 	rvPressScroll
+)
+
+// render modes.
+const (
+	renderContinuous = 0 // all pages stacked in one vertical scroll
+	renderPaginated  = 1 // one page at a time, with Prev/Next
 )
 
 // Zoom limits and the multiplicative step of the +/- buttons.
@@ -74,11 +94,82 @@ func newRenderView() *renderView {
 	rv.zoomIn.Icon = func(p painter.Painter, r toolkit.Rect, ink toolkit.RGBA) { drawZoomIcon(p, r, ink, true) }
 	rv.fitBtn = toolkit.NewButton("Fit width", func() { rv.Fit() })
 	rv.fitBtn.Icon = func(p painter.Painter, r toolkit.Rect, ink toolkit.RGBA) { drawFitIcon(p, r, ink) }
+
+	// Mode segmented toggle + page stepping.
+	rv.contBtn = toolkit.NewButton("Cont", func() { rv.setMode(renderContinuous) })
+	rv.contBtn.Selected = true
+	rv.pageBtn = toolkit.NewButton("Page", func() { rv.setMode(renderPaginated) })
+	rv.prevBtn = toolkit.NewButton("Prev", func() { rv.step(-1) })
+	rv.prevBtn.Icon = func(p painter.Painter, r toolkit.Rect, ink toolkit.RGBA) { drawChevron(p, r, ink, false) }
+	rv.nextBtn = toolkit.NewButton("Next", func() { rv.step(+1) })
+	rv.nextBtn.Icon = func(p painter.Painter, r toolkit.Rect, ink toolkit.RGBA) { drawChevron(p, r, ink, true) }
 	return rv
 }
 
-// SetContent installs a freshly rasterized render (or clears it with nil,0,0)
-// and re-applies the current zoom so the scroll content size tracks it.
+// SetPages installs a freshly rasterized render: the stacked (continuous) image
+// and the per-page cards. It clamps the current page and shows the active mode.
+func (rv *renderView) SetPages(stacked []byte, w, h int, pages []pageImg) {
+	rv.stackedPix, rv.stackedW, rv.stackedH = stacked, w, h
+	rv.pages = pages
+	if rv.curPage >= len(pages) {
+		rv.curPage = 0
+	}
+	rv.applyMode()
+}
+
+// applyMode points the image at the stacked buffer (continuous) or the current
+// page card (paginated), then re-applies the zoom.
+func (rv *renderView) applyMode() {
+	if rv.mode == renderPaginated && len(rv.pages) > 0 {
+		pg := rv.pages[rv.curPage]
+		rv.SetContent(pg.pixels, pg.w, pg.h)
+		return
+	}
+	rv.SetContent(rv.stackedPix, rv.stackedW, rv.stackedH)
+}
+
+// setMode switches the render mode, updates the toggle's selected state and
+// re-lays the content.
+func (rv *renderView) setMode(m int) {
+	rv.mode = m
+	rv.contBtn.Selected = m == renderContinuous
+	rv.pageBtn.Selected = m == renderPaginated
+	rv.applyMode()
+}
+
+// step advances the current page by d (clamped) in paginated mode and reshows it.
+func (rv *renderView) step(d int) {
+	if rv.mode != renderPaginated || len(rv.pages) == 0 {
+		return
+	}
+	rv.curPage += d
+	if rv.curPage < 0 {
+		rv.curPage = 0
+	}
+	if rv.curPage > len(rv.pages)-1 {
+		rv.curPage = len(rv.pages) - 1
+	}
+	rv.scroll.OffsetX, rv.scroll.OffsetY = 0, 0
+	rv.applyMode()
+}
+
+// pageCount / visiblePages / currentPage are host introspection: how many pages
+// exist, how many are shown at once (1 paginated, all continuous) and which page
+// is current.
+func (rv *renderView) pageCount() int { return len(rv.pages) }
+func (rv *renderView) visiblePages() int {
+	if rv.mode == renderPaginated {
+		if len(rv.pages) == 0 {
+			return 0
+		}
+		return 1
+	}
+	return len(rv.pages)
+}
+func (rv *renderView) currentPage() int { return rv.curPage }
+
+// SetContent installs a base render (or clears it with nil,0,0) and re-applies
+// the current zoom so the scroll content size tracks it.
 func (rv *renderView) SetContent(pix []byte, w, h int) {
 	rv.basePix, rv.baseW, rv.baseH = pix, w, h
 	rv.img.Pixels, rv.img.W, rv.img.H = pix, w, h
@@ -155,7 +246,14 @@ func (rv *renderView) SetBounds(r toolkit.Rect) {
 	}
 	by := r.Y + (rv.toolbarH-bh)/2
 	bw := toolkit.Scaled(26)
+	mw := toolkit.Scaled(42) // mode-toggle button width (holds "Cont"/"Page")
 	x := r.X + pad
+	// Mode segmented toggle.
+	rv.contBtn.SetBounds(toolkit.Rect{X: x, Y: by, W: mw, H: bh})
+	x += mw
+	rv.pageBtn.SetBounds(toolkit.Rect{X: x, Y: by, W: mw, H: bh})
+	x += mw + 2*gap
+	// Zoom controls.
 	rv.zoomOut.SetBounds(toolkit.Rect{X: x, Y: by, W: bw, H: bh})
 	x += bw + gap
 	readoutW := toolkit.Scaled(48)
@@ -164,6 +262,13 @@ func (rv *renderView) SetBounds(r toolkit.Rect) {
 	rv.zoomIn.SetBounds(toolkit.Rect{X: x, Y: by, W: bw, H: bh})
 	x += bw + gap
 	rv.fitBtn.SetBounds(toolkit.Rect{X: x, Y: by, W: bw, H: bh})
+	x += bw + 2*gap
+	// Page stepping (drawn + hit only in paginated mode).
+	rv.prevBtn.SetBounds(toolkit.Rect{X: x, Y: by, W: bw, H: bh})
+	x += bw + gap
+	rv.pageRect = toolkit.Rect{X: x, Y: r.Y, W: toolkit.Scaled(44), H: rv.toolbarH}
+	x += toolkit.Scaled(44) + gap
+	rv.nextBtn.SetBounds(toolkit.Rect{X: x, Y: by, W: bw, H: bh})
 
 	cy := r.Y + rv.toolbarH
 	ch := r.H - rv.toolbarH // >= 0: toolbarH is clamped to r.H above
@@ -179,17 +284,32 @@ func (rv *renderView) Draw(p painter.Painter, theme *toolkit.Theme) {
 	p.FillRect(toolkit.Rect{X: r.X, Y: r.Y, W: r.W, H: rv.toolbarH}, theme.Surface)
 	p.FillRect(toolkit.Rect{X: r.X, Y: r.Y + rv.toolbarH - toolkit.Scaled(1), W: r.W, H: toolkit.Scaled(1)}, theme.Border)
 
+	rv.contBtn.Draw(p, theme)
+	rv.pageBtn.Draw(p, theme)
 	rv.zoomOut.Draw(p, theme)
 	rv.zoomIn.Draw(p, theme)
 	rv.fitBtn.Draw(p, theme)
 
 	txt := strconv.Itoa(rv.ZoomPercent()) + "%"
-	tw := toolkit.TextWidth(txt)
-	tx := rv.readoutRect.X + (rv.readoutRect.W-tw)/2
-	ty := rv.readoutRect.Y + (rv.readoutRect.H-toolkit.GlyphHeight())/2
-	toolkit.DrawText(p, tx, ty, txt, theme.OnSurface)
+	rv.drawCentered(p, txt, rv.readoutRect, theme.OnSurface)
+
+	// Page stepping controls only in paginated mode.
+	if rv.mode == renderPaginated {
+		rv.prevBtn.Draw(p, theme)
+		rv.nextBtn.Draw(p, theme)
+		ind := strconv.Itoa(rv.curPage+1) + " / " + strconv.Itoa(len(rv.pages))
+		rv.drawCentered(p, ind, rv.pageRect, theme.OnSurface)
+	}
 
 	rv.scroll.Draw(p, theme)
+}
+
+// drawCentered paints s centred (both axes) inside box.
+func (rv *renderView) drawCentered(p painter.Painter, s string, box toolkit.Rect, ink toolkit.RGBA) {
+	tw := toolkit.TextWidth(s)
+	tx := box.X + (box.W-tw)/2
+	ty := box.Y + (box.H-toolkit.GlyphHeight())/2
+	toolkit.DrawText(p, tx, ty, s, ink)
 }
 
 // inToolbar reports whether surface-y falls in the zoom toolbar row.
@@ -205,7 +325,11 @@ func (rv *renderView) inToolbar(y int) bool {
 func (rv *renderView) click(x, y int) bool {
 	rv.press = rvPressNone
 	if rv.inToolbar(y) {
-		for _, b := range []*toolkit.Button{rv.zoomOut, rv.zoomIn, rv.fitBtn} {
+		btns := []*toolkit.Button{rv.contBtn, rv.pageBtn, rv.zoomOut, rv.zoomIn, rv.fitBtn}
+		if rv.mode == renderPaginated {
+			btns = append(btns, rv.prevBtn, rv.nextBtn)
+		}
+		for _, b := range btns {
 			bb := b.Bounds()
 			if bb.Contains(x, y) {
 				b.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - bb.X, Y: y - bb.Y})
