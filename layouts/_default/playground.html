@@ -93,15 +93,21 @@
 (function(){
   var $=function(id){return document.getElementById(id);};
   var errBox=$("err");
-  // The ~10 MB app wasm is served from jsDelivr, pinned to this build's commit
-  // (an immutable per-commit URL on an independent CDN our Pages deploys never
-  // purge), with the Pages copy as a fallback — see the engine-only playground's
-  // note on Pages' post-deploy negative caching.
-  {{ $local := printf "%s" ("playground.wasm" | absURL) }}
+  // The ~11 MB app wasm is built FRESH by the pages deploy and served from our own
+  // Pages origin, cache-busted with the commit sha (?v=…) so every deploy is a new
+  // URL — this is the PRIMARY source and always matches the deployed Go source.
+  // jsDelivr, pinned to the same commit, is the fallback (an independent immutable
+  // CDN); it serves the committed copy, which may lag, so it is second, not first.
+  {{ $sha := .Site.Params.wasmsha }}
+  {{ $local := "playground.wasm" | absURL }}
   {{ $primary := $local }}
-  {{ with .Site.Params.wasmsha }}{{ $primary = printf "https://cdn.jsdelivr.net/gh/go-tex/go-tex.github.io@%s/static/playground.wasm" . }}{{ end }}
+  {{ $fallback := $local }}
+  {{ with $sha }}
+    {{ $primary = printf "%s?v=%s" $local . }}
+    {{ $fallback = printf "https://cdn.jsdelivr.net/gh/go-tex/go-tex.github.io@%s/static/playground.wasm" . }}
+  {{ end }}
   var wasmURL={{ $primary }};
-  var wasmFallback={{ $local }};
+  var wasmFallback={{ $fallback }};
   var started=false;
 
   // Resolve the host page's theme (data-theme, else prefers-color-scheme) to a
