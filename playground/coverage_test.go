@@ -107,8 +107,8 @@ func TestHandleClickOutsidePanes(t *testing.T) {
 
 func TestLayoutClampsNegativeBody(t *testing.T) {
 	s := newTestState(t, false)
-	// A surface shorter than the status bar clamps the body height to 0.
-	s.Resize(200, statusBarH-4)
+	// A surface shorter than the toolbar + status bar clamps the body height to 0.
+	s.Resize(200, 8)
 	if s.paned.Bounds().H != 0 {
 		t.Fatalf("body height = %d, want 0 (clamped)", s.paned.Bounds().H)
 	}
