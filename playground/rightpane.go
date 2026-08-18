@@ -8,7 +8,7 @@ import (
 	"github.com/go-widgets/toolkit"
 )
 
-// rightPane is the composed right-hand side of the split: a small ViewSwitcher
+// rightPane is the composed right-hand side of the split: a compact folder-style
 // tab strip (Rendered | Log) pinned to its top, with the active tab's content
 // filling the rest — the composed renderView on the Rendered tab, the diagnostics
 // logView on the Log tab. Selecting a tab (a click on the strip) swaps which
@@ -21,7 +21,7 @@ import (
 type rightPane struct {
 	toolkit.Base
 
-	tabs   *toolkit.ViewSwitcher
+	tabs   *tabBar
 	render *renderView
 	log    *logView
 
@@ -43,19 +43,21 @@ const (
 // newRightPane composes the tab strip over the given render and log views.
 func newRightPane(rv *renderView, lv *logView) *rightPane {
 	rp := &rightPane{render: rv, log: lv}
-	rp.tabs = toolkit.NewViewSwitcher([]string{"Rendered", "Log"}, tabRender)
-	rp.tabs.OnChange = func(i int) { rp.active = i }
+	rp.tabs = newTabBar([]string{"Rendered", "Log"}, func(i int) { rp.active = i })
 	return rp
 }
+
+// tabRect returns the device rectangle of tab i (host introspection).
+func (rp *rightPane) tabRect(i int) toolkit.Rect { return rp.tabs.tabRect(i) }
 
 // isLog reports whether the Log tab is active.
 func (rp *rightPane) isLog() bool { return rp.active == tabLog }
 
-// setActive selects a tab and keeps the switcher's highlight in sync (used when
-// the tab changes from code rather than a strip click).
+// setActive selects a tab and keeps the strip's highlight in sync (used when the
+// tab changes from code rather than a strip click).
 func (rp *rightPane) setActive(tab int) {
 	rp.active = tab
-	rp.tabs.Current = tab
+	rp.tabs.active = tab
 }
 
 // contentRect is the region below the tab strip that the active content fills.
@@ -73,7 +75,7 @@ func (rp *rightPane) contentRect() toolkit.Rect {
 // remaining area (only the active one draws).
 func (rp *rightPane) SetBounds(r toolkit.Rect) {
 	rp.Base.SetBounds(r)
-	rp.tabH = toolkit.ViewSwitcherHeight()
+	rp.tabH = rp.tabs.height()
 	if rp.tabH > r.H {
 		rp.tabH = r.H
 	}
@@ -104,8 +106,9 @@ func (rp *rightPane) inTabs(y int) bool {
 func (rp *rightPane) click(x, y int) bool {
 	rp.press = rpPressNone
 	if rp.inTabs(y) {
-		tb := rp.tabs.Bounds()
-		rp.tabs.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - tb.X, Y: y - tb.Y})
+		if idx := rp.tabs.tabAt(x, y); idx >= 0 {
+			rp.tabs.setActive(idx) // onChange updates rp.active
+		}
 		rp.press = rpPressTabs
 		return true
 	}
@@ -138,10 +141,11 @@ func (rp *rightPane) release(x, y int) bool {
 	return was != rpPressNone
 }
 
-// scrollWheel forwards a wheel scroll to the active content (the log view scrolls
-// its own offset; the render view scrolls its inner ScrollView). A scroll on the
-// tab strip is consumed but inert.
-func (rp *rightPane) scrollWheel(x, y, delta int) bool {
+// scrollWheel forwards a wheel/two-finger scroll to the active content (the log
+// view scrolls its own offset vertically; the render view scrolls its inner
+// ScrollView on BOTH axes so a horizontal swipe moves its horizontal scrollbar).
+// A scroll on the tab strip is consumed but inert.
+func (rp *rightPane) scrollWheel(x, y, dx, dy int) bool {
 	if !rp.Bounds().Contains(x, y) {
 		return false
 	}
@@ -149,11 +153,11 @@ func (rp *rightPane) scrollWheel(x, y, delta int) bool {
 		return true
 	}
 	if rp.isLog() {
-		rp.log.offset += delta * rowStep
+		rp.log.offset += dy * rowStep
 		if rp.log.offset < 0 {
 			rp.log.offset = 0
 		}
 		return true
 	}
-	return rp.render.scrollWheel(x, y, delta)
+	return rp.render.scrollWheel(x, y, dx, dy)
 }

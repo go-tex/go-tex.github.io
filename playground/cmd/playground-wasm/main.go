@@ -23,6 +23,7 @@
 package main
 
 import (
+	"strings"
 	"syscall/js"
 
 	playground "github.com/go-tex/go-tex.github.io/playground"
@@ -74,6 +75,13 @@ func main() {
 	dark := detectDark(doc)
 	state := playground.NewState(dw, dh, dark)
 	curDPR := d
+
+	// Mirror every editor copy/cut to the real OS clipboard.
+	state.SetClipboardWriter(func(s string) {
+		if clip := clipboardAPI(); !clip.IsUndefined() && !clip.IsNull() {
+			clip.Call("writeText", s)
+		}
+	})
 
 	// Persist the editor buffer to localStorage (key "gotex-pg-src", shared with
 	// the legacy textarea playground) so an edited document survives a reload.
@@ -175,11 +183,12 @@ func main() {
 		e := args[0]
 		e.Call("preventDefault")
 		x, y := coords(e)
-		d := 3
-		if e.Get("deltaY").Float() < 0 {
-			d = -3
-		}
-		if state.HandleScroll(x, y, d) {
+		// Forward BOTH axes so a horizontal two-finger swipe (deltaX) moves the
+		// render pane's horizontal scrollbar, a vertical wheel (deltaY) the
+		// vertical one. Each axis maps to +/-3 rows by sign, or 0 when flat.
+		dx := signRows(e.Get("deltaX").Float())
+		dy := signRows(e.Get("deltaY").Float())
+		if state.HandleScroll(x, y, dx, dy) {
 			render()
 		}
 		return nil
@@ -191,8 +200,38 @@ func main() {
 		}
 		e := args[0]
 		key := e.Get("key").String()
+		mod := e.Get("ctrlKey").Bool() || e.Get("metaKey").Bool()
+
+		// Clipboard + select-all shortcuts, bridged to the browser clipboard.
+		if mod && !e.Get("altKey").Bool() {
+			switch strings.ToLower(key) {
+			case "c":
+				e.Call("preventDefault")
+				if state.HandleCopy() {
+					render()
+				}
+				return nil
+			case "x":
+				e.Call("preventDefault")
+				if state.HandleCut() {
+					render()
+				}
+				return nil
+			case "a":
+				e.Call("preventDefault")
+				if state.HandleSelectAll() {
+					render()
+				}
+				return nil
+			case "v":
+				e.Call("preventDefault")
+				pasteFromClipboard(state, render)
+				return nil
+			}
+		}
+
 		var changed bool
-		if len([]rune(key)) == 1 && !e.Get("ctrlKey").Bool() && !e.Get("metaKey").Bool() && !e.Get("altKey").Bool() {
+		if len([]rune(key)) == 1 && !mod && !e.Get("altKey").Bool() {
 			changed = state.HandleChar(key)
 		} else {
 			changed = state.HandleKeyDown(key)
@@ -242,12 +281,16 @@ func main() {
 		return map[string]any{
 			"editorW":         state.EditorWidth(),
 			"renderOffsetY":   state.RenderOffsetY(),
+			"renderOffsetX":   state.RenderOffsetX(),
 			"showLog":         state.ShowLog(),
 			"dividerX":        state.DividerX(),
 			"activeTab":       state.ActiveTab(),
 			"zoomPercent":     state.ZoomPercent(),
 			"selectedScheme":  state.SelectedScheme(),
 			"minimapSegments": state.MinimapSegments(),
+			"pageCount":       state.PageCount(),
+			"drawnPages":      state.DrawnPages(),
+			"contentHeight":   state.RenderContentHeight(),
 		}
 	}))
 
@@ -261,9 +304,71 @@ func main() {
 		return out
 	}))
 
+	// gotexSource returns the current editor buffer, so a headless harness can
+	// assert clipboard paste/cut changed the text.
+	js.Global().Set("gotexSource", js.FuncOf(func(js.Value, []js.Value) any {
+		return state.Source()
+	}))
+
+	// gotexSetSource replaces the editor buffer + recompiles, so a headless harness
+	// can drive a multi-page document through the render pane.
+	js.Global().Set("gotexSetSource", js.FuncOf(func(_ js.Value, a []js.Value) any {
+		if len(a) > 0 && a[0].Type() == js.TypeString {
+			state.SetSource(a[0].String())
+			render()
+		}
+		return nil
+	}))
+
 	render()
 	js.Global().Set("gotexPlaygroundReady", true)
 	select {} // keep the Go runtime alive so the callbacks live
+}
+
+// signRows maps a wheel delta to +3 / -3 / 0 rows by sign, so a flat axis sends
+// no scroll on that axis (a pure vertical wheel leaves OffsetX untouched).
+func signRows(d float64) int {
+	switch {
+	case d > 0:
+		return 3
+	case d < 0:
+		return -3
+	default:
+		return 0
+	}
+}
+
+// clipboardAPI returns navigator.clipboard (or a null js.Value when the browser
+// does not expose it).
+func clipboardAPI() js.Value {
+	nav := js.Global().Get("navigator")
+	if nav.IsUndefined() || nav.IsNull() {
+		return js.Null()
+	}
+	return nav.Get("clipboard")
+}
+
+// pasteFromClipboard reads the OS clipboard asynchronously and, once resolved,
+// inserts the text into the editor and repaints.
+func pasteFromClipboard(state *playground.State, render func()) {
+	clip := clipboardAPI()
+	if clip.IsUndefined() || clip.IsNull() {
+		return
+	}
+	promise := clip.Call("readText")
+	if promise.IsUndefined() || promise.IsNull() {
+		return
+	}
+	promise.Call("then", js.FuncOf(func(_ js.Value, a []js.Value) any {
+		text := ""
+		if len(a) > 0 && a[0].Type() == js.TypeString {
+			text = a[0].String()
+		}
+		if state.HandlePaste(text) {
+			render()
+		}
+		return nil
+	}))
 }
 
 // detectDark reads the host page's theme preference.

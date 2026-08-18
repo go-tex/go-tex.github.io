@@ -131,13 +131,13 @@ func TestRenderViewScrollAreaDragAndWheel(t *testing.T) {
 
 	// Wheel over the content scrolls; wheel outside is ignored.
 	before := rv.offsetY()
-	if !rv.scrollWheel(sb.X+10, sb.Y+10, 4) {
+	if !rv.scrollWheel(sb.X+10, sb.Y+10, 0, 4) {
 		t.Fatalf("wheel over content not consumed")
 	}
 	if rv.offsetY() <= before {
 		t.Fatalf("wheel did not scroll: %d -> %d", before, rv.offsetY())
 	}
-	if rv.scrollWheel(-100, -100, 3) {
+	if rv.scrollWheel(-100, -100, 0, 3) {
 		t.Fatalf("wheel outside content should not be consumed")
 	}
 }
@@ -229,10 +229,10 @@ func newTestRightPane(t *testing.T) *rightPane {
 
 func TestRightPaneTabSwitchAndRouting(t *testing.T) {
 	rp := newTestRightPane(t)
-	tb := rp.tabs.Bounds()
+	logTab := rp.tabRect(tabLog)
 
-	// Click the Log tab (right half): switch to the log.
-	if !rp.click(tb.X+tb.W*3/4, tb.Y+tb.H/2) {
+	// Click the Log tab: switch to the log.
+	if !rp.click(logTab.X+logTab.W/2, logTab.Y+logTab.H/2) {
 		t.Fatalf("tab click not consumed")
 	}
 	if rp.press != rpPressTabs || !rp.isLog() {
@@ -250,13 +250,14 @@ func TestRightPaneTabSwitchAndRouting(t *testing.T) {
 
 	// Wheel over the log scrolls its own offset; wheel on the tab strip is inert;
 	// wheel outside is not consumed.
-	if !rp.scrollWheel(cr.X+10, cr.Y+10, 4) || rp.log.offset <= 0 {
+	if !rp.scrollWheel(cr.X+10, cr.Y+10, 0, 4) || rp.log.offset <= 0 {
 		t.Fatalf("log wheel did not scroll: offset=%d", rp.log.offset)
 	}
-	if !rp.scrollWheel(tb.X+2, tb.Y+2, 1) {
+	strip := rp.Bounds()
+	if !rp.scrollWheel(strip.X+2, strip.Y+2, 0, 1) {
 		t.Fatalf("wheel on the tab strip should be consumed (inert)")
 	}
-	if rp.scrollWheel(-5, -5, 1) {
+	if rp.scrollWheel(-5, -5, 0, 1) {
 		t.Fatalf("wheel outside the pane should not be consumed")
 	}
 
@@ -395,9 +396,11 @@ func TestDebugRects(t *testing.T) {
 			t.Fatalf("DebugRects[%q] has a non-positive size: %v", name, v)
 		}
 	}
-	// The two tabs partition the tab strip with no overlap.
-	if r["renderTab"][0]+r["renderTab"][2] != r["logTab"][0] {
-		t.Fatalf("tab rects should be contiguous: %v | %v", r["renderTab"], r["logTab"])
+	// The Rendered tab sits to the left of the Log tab with no overlap (they are
+	// compact, label-sized tabs, not a full-width split).
+	rt, lt := r["renderTab"], r["logTab"]
+	if rt[0]+rt[2] > lt[0] {
+		t.Fatalf("tabs overlap: %v | %v", rt, lt)
 	}
 }
 
@@ -405,17 +408,18 @@ func TestClickZoomAndTabThroughState(t *testing.T) {
 	s := newTestState(t, false)
 
 	// Clicking the Log tab through the full State router switches the pane.
-	tb := s.rightPane.tabs.Bounds()
-	if !s.HandleClick(tb.X+tb.W*3/4, tb.Y+tb.H/2) {
+	logTab := s.rightPane.tabRect(tabLog)
+	if !s.HandleClick(logTab.X+logTab.W/2, logTab.Y+logTab.H/2) {
 		t.Fatalf("tab click not consumed by State")
 	}
 	if !s.showLog() {
 		t.Fatalf("State did not switch to the Log tab")
 	}
-	s.HandleRelease(tb.X+tb.W*3/4, tb.Y+tb.H/2)
+	s.HandleRelease(logTab.X+logTab.W/2, logTab.Y+logTab.H/2)
 
 	// Back to Rendered, then click the zoom-in button through State.
-	s.HandleClick(tb.X+tb.W/4, tb.Y+tb.H/2)
+	renderTab := s.rightPane.tabRect(tabRender)
+	s.HandleClick(renderTab.X+renderTab.W/2, renderTab.Y+renderTab.H/2)
 	zin := s.renderView.zoomIn.Bounds()
 	if !s.HandleClick(zin.X+zin.W/2, zin.Y+zin.H/2) {
 		t.Fatalf("zoom-in click not consumed by State")

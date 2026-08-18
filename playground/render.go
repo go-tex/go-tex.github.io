@@ -20,16 +20,22 @@ const pageGap = 18
 // 2.0 gives crisp glyph outlines without an unreasonably large buffer.
 const rasterScale = 2.0
 
+// pageShadow is the device-pixel offset of each page's drop shadow (down + right),
+// giving the stacked sheets a subtle lift so consecutive pages read as separate
+// cards in the continuous scroll.
+const pageShadow = 4
+
 // compileResult is the outcome of one compile+rasterize pass: the composed
 // content image for the render pane, the per-source-line vertical bands (for
 // click navigation), a page count and either an error string or nil.
 type compileResult struct {
-	pixels    []byte         // RGBA content image, contentW*contentH*4
-	w, h      int            // content image dimensions in device pixels
-	lineBands map[int][2]int // 1-based source line -> [topY, bottomY) in content px
-	pages     int
-	errText   string             // "" on success; a human message on a hard compile error
-	diag      engine.Diagnostics // undefined commands/environments, dropped math, alarms
+	pixels     []byte             // RGBA content image, contentW*contentH*4
+	w, h       int                // content image dimensions in device pixels
+	lineBands  map[int][2]int     // 1-based source line -> [topY, bottomY) in content px
+	pages      int                // engine (logical) page count
+	drawnPages int                // pages actually rasterized + stacked
+	errText    string             // "" on success; a human message on a hard compile error
+	diag       engine.Diagnostics // undefined commands/environments, dropped math, alarms
 }
 
 // toColor converts a toolkit/painter RGBA to an image/color.RGBA (both are
@@ -86,11 +92,20 @@ func compileLaTeX(src string, theme *toolkit.Theme) compileResult {
 	content := make([]byte, maxW*totalH*4)
 	fillRGBA(content, theme.Background)
 
+	// Card decoration: a subtle drop shadow behind each sheet and a 1px border
+	// around it, so the stacked pages read as separate cards (PDF-viewer style).
+	shadowCol := mixRGBA(theme.Background, theme.OnSurface, 0.18)
+	borderCol := theme.Border
+
 	bands := map[int][2]int{}
 	y := 0
 	for _, pg := range raster {
 		ox := (maxW - pg.W) / 2
+		// Shadow first (offset down-right); the page then covers all but the
+		// offset L-shaped band, leaving a soft drop shadow.
+		fillRectBuf(content, maxW, totalH, toolkit.Rect{X: ox + pageShadow, Y: y + pageShadow, W: pg.W, H: pg.H}, shadowCol)
 		blit(content, maxW, totalH, pg.Pixels, pg.W, pg.H, ox, y)
+		strokeRectBuf(content, maxW, totalH, toolkit.Rect{X: ox, Y: y, W: pg.W, H: pg.H}, borderCol, 1)
 		for line, b := range pg.Lines {
 			if _, seen := bands[line]; !seen {
 				bands[line] = [2]int{y + b[0], y + b[1]}
@@ -100,12 +115,13 @@ func compileLaTeX(src string, theme *toolkit.Theme) compileResult {
 	}
 
 	return compileResult{
-		pixels:    content,
-		w:         maxW,
-		h:         totalH,
-		lineBands: bands,
-		pages:     len(pages),
-		diag:      diag,
+		pixels:     content,
+		w:          maxW,
+		h:          totalH,
+		lineBands:  bands,
+		pages:      len(pages),
+		drawnPages: len(raster),
+		diag:       diag,
 	}
 }
 
@@ -127,6 +143,34 @@ func fillRGBA(buf []byte, c toolkit.RGBA) {
 	for i := 0; i+3 < len(buf); i += 4 {
 		buf[i], buf[i+1], buf[i+2], buf[i+3] = c.R, c.G, c.B, c.A
 	}
+}
+
+// fillRectBuf fills the (clipped) rectangle r of the dst RGBA buffer with c.
+func fillRectBuf(dst []byte, dstW, dstH int, r toolkit.Rect, c toolkit.RGBA) {
+	for yy := r.Y; yy < r.Y+r.H; yy++ {
+		if yy < 0 || yy >= dstH {
+			continue
+		}
+		for xx := r.X; xx < r.X+r.W; xx++ {
+			if xx < 0 || xx >= dstW {
+				continue
+			}
+			i := (yy*dstW + xx) * 4
+			dst[i], dst[i+1], dst[i+2], dst[i+3] = c.R, c.G, c.B, c.A
+		}
+	}
+}
+
+// strokeRectBuf draws a t-thick border around r into the dst RGBA buffer (four
+// filled bands, each clipped by fillRectBuf).
+func strokeRectBuf(dst []byte, dstW, dstH int, r toolkit.Rect, c toolkit.RGBA, t int) {
+	if t < 1 {
+		t = 1
+	}
+	fillRectBuf(dst, dstW, dstH, toolkit.Rect{X: r.X, Y: r.Y, W: r.W, H: t}, c)           // top
+	fillRectBuf(dst, dstW, dstH, toolkit.Rect{X: r.X, Y: r.Y + r.H - t, W: r.W, H: t}, c) // bottom
+	fillRectBuf(dst, dstW, dstH, toolkit.Rect{X: r.X, Y: r.Y, W: t, H: r.H}, c)           // left
+	fillRectBuf(dst, dstW, dstH, toolkit.Rect{X: r.X + r.W - t, Y: r.Y, W: t, H: r.H}, c) // right
 }
 
 // blit copies a srcW*srcH RGBA image into dst (dstW*dstH) at (ox, oy),

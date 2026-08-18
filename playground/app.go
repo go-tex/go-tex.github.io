@@ -108,13 +108,19 @@ type State struct {
 	schemePicker *toolkit.DropDown
 	minimapBtn   *toolkit.Button
 
+	// clip is the toolkit-wide clipboard the editor's copy/cut/paste go through;
+	// installed process-wide in NewState. Its onWrite hook lets the wasm host push
+	// copies to the real OS clipboard (navigator.clipboard).
+	clip *appClipboard
+
 	showMinimap bool
 
 	// last compile output.
-	lineBands map[int][2]int
-	errText   string
-	pages     int
-	diag      engine.Diagnostics
+	lineBands  map[int][2]int
+	errText    string
+	pages      int // engine (logical) page count
+	drawnPages int // pages rasterized + stacked in the render pane
+	diag       engine.Diagnostics
 
 	// chrome heights (device pixels), recomputed each layout at the active scale.
 	toolbarH, statusH int
@@ -170,9 +176,82 @@ func NewState(w, h int, dark bool) *State {
 
 	s.status = toolkit.NewStatusbar([]string{"Ln 1, Col 1", "UTF-8", "0 pages", ""})
 
+	// Route the toolkit-wide clipboard through this State so the editor's
+	// copy/cut/paste reach the host (and, on wasm, the OS clipboard).
+	s.clip = &appClipboard{}
+	toolkit.SetClipboard(s.clip)
+
 	s.layout()
 	s.Compile()
 	return s
+}
+
+// appClipboard is the process-wide toolkit Clipboard for the playground: it
+// holds the last-copied text in memory (so the synchronous ClipboardText the
+// toolkit calls always has a value) and, when set, mirrors every write to the
+// host via onWrite — the wasm driver points that at navigator.clipboard.writeText
+// so a copy reaches the real OS clipboard.
+type appClipboard struct {
+	text    string
+	onWrite func(string)
+}
+
+func (c *appClipboard) ClipboardText() string { return c.text }
+
+func (c *appClipboard) SetClipboardText(s string) {
+	c.text = s
+	if c.onWrite != nil {
+		c.onWrite(s)
+	}
+}
+
+// SetClipboardWriter installs the host hook that mirrors every copy/cut to the OS
+// clipboard (the wasm driver wires it to navigator.clipboard.writeText).
+func (s *State) SetClipboardWriter(w func(string)) { s.clip.onWrite = w }
+
+// HandleCopy copies the editor selection to the clipboard. No-op (returns false)
+// when the editor is unfocused.
+func (s *State) HandleCopy() bool {
+	if !s.editor.Focused {
+		return false
+	}
+	s.editor.CopySelection()
+	s.dirty = true
+	return true
+}
+
+// HandleCut cuts the editor selection to the clipboard (an edit, so it schedules
+// a recompile via the editor's OnChange). No-op when unfocused.
+func (s *State) HandleCut() bool {
+	if !s.editor.Focused {
+		return false
+	}
+	s.editor.CutSelection()
+	s.updateStatus()
+	s.dirty = true
+	return true
+}
+
+// HandlePaste inserts text at the caret (replacing any selection). The host reads
+// the OS clipboard asynchronously and passes the text here. No-op when unfocused.
+func (s *State) HandlePaste(text string) bool {
+	if !s.editor.Focused {
+		return false
+	}
+	s.editor.Paste(text)
+	s.updateStatus()
+	s.dirty = true
+	return true
+}
+
+// HandleSelectAll selects the whole buffer. No-op when unfocused.
+func (s *State) HandleSelectAll() bool {
+	if !s.editor.Focused {
+		return false
+	}
+	s.editor.SelectAll()
+	s.dirty = true
+	return true
 }
 
 // applyScheme switches the syntax colour theme. A fresh highlighter instance is
@@ -254,10 +333,19 @@ func (s *State) Theme() *toolkit.Theme { return s.theme }
 // state changes after a pointer interaction.
 func (s *State) EditorWidth() int    { return s.editor.Bounds().W }
 func (s *State) RenderOffsetY() int  { return s.renderView.offsetY() }
+func (s *State) RenderOffsetX() int  { return s.renderView.offsetX() }
 func (s *State) ShowLog() bool       { return s.showLog() }
 func (s *State) ActiveTab() int      { return s.rightPane.active }
 func (s *State) ZoomPercent() int    { return s.renderView.ZoomPercent() }
 func (s *State) SelectedScheme() int { return s.schemePicker.Selected }
+
+// PageCount is the engine's logical page count; DrawnPages the number actually
+// rasterized and stacked in the render pane; RenderContentHeight the stacked
+// content height in device pixels (before zoom). They let a headless test assert
+// a multi-page document renders continuously.
+func (s *State) PageCount() int           { return s.pages }
+func (s *State) DrawnPages() int          { return s.drawnPages }
+func (s *State) RenderContentHeight() int { return s.renderView.baseH }
 
 // MinimapSegments returns how many coloured token segments the minimap paints
 // for the current buffer (proving it renders per-token rows, not one solid bar
@@ -277,14 +365,12 @@ func (s *State) DividerX() int { return s.paned.Bounds().X + s.paned.Position }
 // buttons and the render content area). It is host-facing introspection only.
 func (s *State) DebugRects() map[string][4]int {
 	rect := func(r toolkit.Rect) [4]int { return [4]int{r.X, r.Y, r.W, r.H} }
-	tb := s.rightPane.tabs.Bounds()
-	half := tb.W / 2
 	rc := s.renderView.contentRect()
 	return map[string][4]int{
 		"picker":        rect(s.schemePicker.Bounds()),
 		"popover":       rect(s.schemePicker.PopoverBounds()),
-		"renderTab":     {tb.X, tb.Y, half, tb.H},
-		"logTab":        {tb.X + half, tb.Y, tb.W - half, tb.H},
+		"renderTab":     rect(s.rightPane.tabRect(tabRender)),
+		"logTab":        rect(s.rightPane.tabRect(tabLog)),
 		"zoomOut":       rect(s.renderView.zoomOut.Bounds()),
 		"zoomIn":        rect(s.renderView.zoomIn.Bounds()),
 		"fit":           rect(s.renderView.fitBtn.Bounds()),
@@ -356,6 +442,7 @@ func (s *State) Compile() {
 	res := compileLaTeX(s.editor.Text(), s.theme)
 	s.errText = res.errText
 	s.pages = res.pages
+	s.drawnPages = res.drawnPages
 	s.diag = res.diag
 	s.lineBands = res.lineBands
 	s.logView.set(res.diag, res.errText)
@@ -578,23 +665,25 @@ func (s *State) HandleRelease(x, y int) bool {
 	return false
 }
 
-// HandleScroll forwards a wheel scroll (delta in rows) to the pane under the
-// pointer.
-func (s *State) HandleScroll(x, y, delta int) bool {
+// HandleScroll forwards a wheel/two-finger scroll to the pane under the pointer.
+// dx/dy are in ROWS (a horizontal swipe carries dx); the render pane routes both
+// axes so a horizontal swipe moves its horizontal scrollbar, while the editor and
+// minimap scroll vertically only.
+func (s *State) HandleScroll(x, y, dx, dy int) bool {
 	rr := s.rightPane.Bounds()
 	if rr.Contains(x, y) {
-		s.rightPane.scrollWheel(x, y, delta)
+		s.rightPane.scrollWheel(x, y, dx, dy)
 		s.dirty = true
 		return true
 	}
 	er := s.editor.Bounds()
 	if er.Contains(x, y) {
-		s.editor.OnEvent(toolkit.Event{Kind: toolkit.EventScroll, X: x - er.X, Y: y - er.Y, Delta: delta})
+		s.editor.OnEvent(toolkit.Event{Kind: toolkit.EventScroll, X: x - er.X, Y: y - er.Y, Delta: dy})
 		s.dirty = true
 		return true
 	}
 	if s.showMinimap && s.minimap.Bounds().Contains(x, y) {
-		s.editor.OnEvent(toolkit.Event{Kind: toolkit.EventScroll, Delta: delta})
+		s.editor.OnEvent(toolkit.Event{Kind: toolkit.EventScroll, Delta: dy})
 		s.dirty = true
 		return true
 	}
