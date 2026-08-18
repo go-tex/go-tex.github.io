@@ -446,19 +446,17 @@ func (s *State) SelectionText() string { return s.editor.SelectionText() }
 func (s *State) RenderFocused() bool { return s.renderFocused() }
 
 // CaretPixel returns the DEVICE-pixel point just inside the cell of the given
-// 0-based (line, col) caret position, using the editor's monospace layout — so a
-// headless harness can click there and assert the caret round-trips exactly
-// (proving the click→column mapping is accurate, which the old proportional font
-// broke). It mirrors the toolkit's TextView layout (4px pad + gutter + advance).
+// 0-based (line, col) caret position — so a headless harness can click there and
+// assert the caret round-trips exactly (proving the click→column mapping is
+// accurate). It DELEGATES to the toolkit's [toolkit.TextView.CaretPixel]
+// (promoted through the embedded *TextView) so the gutter/advance/line-pitch
+// geometry lives in exactly one place: duplicating it here drifted the moment the
+// gutter padding widened. CaretPixel returns the cell's top-left, so a couple of
+// in-cell pixels (one across, half a glyph down) land the click squarely inside
+// the cell for caretAt to map back.
 func (s *State) CaretPixel(line, col int) (int, int) {
-	er := s.editor.Bounds()
-	f := s.editor.EffectiveFont()
-	gutter := f.Measure(strconv.Itoa(len(s.editor.Lines))) + 8
-	adv := f.Advance()
-	lineH := f.Height() + 4
-	x := er.X + 4 + gutter + col*adv + 1
-	y := er.Y + 4 + (line-s.editor.ScrollLine)*lineH + f.Height()/2
-	return x, y
+	x, y := s.editor.CaretPixel(line, col)
+	return x + 1, y + s.editor.EffectiveFont().Height()/2
 }
 
 // LogEntryCount returns how many entries the diagnostics Log has accumulated
