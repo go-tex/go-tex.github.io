@@ -18,10 +18,13 @@ import (
 // State.minimapScrollTo).
 //
 // It is draw-only: State refreshes lines/spans/top/visible before each paint and
-// owns the pointer mapping, so the widget stays a passive overview. The whole
-// buffer is scaled to the widget height; when there are more source lines than
-// pixel rows, lines that collapse onto an already-drawn pixel row are sampled
-// out rather than overflowing.
+// owns the pointer mapping, so the widget stays a passive overview.
+//
+// Rows are a FIXED small height laid CONTIGUOUSLY from the top, exactly like the
+// VS Code minimap: a short file sits as a compact block at the top with blank
+// space below (it does not stretch to fill the column). Only when the buffer is
+// taller than the widget (n*rowH > height) does it compress — sampling one line
+// per drawn row — so the overview never spills past its bounds.
 type minimap struct {
 	toolkit.Base
 
@@ -38,29 +41,65 @@ func (m *minimap) update(lines []string, spans [][]toolkit.TextSpan, top, visibl
 	m.lines, m.spans, m.top, m.visible = lines, spans, top, visible
 }
 
-// lineAtY maps a widget-local y (device pixels) to a 0-based buffer line.
-func (m *minimap) lineAtY(y int) int {
+// metrics returns the fixed row height and the number of rows actually drawn:
+// one row per source line when the buffer fits, otherwise as many rows as fit
+// the height (the buffer is then sampled, one line per row). displayRows is 0
+// only when there is no area or no lines.
+func (m *minimap) metrics() (rowH, displayRows int) {
 	r := m.Bounds()
 	n := len(m.lines)
-	if n == 0 || r.H <= 0 {
-		return 0
+	if r.H <= 0 || n == 0 {
+		return 0, 0
 	}
-	rel := y - r.Y
-	if rel < 0 {
-		rel = 0
+	rowH = m.rowH()
+	maxRows := r.H / rowH
+	if maxRows < 1 {
+		maxRows = 1
 	}
-	line := rel * n / r.H
+	displayRows = n
+	if displayRows > maxRows {
+		displayRows = maxRows
+	}
+	return rowH, displayRows
+}
+
+// lineForRow maps a drawn row index to its 0-based source line. It is the
+// identity when the buffer fits (displayRows == n) and a proportional sample
+// when it does not.
+func lineForRow(row, displayRows, n int) int {
+	line := row * n / displayRows
 	if line >= n {
 		line = n - 1
 	}
 	return line
 }
 
+// lineAtY maps a widget-local y (device pixels) to a 0-based buffer line, in the
+// fixed-row-height geometry: rows above the drawn block clamp to line 0, rows in
+// or below it clamp to the last drawn row's line.
+func (m *minimap) lineAtY(y int) int {
+	r := m.Bounds()
+	n := len(m.lines)
+	rowH, displayRows := m.metrics()
+	if displayRows == 0 {
+		return 0
+	}
+	rel := y - r.Y
+	if rel < 0 {
+		rel = 0
+	}
+	row := rel / rowH
+	if row >= displayRows {
+		row = displayRows - 1
+	}
+	return lineForRow(row, displayRows, n)
+}
+
 // charW is the device width of one source character cell in the overview, and
-// rowH the device height of one line's coloured strip. Both are metric-scaled
-// and floored at one device pixel so the overview never collapses to nothing.
+// rowH the device height of one line's row. Both are metric-scaled and floored
+// at one device pixel so the overview never collapses to nothing.
 func (m *minimap) charW() int { return atLeast1(toolkit.Scaled(1)) }
-func (m *minimap) rowH() int  { return atLeast1(toolkit.Scaled(2)) }
+func (m *minimap) rowH() int  { return atLeast1(toolkit.Scaled(3)) }
 
 // atLeast1 floors v at one device pixel.
 func atLeast1(v int) int {
@@ -92,10 +131,11 @@ func spanColorAt(spans []toolkit.TextSpan, idx int, fallback toolkit.RGBA) toolk
 func (m *minimap) forEachSegment(neutral toolkit.RGBA, cb func(rect toolkit.Rect, c toolkit.RGBA)) {
 	r := m.Bounds()
 	n := len(m.lines)
-	if r.W <= 0 || r.H <= 0 || n == 0 {
+	rowH, displayRows := m.metrics()
+	if r.W <= 0 || displayRows == 0 {
 		return
 	}
-	charW, rowH := m.charW(), m.rowH()
+	charW := m.charW()
 	pad := toolkit.Scaled(2)
 	usableW := r.W - 2*pad
 	if usableW < 1 {
@@ -105,13 +145,10 @@ func (m *minimap) forEachSegment(neutral toolkit.RGBA, cb func(rect toolkit.Rect
 	if maxCols < 1 {
 		maxCols = 1
 	}
-	prevY := -1
-	for i := 0; i < n; i++ {
-		y := r.Y + i*r.H/n
-		if y == prevY {
-			continue // this line collapsed onto an already-drawn row: sample it out
-		}
-		prevY = y
+	segH := atLeast1(rowH - toolkit.Scaled(1)) // a 1px gap between rows
+	for row := 0; row < displayRows; row++ {
+		i := lineForRow(row, displayRows, n)
+		y := r.Y + row*rowH
 
 		runes := []rune(m.lines[i])
 		cols := len(runes)
@@ -133,7 +170,7 @@ func (m *minimap) forEachSegment(neutral toolkit.RGBA, cb func(rect toolkit.Rect
 			for j < cols && !isSpace(runes[j]) && spanColorAt(spans, j, neutral) == col {
 				j++
 			}
-			seg := toolkit.Rect{X: r.X + pad + start*charW, Y: y, W: (j - start) * charW, H: rowH}
+			seg := toolkit.Rect{X: r.X + pad + start*charW, Y: y, W: (j - start) * charW, H: segH}
 			cb(seg, col)
 		}
 	}
@@ -166,18 +203,33 @@ func (m *minimap) Draw(p painter.Painter, theme *toolkit.Theme) {
 		p.FillRect(seg, c)
 	})
 
-	// Viewport indicator: a translucent accent band over the visible range.
+	// Viewport indicator: a translucent accent band over the visible range,
+	// mapped through the SAME fixed-row geometry so it lines up with the rows.
 	if m.visible > 0 {
-		vy := r.Y + m.top*r.H/n
-		vh := m.visible * r.H / n
+		rowH, displayRows := m.metrics()
+		contentH := displayRows * rowH
+		startRow := rowForLine(m.top, displayRows, n)
+		end := m.top + m.visible
+		if end > n {
+			end = n
+		}
+		endRow := rowForLine(end, displayRows, n)
+		vy := r.Y + startRow*rowH
+		vh := (endRow - startRow) * rowH
 		if vh < toolkit.Scaled(6) {
 			vh = toolkit.Scaled(6)
 		}
-		if vy+vh > r.Y+r.H {
-			vh = r.Y + r.H - vy
+		if (vy-r.Y)+vh > contentH {
+			vh = contentH - (vy - r.Y)
 		}
 		band := toolkit.Rect{X: r.X, Y: vy, W: r.W, H: vh}
 		p.FillRect(band, toolkit.RGBA{R: theme.Accent.R, G: theme.Accent.G, B: theme.Accent.B, A: 0x33})
 		p.StrokeRect(band, theme.Accent, toolkit.Scaled(1))
 	}
+}
+
+// rowForLine maps a 0-based source line to the drawn row it appears on — the
+// inverse of lineForRow, used to place the viewport indicator over the rows.
+func rowForLine(line, displayRows, n int) int {
+	return line * displayRows / n
 }

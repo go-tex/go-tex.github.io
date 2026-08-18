@@ -66,9 +66,14 @@ func newRenderView() *renderView {
 	rv := &renderView{zoom: 1}
 	rv.img = toolkit.NewImage(nil, 0, 0)
 	rv.scroll = toolkit.NewScrollView(rv.img)
-	rv.zoomOut = toolkit.NewButton("-", func() { rv.zoomBy(1.0 / zoomStep) })
-	rv.zoomIn = toolkit.NewButton("+", func() { rv.zoomBy(zoomStep) })
-	rv.fitBtn = toolkit.NewButton("Fit", func() { rv.Fit() })
+	// Icons (drawn via the Button.Icon seam) replace the text; the labels stay for
+	// accessibility naming.
+	rv.zoomOut = toolkit.NewButton("Zoom out", func() { rv.zoomBy(1.0 / zoomStep) })
+	rv.zoomOut.Icon = func(p painter.Painter, r toolkit.Rect, ink toolkit.RGBA) { drawZoomIcon(p, r, ink, false) }
+	rv.zoomIn = toolkit.NewButton("Zoom in", func() { rv.zoomBy(zoomStep) })
+	rv.zoomIn.Icon = func(p painter.Painter, r toolkit.Rect, ink toolkit.RGBA) { drawZoomIcon(p, r, ink, true) }
+	rv.fitBtn = toolkit.NewButton("Fit width", func() { rv.Fit() })
+	rv.fitBtn.Icon = func(p painter.Painter, r toolkit.Rect, ink toolkit.RGBA) { drawFitIcon(p, r, ink) }
 	return rv
 }
 
@@ -127,8 +132,9 @@ func (rv *renderView) ZoomPercent() int {
 	return int(rv.zoom*100 + 0.5)
 }
 
-// offsetY is the inner vertical scroll offset (device px), for introspection.
+// offsetY / offsetX are the inner scroll offsets (device px), for introspection.
 func (rv *renderView) offsetY() int { return rv.scroll.OffsetY }
+func (rv *renderView) offsetX() int { return rv.scroll.OffsetX }
 
 // contentRect is the scrollable image area (below the toolbar), where the error
 // overlay and the source-navigation hit-test live.
@@ -157,8 +163,7 @@ func (rv *renderView) SetBounds(r toolkit.Rect) {
 	x += readoutW + gap
 	rv.zoomIn.SetBounds(toolkit.Rect{X: x, Y: by, W: bw, H: bh})
 	x += bw + gap
-	fw := toolkit.Scaled(38)
-	rv.fitBtn.SetBounds(toolkit.Rect{X: x, Y: by, W: fw, H: bh})
+	rv.fitBtn.SetBounds(toolkit.Rect{X: x, Y: by, W: bw, H: bh})
 
 	cy := r.Y + rv.toolbarH
 	ch := r.H - rv.toolbarH // >= 0: toolbarH is clamped to r.H above
@@ -241,12 +246,13 @@ func (rv *renderView) release(x, y int) bool {
 	return was != rvPressNone
 }
 
-// scrollWheel forwards a wheel scroll (delta in rows) to the ScrollView when the
-// pointer is over the content area.
-func (rv *renderView) scrollWheel(x, y, delta int) bool {
+// scrollWheel forwards a wheel/two-finger scroll (dx/dy in rows) to the
+// ScrollView when the pointer is over the content area. A horizontal swipe (dx)
+// moves the horizontal scrollbar; a vertical wheel (dy) moves the vertical one.
+func (rv *renderView) scrollWheel(x, y, dx, dy int) bool {
 	sb := rv.scroll.Bounds()
 	if sb.Contains(x, y) {
-		rv.scroll.OnEvent(toolkit.Event{Kind: toolkit.EventScroll, X: x - sb.X, Y: y - sb.Y, Delta: delta})
+		rv.scroll.OnEvent(toolkit.Event{Kind: toolkit.EventScroll, X: x - sb.X, Y: y - sb.Y, Delta: dy, DeltaX: dx})
 		return true
 	}
 	return false

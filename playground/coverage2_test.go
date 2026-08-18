@@ -68,14 +68,14 @@ func TestOnDividerBounds(t *testing.T) {
 func TestHandleScrollRegionsAndOutside(t *testing.T) {
 	s := newTestState(t, false)
 	er := s.editor.Bounds()
-	if !s.HandleScroll(er.X+10, er.Y+10, 3) {
+	if !s.HandleScroll(er.X+10, er.Y+10, 0, 3) {
 		t.Fatalf("scroll over editor not consumed")
 	}
 	mm := s.minimap.Bounds()
-	if !s.HandleScroll(mm.X+2, mm.Y+10, 3) {
+	if !s.HandleScroll(mm.X+2, mm.Y+10, 0, 3) {
 		t.Fatalf("scroll over minimap not consumed")
 	}
-	if s.HandleScroll(-5, -5, 1) {
+	if s.HandleScroll(-5, -5, 0, 1) {
 		t.Fatalf("scroll outside every pane should not be consumed")
 	}
 }
@@ -84,14 +84,14 @@ func TestHandleScrollLogPane(t *testing.T) {
 	s := newTestState(t, false)
 	s.toggleLog()
 	rr := s.rightPane.contentRect()
-	if !s.HandleScroll(rr.X+10, rr.Y+10, 4) {
+	if !s.HandleScroll(rr.X+10, rr.Y+10, 0, 4) {
 		t.Fatalf("scroll over log not consumed")
 	}
 	if s.logView.offset <= 0 {
 		t.Fatalf("log did not scroll down: offset=%d", s.logView.offset)
 	}
 	// Scrolling up past the top clamps to 0.
-	s.HandleScroll(rr.X+10, rr.Y+10, -100)
+	s.HandleScroll(rr.X+10, rr.Y+10, 0, -100)
 	if s.logView.offset != 0 {
 		t.Fatalf("log offset did not clamp to 0: %d", s.logView.offset)
 	}

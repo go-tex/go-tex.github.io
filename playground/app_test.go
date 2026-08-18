@@ -156,18 +156,18 @@ func TestScrollBothPanes(t *testing.T) {
 	s := newTestState(t, false)
 	rr := s.renderRect()
 	before := s.rscroll().OffsetY
-	if !s.HandleScroll(rr.X+10, rr.Y+10, 5) {
+	if !s.HandleScroll(rr.X+10, rr.Y+10, 0, 5) {
 		t.Fatalf("render scroll not consumed")
 	}
 	if s.rscroll().OffsetY <= before {
 		t.Fatalf("render pane did not scroll down: %d -> %d", before, s.rscroll().OffsetY)
 	}
 	er := s.editorRect()
-	if !s.HandleScroll(er.X+10, er.Y+10, 3) {
+	if !s.HandleScroll(er.X+10, er.Y+10, 0, 3) {
 		t.Fatalf("editor scroll not consumed")
 	}
 	// A scroll outside both panes is ignored.
-	if s.HandleScroll(-5, -5, 1) {
+	if s.HandleScroll(-5, -5, 0, 1) {
 		t.Fatalf("out-of-bounds scroll should not be consumed")
 	}
 }

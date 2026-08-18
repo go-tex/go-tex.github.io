@@ -20,8 +20,8 @@ github.com/go-widgets/mvvm v0.5.0 h1:o5hh6HAxbApONcbZxmyV9q12pCAPGRd6L24aS3gaCbA
 github.com/go-widgets/mvvm v0.5.0/go.mod h1:Phdrd434RLxXW1D6dL1PPQH1tABwYLIN2X7jQVC4TbY=
 github.com/go-widgets/painter v0.11.0 h1:xsj4zTz8B43rOZnWrx7ZsaUBMgJyvgaE/Pq2FfcG2Sw=
 github.com/go-widgets/painter v0.11.0/go.mod h1:IPRLqdUJuJX8sfuHeYLZCzjoLvA0ApbOlyIAVmguJDQ=
-github.com/go-widgets/toolkit v0.191.0 h1:Fa5DY5hf3GbU7wIlXxRsI8Fbr/IfGI69F5ERRIDjxRo=
-github.com/go-widgets/toolkit v0.191.0/go.mod h1:bejJoX1JvlJXc+FU95Dq2QKBAqd3Rgj95iiTQu9KZXo=
+github.com/go-widgets/toolkit v0.191.1 h1:ROrs1pT5hfUrwYI5O+yH/RpMxBb4vDi8h1qHp2gFWo0=
+github.com/go-widgets/toolkit v0.191.1/go.mod h1:bejJoX1JvlJXc+FU95Dq2QKBAqd3Rgj95iiTQu9KZXo=
 github.com/sergeymakinen/go-bmp v1.0.0 h1:SdGTzp9WvCV0A1V0mBeaS7kQAwNLdVJbmHlqNWq0R+M=
 github.com/sergeymakinen/go-bmp v1.0.0/go.mod h1:/mxlAQZRLxSvJFNIEGGLBE/m40f3ZnUifpgVDlcUIEY=
 github.com/sergeymakinen/go-ico v1.0.0 h1:uL3khgvKkY6WfAetA+RqsguClBuu7HpvBB/nq/Jvr80=

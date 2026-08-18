@@ -93,7 +93,7 @@ func TestWheelScrollControl(t *testing.T) {
 	s := newTestState(t, false)
 	rr := s.renderView.contentRect()
 	before := s.rscroll().OffsetY
-	if !s.HandleScroll(rr.X+10, rr.Y+10, 5) {
+	if !s.HandleScroll(rr.X+10, rr.Y+10, 0, 5) {
 		t.Fatalf("wheel scroll not consumed")
 	}
 	if s.rscroll().OffsetY <= before {
@@ -186,17 +186,16 @@ func TestLogPanelListsDiagnostics(t *testing.T) {
 	}
 
 	// Click the "Log" tab: the right pane switches to the diagnostics log.
-	tb := s.rightPane.tabs.Bounds()
-	logSegX := tb.X + tb.W*3/4 // right half = second segment ("Log")
-	tabY := tb.Y + tb.H/2
-	s.HandleClick(logSegX, tabY)
+	logTab := s.rightPane.tabRect(tabLog)
+	s.HandleClick(logTab.X+logTab.W/2, logTab.Y+logTab.H/2)
 	if !s.showLog() || s.rightPane.active != tabLog {
 		t.Fatalf("Log tab did not switch the right pane to the log view")
 	}
 	buf := make([]byte, testW*testH*4)
 	s.Draw(buf) // exercises the log view draw path
-	// Click the "Rendered" tab (left half) to switch back.
-	s.HandleClick(tb.X+tb.W/4, tabY)
+	// Click the "Rendered" tab to switch back.
+	renderTab := s.rightPane.tabRect(tabRender)
+	s.HandleClick(renderTab.X+renderTab.W/2, renderTab.Y+renderTab.H/2)
 	if s.showLog() || s.rightPane.active != tabRender {
 		t.Fatalf("Rendered tab did not restore the render view")
 	}
