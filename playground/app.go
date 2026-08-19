@@ -22,6 +22,7 @@ package playground
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/go-opentype/fonts/jetbrainsmono"
 	engine "github.com/go-tex/engine"
@@ -157,6 +158,11 @@ type State struct {
 	dirty          bool
 	pendingCompile bool
 
+	// loadingSource is raised while SetSource programmatically replaces the
+	// buffer (SetText), so the Text() edit subscriber skips that push — a restore
+	// is not a user edit and drives its own compile.
+	loadingSource bool
+
 	// OnCompileNeeded schedules a debounced Compile after an edit; OnEdit
 	// persists the buffer independent of the compile path. Nil in tests.
 	OnCompileNeeded func()
@@ -182,18 +188,29 @@ func NewState(w, h int, dark bool) *State {
 	s.editor = toolkit.NewCodeEditor(SampleLaTeX)
 	s.editor.Language = "latex"
 	s.editor.Syntax = s.hl
-	s.editor.Focused = true
-	s.applyEditorFont() // monospace so the caret + clicks land on exact columns
-	s.editor.OnChange = func() {
+	s.editor.Focused().Set(true)
+	s.installCompletion() // LaTeX autocompletion (see latexcomplete.go)
+	s.applyEditorFont()   // monospace so the caret + clicks land on exact columns
+	// TextView is MVVM in v0.214: an edit publishes onto the Text() Observable
+	// (the OnChange successor) rather than firing a callback, so react by
+	// subscribing to it. Subscribe fires on every buffer change — including the
+	// programmatic SetText behind SetSource, which must NOT count as a user edit
+	// (SetSource restores a persisted document and drives its own compile), so
+	// loadingSource gates that one path out. The editor lives for the whole app,
+	// so the unsubscribe handle is intentionally dropped.
+	s.editor.Text().Subscribe(func(string) {
+		if s.loadingSource {
+			return
+		}
 		if s.OnEdit != nil {
-			s.OnEdit(s.editor.Text())
+			s.OnEdit(s.editor.Text().Get())
 		}
 		s.pendingCompile = true
 		s.dirty = true
 		if s.OnCompileNeeded != nil {
 			s.OnCompileNeeded()
 		}
-	}
+	})
 
 	s.renderView = toolkit.NewPagedView(nil)
 	s.logView = toolkit.NewLogView()
@@ -203,7 +220,7 @@ func NewState(w, h int, dark bool) *State {
 	// The overview is a scroll thumbnail: a click/drag maps to a buffer line and
 	// scrolls the editor there (mirrors the old minimapScrollTo).
 	s.minimap.OnScrollToLine = func(line int) {
-		s.editor.ScrollLine = line
+		s.editor.ScrollLine().Set(line)
 		s.dirty = true
 	}
 	s.paned = toolkit.NewHPaned(s.editor, s.rightPane)
@@ -234,7 +251,7 @@ func NewState(w, h int, dark bool) *State {
 	// the host fires the first compile via CompilePending() once its time
 	// provider (and everything else) is wired.
 	s.pendingCompile = true
-	s.lastCaretLine = s.editor.CursorLine // seed the caret-move tracker
+	s.lastCaretLine = s.editor.CursorLine().Get() // seed the caret-move tracker
 	return s
 }
 
@@ -274,7 +291,7 @@ func (s *State) SetTimeProvider(now func() string) {
 // HandleCopy copies the editor selection to the clipboard. No-op (returns false)
 // when the editor is unfocused.
 func (s *State) HandleCopy() bool {
-	if !s.editor.Focused {
+	if !s.editor.Focused().Get() {
 		return false
 	}
 	s.editor.CopySelection()
@@ -285,7 +302,7 @@ func (s *State) HandleCopy() bool {
 // HandleCut cuts the editor selection to the clipboard (an edit, so it schedules
 // a recompile via the editor's OnChange). No-op when unfocused.
 func (s *State) HandleCut() bool {
-	if !s.editor.Focused {
+	if !s.editor.Focused().Get() {
 		return false
 	}
 	s.editor.CutSelection()
@@ -297,7 +314,7 @@ func (s *State) HandleCut() bool {
 // HandlePaste inserts text at the caret (replacing any selection). The host reads
 // the OS clipboard asynchronously and passes the text here. No-op when unfocused.
 func (s *State) HandlePaste(text string) bool {
-	if !s.editor.Focused {
+	if !s.editor.Focused().Get() {
 		return false
 	}
 	s.editor.Paste(text)
@@ -308,7 +325,7 @@ func (s *State) HandlePaste(text string) bool {
 
 // HandleSelectAll selects the whole buffer. No-op when unfocused.
 func (s *State) HandleSelectAll() bool {
-	if !s.editor.Focused {
+	if !s.editor.Focused().Get() {
 		return false
 	}
 	s.editor.SelectAll()
@@ -393,12 +410,17 @@ func (s *State) applyEditorFont() {
 func (s *State) Size() (int, int) { return s.w, s.h }
 
 // Source returns the current editor buffer.
-func (s *State) Source() string { return s.editor.Text() }
+func (s *State) Source() string { return s.editor.Text().Get() }
 
 // SetSource replaces the editor buffer (restoring a persisted document), resets
 // the caret and recompiles. It does NOT fire OnEdit.
 func (s *State) SetSource(text string) {
+	// SetText publishes onto Text(), which would otherwise wake the edit
+	// subscriber (OnEdit + a debounced compile); loadingSource gates that so a
+	// restore drives only the explicit Compile below.
+	s.loadingSource = true
 	s.editor.SetText(text)
+	s.loadingSource = false
 	s.Compile()
 	s.dirty = true
 }
@@ -442,8 +464,8 @@ func (s *State) RenderVisiblePages() int {
 	}
 	return s.renderView.PageCount()
 }
-func (s *State) CursorLine() int       { return s.editor.CursorLine }
-func (s *State) CursorCol() int        { return s.editor.CursorCol }
+func (s *State) CursorLine() int       { return s.editor.CursorLine().Get() }
+func (s *State) CursorCol() int        { return s.editor.CursorCol().Get() }
 func (s *State) HasSelection() bool    { return s.editor.HasSelection() }
 func (s *State) SelectionText() string { return s.editor.SelectionText() }
 
@@ -583,7 +605,7 @@ func (s *State) applyLeftSplit() {
 // render pane's PagedView, updates the diagnostics Log and the status bar. A
 // hard error (or an empty document) yields no bitmaps, which clears the viewer.
 func (s *State) Compile() {
-	res := compileLaTeX(s.editor.Text(), s.theme)
+	res := compileLaTeX(s.editor.Text().Get(), s.theme)
 	s.errText = res.errText
 	s.pages = res.pages
 	s.drawnPages = res.drawnPages
@@ -598,8 +620,8 @@ func (s *State) Compile() {
 
 // updateStatus refreshes the status-bar segments from the caret + last compile.
 func (s *State) updateStatus() {
-	ln := s.editor.CursorLine + 1
-	col := s.editor.CursorCol + 1
+	ln := s.editor.CursorLine().Get() + 1
+	col := s.editor.CursorCol().Get() + 1
 	s.status.SetSegment(0, "Ln "+strconv.Itoa(ln)+", Col "+strconv.Itoa(col))
 	s.status.SetSegment(1, "UTF-8")
 	pageWord := " pages"
@@ -616,6 +638,15 @@ func (s *State) updateStatus() {
 	} else {
 		s.status.SetSegment(3, "")
 	}
+}
+
+// editorLines is the editor buffer as a slice of lines. TextView's line buffer
+// went private in the v0.214 MVVM migration (Text() is the sole public surface),
+// so the playground reconstructs the lines from the committed Text() Observable —
+// the exact inverse of TextView's own strings.Join(lines, "\n"). It feeds the
+// minimap thumbnail, the LaTeX highlighter and the caret-line clamping.
+func (s *State) editorLines() []string {
+	return strings.Split(s.editor.Text().Get(), "\n")
 }
 
 // visibleEditorLines estimates how many buffer lines fit in the editor viewport,
@@ -644,8 +675,9 @@ func (s *State) Draw(buf []byte) {
 	// minimap overlay.
 	s.paned.Draw(p, s.theme)
 	if s.showMinimap && s.minimap.Bounds().W > 0 {
-		spans := s.hl.Highlight("latex", s.editor.Lines, s.theme)
-		s.minimap.Update(s.editor.Lines, spans, s.editor.ScrollLine, s.visibleEditorLines())
+		lines := s.editorLines()
+		spans := s.hl.Highlight("latex", lines, s.theme)
+		s.minimap.Update(lines, spans, s.editor.ScrollLine().Get(), s.visibleEditorLines())
 		s.minimap.Draw(p, s.theme)
 	}
 	if s.errText != "" && !s.showLog() {
@@ -720,7 +752,7 @@ func (s *State) HandleClick(x, y int) bool {
 	// Editor.
 	er := s.editor.Bounds()
 	if er.Contains(x, y) {
-		s.editor.Focused = true
+		s.editor.Focused().Set(true)
 		s.renderView.SetFocused(false) // the editor now owns the keyboard
 		s.selecting = false            // a click starts a fresh selection anchor
 		s.editor.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - er.X, Y: y - er.Y})
@@ -749,7 +781,7 @@ func (s *State) HandleClick(x, y int) bool {
 		// keyboard focus so nav keys flip pages. A tab-strip or Log click leaves the
 		// editor's focus alone.
 		if s.rightPane.press == rpPressRender && !s.tryClickToSource(x, y) {
-			s.editor.Focused = false
+			s.editor.Focused().Set(false)
 			s.renderView.SetFocused(true)
 		}
 		s.pressKind = pressRight
@@ -845,7 +877,7 @@ func (s *State) HandleChar(code string) bool {
 		}
 		return false
 	}
-	if !s.editor.Focused {
+	if !s.editor.Focused().Get() {
 		return false
 	}
 	if s.editor.HasSelection() {
@@ -877,7 +909,7 @@ func (s *State) HandleKeyDown(code string) bool {
 	if s.renderFocused() {
 		return s.rightPane.keyDown(code)
 	}
-	if !s.editor.Focused {
+	if !s.editor.Focused().Get() {
 		return false
 	}
 	// nav records whether this key moved the caret (as opposed to editing text), so
@@ -911,11 +943,11 @@ func (s *State) HandleKeyDown(code string) bool {
 // the new caret.
 func (s *State) shiftSelect(base string) {
 	if !s.selecting {
-		s.selAnchorLine, s.selAnchorCol = s.editor.CursorLine, s.editor.CursorCol
+		s.selAnchorLine, s.selAnchorCol = s.editor.CursorLine().Get(), s.editor.CursorCol().Get()
 		s.selecting = true
 	}
 	s.editor.OnEvent(toolkit.Event{Kind: toolkit.EventKeyDown, Code: base})
-	s.editor.SetSelection(toolkit.SelectionRange(s.selAnchorLine, s.selAnchorCol, s.editor.CursorLine, s.editor.CursorCol))
+	s.editor.SetSelection(toolkit.SelectionRange(s.selAnchorLine, s.selAnchorCol, s.editor.CursorLine().Get(), s.editor.CursorCol().Get()))
 }
 
 // afterKey runs the shared post-key bookkeeping (status + dirty).
@@ -932,7 +964,7 @@ func (s *State) afterKey() {
 // CodeMinimap re-anchors the local y to surface space, maps it to a buffer line
 // and fires OnScrollToLine, which sets the editor's ScrollLine.
 func (s *State) minimapScrollTo(y int) {
-	s.minimap.Update(s.editor.Lines, nil, s.editor.ScrollLine, s.visibleEditorLines())
+	s.minimap.Update(s.editorLines(), nil, s.editor.ScrollLine().Get(), s.visibleEditorLines())
 	s.minimap.OnEvent(toolkit.Event{Kind: toolkit.EventClick, Y: y - s.minimap.Bounds().Y})
 }
 
@@ -1039,18 +1071,18 @@ func (s *State) jumpCaretToLine(line int) {
 	if li < 0 {
 		li = 0
 	}
-	if n := len(s.editor.Lines); li >= n {
+	// The buffer always has at least one line (TextView keeps a lone "" line for
+	// an "empty" document), so editorLines() is never zero-length and li lands in
+	// [0, n-1] after this clamp — no empty-buffer guard is reachable.
+	if n := len(s.editorLines()); li >= n {
 		li = n - 1
 	}
-	if li < 0 {
-		return // empty buffer: nothing to place the caret on
-	}
 	s.syncing = true
-	s.editor.CursorLine = li
-	s.editor.CursorCol = 0
+	s.editor.CursorLine().Set(li)
+	s.editor.CursorCol().Set(0)
 	s.editor.ClearSelection()
 	s.selecting = false
-	s.editor.Focused = true
+	s.editor.Focused().Set(true)
 	s.renderView.SetFocused(false)
 	s.scrollEditorToLine(li)
 	s.lastCaretLine = li
@@ -1063,14 +1095,14 @@ func (s *State) jumpCaretToLine(line int) {
 // is left where it is (no jump).
 func (s *State) scrollEditorToLine(li int) {
 	vis := s.visibleEditorLines()
-	if li >= s.editor.ScrollLine && li < s.editor.ScrollLine+vis {
+	if sl := s.editor.ScrollLine().Get(); li >= sl && li < sl+vis {
 		return
 	}
 	top := li - vis/2
 	if top < 0 {
 		top = 0
 	}
-	s.editor.ScrollLine = top
+	s.editor.ScrollLine().Set(top)
 }
 
 // caretMaybeChanged scrolls the render to follow the editor caret, but only when
@@ -1079,11 +1111,12 @@ func (s *State) scrollEditorToLine(li int) {
 // ever scrolls the render (never moves the caret) it cannot form a feedback loop
 // with the click → caret half.
 func (s *State) caretMaybeChanged() {
-	if s.syncing || s.editor.CursorLine == s.lastCaretLine {
+	cl := s.editor.CursorLine().Get()
+	if s.syncing || cl == s.lastCaretLine {
 		return
 	}
-	s.lastCaretLine = s.editor.CursorLine
-	if page, y, ok := s.pageYForLine(s.editor.CursorLine + 1); ok {
+	s.lastCaretLine = cl
+	if page, y, ok := s.pageYForLine(cl + 1); ok {
 		s.renderView.ScrollToPage(page, y)
 	}
 }

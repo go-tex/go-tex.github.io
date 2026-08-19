@@ -106,7 +106,7 @@ func TestEditLatchesDebouncedCompile(t *testing.T) {
 	if s.TakePendingCompile() {
 		t.Fatalf("pending compile latched twice (should drain once)")
 	}
-	if !strings.Contains(s.editor.Text(), "Z") {
+	if !strings.Contains(s.editor.Text().Get(), "Z") {
 		t.Fatalf("typed character did not reach the editor buffer")
 	}
 	s.Compile() // the debounced host would call this
@@ -120,8 +120,8 @@ func TestCaretKeysUpdateStatus(t *testing.T) {
 			t.Fatalf("ArrowDown not consumed")
 		}
 	}
-	if s.editor.CursorLine != 3 {
-		t.Fatalf("cursor line = %d, want 3", s.editor.CursorLine)
+	if s.editor.CursorLine().Get() != 3 {
+		t.Fatalf("cursor line = %d, want 3", s.editor.CursorLine().Get())
 	}
 	if got := s.status.Segments[0]; got != "Ln 4, Col 1" {
 		t.Fatalf("status after ArrowDown x3 = %q, want %q", got, "Ln 4, Col 1")
@@ -135,7 +135,7 @@ func TestClickEditorMovesCaret(t *testing.T) {
 	if !s.HandleClick(er.X+30, er.Y+60) {
 		t.Fatalf("editor click not consumed")
 	}
-	if !s.editor.Focused {
+	if !s.editor.Focused().Get() {
 		t.Fatalf("editor should be focused after a click")
 	}
 }
@@ -214,7 +214,7 @@ func TestCompileErrorPath(t *testing.T) {
 
 func TestUnfocusedEditorIgnoresKeys(t *testing.T) {
 	s := newTestState(t, false)
-	s.editor.Focused = false
+	s.editor.Focused().Set(false)
 	if s.HandleChar("x") {
 		t.Fatalf("unfocused editor consumed a char")
 	}
@@ -253,7 +253,7 @@ func TestOnEditFiresAndSourceRoundTrips(t *testing.T) {
 	if saved == "" || !strings.Contains(saved, "Q") {
 		t.Fatalf("OnEdit did not receive the edited buffer: %q", saved)
 	}
-	if s.Source() != s.editor.Text() {
+	if s.Source() != s.editor.Text().Get() {
 		t.Fatalf("Source() disagrees with the editor buffer")
 	}
 }

@@ -145,50 +145,45 @@ func TestPageYForLine(t *testing.T) {
 
 func TestJumpCaretToLineClamps(t *testing.T) {
 	s := newTestState(t, false)
-	n := len(s.editor.Lines)
+	n := len(s.editorLines())
 
 	s.jumpCaretToLine(2)
-	if s.editor.CursorLine != 1 || s.editor.CursorCol != 0 {
-		t.Fatalf("jump to line 2: caret=(%d,%d), want (1,0)", s.editor.CursorLine, s.editor.CursorCol)
+	if s.editor.CursorLine().Get() != 1 || s.editor.CursorCol().Get() != 0 {
+		t.Fatalf("jump to line 2: caret=(%d,%d), want (1,0)", s.editor.CursorLine().Get(), s.editor.CursorCol().Get())
 	}
-	if !s.editor.Focused {
+	if !s.editor.Focused().Get() {
 		t.Fatalf("jump should focus the editor")
 	}
 	// A non-positive line clamps to the first line.
 	s.jumpCaretToLine(0)
-	if s.editor.CursorLine != 0 {
-		t.Fatalf("jump to line 0 landed on %d, want 0", s.editor.CursorLine)
+	if s.editor.CursorLine().Get() != 0 {
+		t.Fatalf("jump to line 0 landed on %d, want 0", s.editor.CursorLine().Get())
 	}
 	// A line past the buffer clamps to the last line.
 	s.jumpCaretToLine(n + 100)
-	if s.editor.CursorLine != n-1 {
-		t.Fatalf("jump past end landed on %d, want %d", s.editor.CursorLine, n-1)
+	if s.editor.CursorLine().Get() != n-1 {
+		t.Fatalf("jump past end landed on %d, want %d", s.editor.CursorLine().Get(), n-1)
 	}
-	// An empty buffer is a no-op (the li<0 guard).
-	saved := s.editor.Lines
-	s.editor.Lines = nil
-	s.jumpCaretToLine(1) // must not panic
-	s.editor.Lines = saved
 }
 
 func TestScrollEditorToLine(t *testing.T) {
 	s := newTestState(t, false)
-	s.editor.ScrollLine = 0
+	s.editor.ScrollLine().Set(0)
 	// A line already in view leaves the scroll where it is.
 	s.scrollEditorToLine(0)
-	if s.editor.ScrollLine != 0 {
-		t.Fatalf("in-view line moved scroll to %d, want 0", s.editor.ScrollLine)
+	if s.editor.ScrollLine().Get() != 0 {
+		t.Fatalf("in-view line moved scroll to %d, want 0", s.editor.ScrollLine().Get())
 	}
 	// A line far below centres it (top >= 0).
 	s.scrollEditorToLine(500)
-	if s.editor.ScrollLine <= 0 {
-		t.Fatalf("far-below line did not scroll down: %d", s.editor.ScrollLine)
+	if s.editor.ScrollLine().Get() <= 0 {
+		t.Fatalf("far-below line did not scroll down: %d", s.editor.ScrollLine().Get())
 	}
 	// A line above the current window clamps the top at 0.
-	s.editor.ScrollLine = 50
+	s.editor.ScrollLine().Set(50)
 	s.scrollEditorToLine(1)
-	if s.editor.ScrollLine != 0 {
-		t.Fatalf("above-window line clamped to %d, want 0", s.editor.ScrollLine)
+	if s.editor.ScrollLine().Get() != 0 {
+		t.Fatalf("above-window line clamped to %d, want 0", s.editor.ScrollLine().Get())
 	}
 }
 
@@ -197,7 +192,7 @@ func TestCaretMaybeChangedGuards(t *testing.T) {
 
 	// syncing suppresses the sync entirely (lastCaretLine untouched).
 	s.lastCaretLine = 0
-	s.editor.CursorLine = 4
+	s.editor.CursorLine().Set(4)
 	s.syncing = true
 	s.caretMaybeChanged()
 	if s.lastCaretLine != 0 {
@@ -212,7 +207,7 @@ func TestCaretMaybeChangedGuards(t *testing.T) {
 	// Changed line but no map for it -> updates the tracker, no scroll, no panic.
 	s.lineMaps = nil
 	s.lastCaretLine = 0
-	s.editor.CursorLine = 6
+	s.editor.CursorLine().Set(6)
 	s.caretMaybeChanged()
 	if s.lastCaretLine != 6 {
 		t.Fatalf("tracker not advanced on a mapless caret move: %d", s.lastCaretLine)
@@ -246,7 +241,7 @@ func TestCaretMoveScrollsRenderToLaterPage(t *testing.T) {
 	}
 	// Move the caret to that later-page line (as a navigation would) and sync.
 	s.lastCaretLine = 0
-	s.editor.CursorLine = laterLine - 1
+	s.editor.CursorLine().Set(laterLine - 1)
 	s.caretMaybeChanged()
 	if s.RenderCurrentPage() != laterPage {
 		t.Fatalf("caret move did not scroll render to page %d (got %d)", laterPage, s.RenderCurrentPage())
@@ -265,25 +260,26 @@ func TestClickRenderJumpsCaretToSource(t *testing.T) {
 	// on-page click resolves deterministically.
 	s.lineMaps = make([]pageLineMap, page)
 	s.lineMaps[page-1] = pageLineMap{bands: []lineBand{{line: 3, yTop: 0, yBot: 1 << 20}}}
-	s.editor.CursorLine, s.editor.CursorCol = 0, 0
-	s.editor.Focused = false
+	s.editor.CursorLine().Set(0)
+	s.editor.CursorCol().Set(0)
+	s.editor.Focused().Set(false)
 	s.renderView.SetFocused(true)
 	if !s.HandleClick(sx, sy) {
 		t.Fatalf("render click not consumed")
 	}
-	if s.editor.CursorLine != 2 {
-		t.Fatalf("click-to-source landed on line %d, want 2", s.editor.CursorLine)
+	if s.editor.CursorLine().Get() != 2 {
+		t.Fatalf("click-to-source landed on line %d, want 2", s.editor.CursorLine().Get())
 	}
-	if !s.editor.Focused || s.renderView.Focused() {
+	if !s.editor.Focused().Get() || s.renderView.Focused() {
 		t.Fatalf("click-to-source should focus the editor, not the render")
 	}
 
 	// (b) The jump settles: it did NOT re-enter the caret→render sync (syncing
 	// guard), so a second identical click is idempotent on the caret line.
-	before := s.editor.CursorLine
+	before := s.editor.CursorLine().Get()
 	s.HandleClick(sx, sy)
-	if s.editor.CursorLine != before {
-		t.Fatalf("second click oscillated the caret: %d -> %d", before, s.editor.CursorLine)
+	if s.editor.CursorLine().Get() != before {
+		t.Fatalf("second click oscillated the caret: %d -> %d", before, s.editor.CursorLine().Get())
 	}
 }
 
@@ -293,12 +289,12 @@ func TestClickRenderNotOnSourceKeepsRenderFocus(t *testing.T) {
 	// (a) A click on the render pane's TOOLBAR strip: PageAt is false there, so no
 	// source jump; the render takes keyboard focus for paging.
 	rb := s.renderView.Bounds()
-	s.editor.Focused = true
+	s.editor.Focused().Set(true)
 	s.renderView.SetFocused(false)
 	if !s.HandleClick(rb.X+rb.W/2, rb.Y+2) { // +2: inside the toolbar strip
 		t.Fatalf("render toolbar click not consumed")
 	}
-	if s.renderView.Focused() == false && s.editor.Focused {
+	if s.renderView.Focused() == false && s.editor.Focused().Get() {
 		// A toolbar click may hit a button; either way it must NOT have jumped the
 		// caret into the editor. Assert the render owns focus.
 		t.Fatalf("toolbar click unexpectedly left focus on the editor")
@@ -311,12 +307,12 @@ func TestClickRenderNotOnSourceKeepsRenderFocus(t *testing.T) {
 		t.Fatalf("no render page point found")
 	}
 	s.lineMaps = make([]pageLineMap, page) // page exists but carries no bands
-	s.editor.Focused = true
+	s.editor.Focused().Set(true)
 	s.renderView.SetFocused(false)
 	if !s.HandleClick(sx, sy) {
 		t.Fatalf("render page click not consumed")
 	}
-	if !s.renderView.Focused() || s.editor.Focused {
+	if !s.renderView.Focused() || s.editor.Focused().Get() {
 		t.Fatalf("bandless page click should give the render focus")
 	}
 }
