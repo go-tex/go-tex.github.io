@@ -228,7 +228,12 @@ func NewState(w, h int, dark bool) *State {
 	toolkit.SetClipboard(s.clip)
 
 	s.layout()
-	s.Compile()
+	// No initial Compile() here: it would stamp the boot compile's Log entries
+	// before the host installs its clock (SetTimeProvider), giving the first
+	// entry a different timestamp format from the rest. Mark it pending instead;
+	// the host fires the first compile via CompilePending() once its time
+	// provider (and everything else) is wired.
+	s.pendingCompile = true
 	s.lastCaretLine = s.editor.CursorLine // seed the caret-move tracker
 	return s
 }
@@ -506,6 +511,17 @@ func (s *State) renderFocused() bool {
 }
 
 // TakePendingCompile drains the edit latch (once).
+// CompilePending compiles once iff a compile is pending, and reports whether it
+// did. The host calls it after wiring the time provider so the boot compile's
+// Log entries carry the same clock format as every later one.
+func (s *State) CompilePending() bool {
+	if s.TakePendingCompile() {
+		s.Compile()
+		return true
+	}
+	return false
+}
+
 func (s *State) TakePendingCompile() bool {
 	if s.pendingCompile {
 		s.pendingCompile = false
