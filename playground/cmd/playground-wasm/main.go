@@ -132,6 +132,10 @@ func main() {
 	}
 	state.OnCompileNeeded = schedule
 
+	// Fire the boot compile now that the time provider (and the rest) is wired,
+	// so its Log entries carry the same clock format as every later compile.
+	state.CompilePending()
+
 	// coords maps a mouse event to DEVICE-pixel canvas coordinates: dividing the
 	// CSS offset by (cssWidth/backingWidth) scales it up by dpr, which is exactly
 	// the space State is laid out in.

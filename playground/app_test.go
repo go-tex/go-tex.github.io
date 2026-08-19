@@ -42,6 +42,7 @@ func newTestState(t *testing.T, dark bool) *State {
 	t.Helper()
 	SetupText(1) // install the OT font at scale 1 (resets any HiDPI scale a prior test set)
 	s := NewState(testW, testH, dark)
+	s.CompilePending() // the host fires the boot compile after wiring its clock
 	if s.pages <= 0 {
 		t.Fatalf("sample document produced %d pages, want > 0 (errText=%q)", s.pages, s.errText)
 	}
@@ -272,5 +273,19 @@ func TestSetSourceRestoresWithoutFiringOnEdit(t *testing.T) {
 	}
 	if !s.Dirty() {
 		t.Fatalf("SetSource should raise dirty")
+	}
+}
+
+// CompilePending compiles once when a compile is pending and is a no-op (returns
+// false) once it's been consumed — so the host can call it unconditionally at
+// boot without double-compiling.
+func TestCompilePendingIsIdempotent(t *testing.T) {
+	s := newTestState(t, false) // newTestState already fired the pending boot compile
+	if s.CompilePending() {
+		t.Fatal("CompilePending compiled again with nothing pending")
+	}
+	s.HandleChar("x") // an edit latches pendingCompile via the editor's OnChange
+	if !s.CompilePending() {
+		t.Fatal("CompilePending did not compile a freshly-pending edit")
 	}
 }
