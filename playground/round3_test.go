@@ -222,9 +222,9 @@ func TestClickTabsAndFocusThroughState(t *testing.T) {
 	if !s.HandleClick(rr.X+rr.W/2, rr.Y+toolkit.Scaled(30)+40) {
 		t.Fatalf("render content click not consumed by State")
 	}
-	if !s.RenderFocused() || s.editor.Focused {
+	if !s.RenderFocused() || s.editor.Focused().Get() {
 		t.Fatalf("render click did not move focus to the viewer (focused=%v editorFocused=%v)",
-			s.RenderFocused(), s.editor.Focused)
+			s.RenderFocused(), s.editor.Focused().Get())
 	}
 	s.HandleRelease(rr.X+rr.W/2, rr.Y+toolkit.Scaled(30)+40)
 
@@ -240,7 +240,7 @@ func TestClickTabsAndFocusThroughState(t *testing.T) {
 	// Clicking the editor takes focus back; typing reaches the editor again.
 	er := s.editorRect()
 	s.HandleClick(er.X+20, er.Y+20)
-	if s.RenderFocused() || !s.editor.Focused {
+	if s.RenderFocused() || !s.editor.Focused().Get() {
 		t.Fatalf("editor click did not restore editor focus")
 	}
 	page := s.RenderCurrentPage()

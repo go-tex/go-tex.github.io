@@ -125,7 +125,7 @@ func TestMinimapClickScrollsEditor(t *testing.T) {
 	if mm.W <= 0 {
 		t.Fatalf("minimap not laid out (W=%d)", mm.W)
 	}
-	if s.editor.ScrollLine != 0 {
+	if s.editor.ScrollLine().Get() != 0 {
 		t.Fatalf("precondition: editor should start at top")
 	}
 	// Click near the bottom of the minimap -> scroll the editor down.
@@ -135,13 +135,13 @@ func TestMinimapClickScrollsEditor(t *testing.T) {
 	if s.pressKind != pressMinimap {
 		t.Fatalf("press did not capture the minimap (pressKind=%d)", s.pressKind)
 	}
-	if s.editor.ScrollLine <= 0 {
-		t.Fatalf("minimap click did not scroll the editor: ScrollLine=%d", s.editor.ScrollLine)
+	if s.editor.ScrollLine().Get() <= 0 {
+		t.Fatalf("minimap click did not scroll the editor: ScrollLine=%d", s.editor.ScrollLine().Get())
 	}
 	// Drag up to the top -> back to line 0.
 	s.HandleMove(mm.X+mm.W/2, mm.Y+1)
-	if s.editor.ScrollLine != 0 {
-		t.Fatalf("minimap drag to top did not scroll to 0: ScrollLine=%d", s.editor.ScrollLine)
+	if s.editor.ScrollLine().Get() != 0 {
+		t.Fatalf("minimap drag to top did not scroll to 0: ScrollLine=%d", s.editor.ScrollLine().Get())
 	}
 	s.HandleRelease(mm.X+mm.W/2, mm.Y+1)
 }

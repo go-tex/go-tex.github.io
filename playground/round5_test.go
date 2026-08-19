@@ -25,15 +25,15 @@ func TestEditorFontIsMonospaceAndClickAccurate(t *testing.T) {
 	s.editor.SetText("HELLO world here\nsecond line")
 	er := s.editor.Bounds()
 	adv, gh := f.Advance(), f.Height()
-	gutter := f.Measure(strconv.Itoa(len(s.editor.Lines))) + 8
+	gutter := f.Measure(strconv.Itoa(len(s.editorLines()))) + 8
 	// Click over column 6 (the 'w' of "world") on line 0.
 	lx := 4 + gutter + 6*adv + 1
 	ly := 4 + gh/2
 	s.HandleClick(er.X+lx, er.Y+ly)
-	if s.editor.CursorLine != 0 {
-		t.Fatalf("click landed on line %d, want 0", s.editor.CursorLine)
+	if s.editor.CursorLine().Get() != 0 {
+		t.Fatalf("click landed on line %d, want 0", s.editor.CursorLine().Get())
 	}
-	if c := s.editor.CursorCol; c < 5 || c > 7 {
+	if c := s.editor.CursorCol().Get(); c < 5 || c > 7 {
 		t.Fatalf("click over column 6 landed on column %d (want ~6); proportional-font drift not fixed", c)
 	}
 }
@@ -63,7 +63,8 @@ func TestApplyEditorFontCacheAndError(t *testing.T) {
 func TestKeyboardShiftSelection(t *testing.T) {
 	s := newTestState(t, false)
 	s.editor.SetText("abcdef\nghijkl")
-	s.editor.CursorLine, s.editor.CursorCol = 0, 0
+	s.editor.CursorLine().Set(0)
+	s.editor.CursorCol().Set(0)
 	s.editor.ClearSelection()
 
 	// Shift+Right thrice selects "abc".
@@ -89,7 +90,8 @@ func TestKeyboardShiftSelection(t *testing.T) {
 	}
 
 	// Shift+End selects to end of line; Shift+Home would select back.
-	s.editor.CursorLine, s.editor.CursorCol = 0, 0
+	s.editor.CursorLine().Set(0)
+	s.editor.CursorCol().Set(0)
 	s.HandleKeyDown("Shift+End")
 	if !s.editor.HasSelection() {
 		t.Fatalf("Shift+End did not select")
@@ -114,9 +116,9 @@ func TestCaretPixelRoundTrips(t *testing.T) {
 		for _, tc := range []struct{ line, col int }{{0, 0}, {0, 6}, {1, 3}, {2, 9}} {
 			px, py := s.CaretPixel(tc.line, tc.col)
 			s.HandleClick(px, py)
-			if s.editor.CursorLine != tc.line || s.editor.CursorCol != tc.col {
+			if s.editor.CursorLine().Get() != tc.line || s.editor.CursorCol().Get() != tc.col {
 				t.Fatalf("scale %v: click at CaretPixel(%d,%d) landed on (%d,%d)",
-					sc, tc.line, tc.col, s.editor.CursorLine, s.editor.CursorCol)
+					sc, tc.line, tc.col, s.editor.CursorLine().Get(), s.editor.CursorCol().Get())
 			}
 		}
 	}
@@ -126,7 +128,8 @@ func TestCaretPixelRoundTrips(t *testing.T) {
 func TestHandleCharReplacesSelection(t *testing.T) {
 	s := newTestState(t, false)
 	s.editor.SetText("abcdef")
-	s.editor.CursorLine, s.editor.CursorCol = 0, 0
+	s.editor.CursorLine().Set(0)
+	s.editor.CursorCol().Set(0)
 	s.HandleKeyDown("Shift+End") // select the whole line
 	if !s.editor.HasSelection() {
 		t.Fatalf("precondition: expected a selection")
@@ -137,7 +140,7 @@ func TestHandleCharReplacesSelection(t *testing.T) {
 	if s.editor.HasSelection() {
 		t.Fatalf("typing over a selection should clear it")
 	}
-	if txt := s.editor.Lines[0]; txt != "Z" {
+	if txt := s.editorLines()[0]; txt != "Z" {
 		t.Fatalf("typed char did not replace the selection: %q", txt)
 	}
 }
@@ -150,7 +153,7 @@ func TestNavBaseAndSelectionAccessors(t *testing.T) {
 		t.Fatalf("navBase should reject non-navigation keys")
 	}
 	s := newTestState(t, false)
-	if s.CursorLine() != s.editor.CursorLine || s.CursorCol() != s.editor.CursorCol {
+	if s.CursorLine() != s.editor.CursorLine().Get() || s.CursorCol() != s.editor.CursorCol().Get() {
 		t.Fatalf("cursor accessors mismatch")
 	}
 	s.editor.SelectAll()

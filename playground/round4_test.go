@@ -23,7 +23,7 @@ func TestClipboardCopyCutPasteSelectAll(t *testing.T) {
 	if !s.HandleCopy() {
 		t.Fatalf("HandleCopy not consumed while focused")
 	}
-	full := s.editor.Text()
+	full := s.editor.Text().Get()
 	if s.clip.ClipboardText() != full {
 		t.Fatalf("clipboard text = %q, want the whole buffer", s.clip.ClipboardText())
 	}
@@ -35,11 +35,11 @@ func TestClipboardCopyCutPasteSelectAll(t *testing.T) {
 	}
 
 	// Paste inserts at the caret (buffer changes).
-	before := s.editor.Text()
+	before := s.editor.Text().Get()
 	if !s.HandlePaste("PASTED") {
 		t.Fatalf("HandlePaste not consumed")
 	}
-	if s.editor.Text() == before || !strings.Contains(s.editor.Text(), "PASTED") {
+	if s.editor.Text().Get() == before || !strings.Contains(s.editor.Text().Get(), "PASTED") {
 		t.Fatalf("paste did not insert text")
 	}
 
@@ -53,12 +53,12 @@ func TestClipboardCopyCutPasteSelectAll(t *testing.T) {
 	if !s.HandleCut() {
 		t.Fatalf("HandleCut not consumed")
 	}
-	if strings.TrimSpace(s.editor.Text()) != "" {
-		t.Fatalf("cut-all left text: %q", s.editor.Text())
+	if strings.TrimSpace(s.editor.Text().Get()) != "" {
+		t.Fatalf("cut-all left text: %q", s.editor.Text().Get())
 	}
 
 	// Unfocused: every clipboard op is a no-op.
-	s.editor.Focused = false
+	s.editor.Focused().Set(false)
 	if s.HandleCopy() || s.HandleCut() || s.HandlePaste("x") || s.HandleSelectAll() {
 		t.Fatalf("clipboard ops should be no-ops when the editor is unfocused")
 	}

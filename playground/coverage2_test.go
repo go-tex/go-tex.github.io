@@ -126,7 +126,7 @@ func TestHandleCharViewerFocusAndContentRectClamp(t *testing.T) {
 	s := newTestState(t, false)
 	s.renderView.SetPages(testBitmaps(6)) // short pages so key-nav flips cleanly
 	s.renderView.Mode().Set(toolkit.PagedPaginated)
-	s.editor.Focused = false
+	s.editor.Focused().Set(false)
 	s.renderView.SetFocused(true)
 
 	// The space bar pages the viewer when it holds keyboard focus.
