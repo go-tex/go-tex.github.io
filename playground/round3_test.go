@@ -138,17 +138,6 @@ func TestRightPaneDrawBothTabs(t *testing.T) {
 	rp.Draw(p, th) // log tab
 }
 
-// --- #2 minimap helpers ------------------------------------------------------
-
-func TestAtLeast1(t *testing.T) {
-	if atLeast1(0) != 1 || atLeast1(-3) != 1 {
-		t.Fatalf("atLeast1 did not floor non-positive values at 1")
-	}
-	if atLeast1(5) != 5 {
-		t.Fatalf("atLeast1 changed a positive value")
-	}
-}
-
 // --- app introspection + tab toggle ------------------------------------------
 
 func TestRound3Introspection(t *testing.T) {

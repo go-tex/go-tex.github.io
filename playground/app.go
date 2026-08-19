@@ -415,7 +415,7 @@ func (s *State) Theme() *toolkit.Theme { return s.theme }
 // pointer interaction.
 func (s *State) EditorWidth() int    { return s.editor.Bounds().W }
 func (s *State) ShowLog() bool       { return s.showLog() }
-func (s *State) ActiveTab() int      { return s.rightPane.active }
+func (s *State) ActiveTab() int      { return s.rightPane.activeTab() }
 func (s *State) ZoomPercent() int    { return s.renderView.Zoom().Get() }
 func (s *State) SelectedScheme() int { return s.schemePicker.Selected().Get() }
 
