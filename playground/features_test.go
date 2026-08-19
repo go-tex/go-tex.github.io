@@ -199,7 +199,7 @@ func TestLogPanelListsDiagnostics(t *testing.T) {
 	// Click the "Log" tab: the right pane switches to the diagnostics log.
 	logTab := s.rightPane.tabRect(tabLog)
 	s.HandleClick(logTab.X+logTab.W/2, logTab.Y+logTab.H/2)
-	if !s.showLog() || s.rightPane.active != tabLog {
+	if !s.showLog() || s.rightPane.activeTab() != tabLog {
 		t.Fatalf("Log tab did not switch the right pane to the log view")
 	}
 	buf := make([]byte, testW*testH*4)
@@ -212,7 +212,7 @@ func TestLogPanelListsDiagnostics(t *testing.T) {
 	// Click the "Rendered" tab to switch back.
 	renderTab := s.rightPane.tabRect(tabRender)
 	s.HandleClick(renderTab.X+renderTab.W/2, renderTab.Y+renderTab.H/2)
-	if s.showLog() || s.rightPane.active != tabRender {
+	if s.showLog() || s.rightPane.activeTab() != tabRender {
 		t.Fatalf("Rendered tab did not restore the render view")
 	}
 }

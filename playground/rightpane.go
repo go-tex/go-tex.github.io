@@ -23,13 +23,12 @@ import (
 type rightPane struct {
 	toolkit.Base
 
-	tabs   *tabBar
+	tabs   *toolkit.FolderTabs
 	render *toolkit.PagedView
 	log    *toolkit.LogView
 
-	active int
-	tabH   int
-	press  int // pointer-capture target for the current drag
+	tabH  int
+	press int // pointer-capture target for the current drag
 }
 
 // right-pane tab indices and pointer-capture targets.
@@ -44,25 +43,28 @@ const (
 )
 
 // newRightPane composes the tab strip over the given render (PagedView) and log
-// (LogView) views.
+// (LogView) views. The strip is the shared [toolkit.FolderTabs]; which content
+// draws is derived from its reactive selection (see [rightPane.isLog]), so there
+// is no shadow copy of the active index to keep in sync.
 func newRightPane(rv *toolkit.PagedView, lv *toolkit.LogView) *rightPane {
 	rp := &rightPane{render: rv, log: lv}
-	rp.tabs = newTabBar([]string{"Rendered", "Log"}, func(i int) { rp.active = i })
+	rp.tabs = toolkit.NewFolderTabs([]string{"Rendered", "Log"}, tabRender)
 	return rp
 }
 
 // tabRect returns the device rectangle of tab i (host introspection).
-func (rp *rightPane) tabRect(i int) toolkit.Rect { return rp.tabs.tabRect(i) }
+func (rp *rightPane) tabRect(i int) toolkit.Rect { return rp.tabs.TabRect(i) }
+
+// activeTab is the index of the selected tab, read straight from the strip's
+// reactive Observable (the single source of truth).
+func (rp *rightPane) activeTab() int { return rp.tabs.Selected().Get() }
 
 // isLog reports whether the Log tab is active.
-func (rp *rightPane) isLog() bool { return rp.active == tabLog }
+func (rp *rightPane) isLog() bool { return rp.activeTab() == tabLog }
 
-// setActive selects a tab and keeps the strip's highlight in sync (used when the
-// tab changes from code rather than a strip click).
-func (rp *rightPane) setActive(tab int) {
-	rp.active = tab
-	rp.tabs.active = tab
-}
+// setActive selects a tab by Setting the strip's reactive Observable (used when
+// the tab changes from code rather than a strip click).
+func (rp *rightPane) setActive(tab int) { rp.tabs.Selected().Set(tab) }
 
 // contentRect is the region below the tab strip that the active content fills.
 func (rp *rightPane) contentRect() toolkit.Rect {
@@ -79,7 +81,7 @@ func (rp *rightPane) contentRect() toolkit.Rect {
 // remaining area (only the active one draws).
 func (rp *rightPane) SetBounds(r toolkit.Rect) {
 	rp.Base.SetBounds(r)
-	rp.tabH = rp.tabs.height()
+	rp.tabH = toolkit.FolderTabsHeight()
 	if rp.tabH > r.H {
 		rp.tabH = r.H
 	}
@@ -126,9 +128,10 @@ func (rp *rightPane) localLog(x, y int) (int, int) {
 func (rp *rightPane) click(x, y int) bool {
 	rp.press = rpPressNone
 	if rp.inTabs(y) {
-		if idx := rp.tabs.tabAt(x, y); idx >= 0 {
-			rp.tabs.setActive(idx) // onChange updates rp.active
-		}
+		// FolderTabs hit-tests in its own local frame; re-anchor the surface point
+		// to the strip origin. A click off any tab is an OnEvent no-op.
+		b := rp.tabs.Bounds()
+		rp.tabs.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - b.X, Y: y - b.Y})
 		rp.press = rpPressTabs
 		return true
 	}

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-widgets/painter"
 	"github.com/go-widgets/toolkit"
 )
 
@@ -124,72 +123,4 @@ func TestPaginationIntrospection(t *testing.T) {
 	if s.renderView.PageCount() != s.DrawnPages() {
 		t.Fatalf("render pane page count %d != drawn %d", s.renderView.PageCount(), s.DrawnPages())
 	}
-}
-
-// --- #2 tab bar -------------------------------------------------------------
-
-func TestTabBarEdges(t *testing.T) {
-	SetupText(1)
-	tb := newTabBar([]string{"Rendered", "Log"}, nil) // nil onChange is tolerated
-	tb.SetBounds(toolkit.Rect{X: 0, Y: 0, W: 240, H: 24})
-
-	// Out-of-range setActive is a no-op; valid one moves (onChange nil-safe).
-	tb.setActive(-1)
-	tb.setActive(9)
-	if tb.active != 0 {
-		t.Fatalf("out-of-range setActive changed active to %d", tb.active)
-	}
-	tb.setActive(1)
-	if tb.active != 1 {
-		t.Fatalf("setActive(1) did not move: %d", tb.active)
-	}
-
-	// Out-of-range tabRect returns the zero rect.
-	if tb.tabRect(-1) != (toolkit.Rect{}) || tb.tabRect(9) != (toolkit.Rect{}) {
-		t.Fatalf("out-of-range tabRect should be the zero rect")
-	}
-	// tabAt hits a real tab and misses empty space.
-	r0 := tb.tabRect(0)
-	if tb.tabAt(r0.X+1, r0.Y+1) != 0 {
-		t.Fatalf("tabAt over tab 0 did not return 0")
-	}
-	if tb.tabAt(-100, -100) != -1 {
-		t.Fatalf("tabAt over empty space should be -1")
-	}
-
-	// A tab height shorter than the top gap clamps to 1.
-	tb.SetBounds(toolkit.Rect{X: 0, Y: 0, W: 240, H: 2})
-	if r := tb.tabRect(0); r.H < 1 {
-		t.Fatalf("tabRect height should clamp to >=1, got %d", r.H)
-	}
-}
-
-func TestTabBarDrawBranches(t *testing.T) {
-	SetupText(1)
-	tb := newTabBar([]string{"Rendered", "Log"}, nil)
-	buf := make([]byte, 240*24*4)
-	p := painter.NewPixelPainter(buf, 240, 24)
-	th := toolkit.DefaultLight()
-
-	// Zero-size: no-op.
-	tb.Draw(p, th)
-
-	// Normal draw (active + inactive tabs).
-	tb.SetBounds(toolkit.Rect{X: 0, Y: 0, W: 240, H: 24})
-	tb.Draw(p, th)
-
-	// An out-of-range active index draws every tab as inactive (guard skips the
-	// active pass).
-	tb.active = 99
-	tb.Draw(p, th)
-}
-
-func TestFillTopRoundRectBranches(t *testing.T) {
-	buf := make([]byte, 40*40*4)
-	p := painter.NewPixelPainter(buf, 40, 40)
-	red := toolkit.RGB(0xFF, 0, 0)
-	fillTopRoundRect(p, toolkit.Rect{X: 0, Y: 0, W: 20, H: 20}, 0, red) // rad<1 -> plain fill
-	fillTopRoundRect(p, toolkit.Rect{X: 0, Y: 0, W: 20, H: 3}, 6, red)  // H<=rad -> no bottom square
-	fillTopRoundRect(p, toolkit.Rect{X: 0, Y: 0, W: 20, H: 20}, 6, red) // normal top-round
-	fillTopRoundRect(p, toolkit.Rect{X: 0, Y: 0, W: 0, H: 20}, 6, red)  // W<=0 -> plain fill
 }

@@ -7,7 +7,7 @@ require (
 	github.com/go-opentype/fonts v0.8.0
 	github.com/go-tex/engine v0.165.0
 	github.com/go-widgets/painter v0.11.0
-	github.com/go-widgets/toolkit v0.207.0
+	github.com/go-widgets/toolkit v0.211.0
 	github.com/go-widgets/toolkit/rougelex v0.2.0
 )
 
