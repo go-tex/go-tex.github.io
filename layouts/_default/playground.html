@@ -61,7 +61,7 @@
 <div class="pg">
   <div class="pg-bar">
     <span class="dot" id="statusdot"></span>
-    <span id="status">loading the engine (~10&nbsp;MB, one time)…</span>
+    <span id="status">loading the engine (one time)…</span>
     <span class="grow"></span>
     <span id="ver"></span>
   </div>
@@ -110,6 +110,13 @@
   {{ end }}
   var wasmURL={{ $primary }};
   var wasmFallback={{ $fallback }};
+  // The DECOMPRESSED wasm size, read at build time from the freshly-built asset.
+  // Pages serves the wasm gzip-compressed (~⅓ the size over the wire), but the
+  // stream reader yields DECOMPRESSED bytes while Content-Length is the COMPRESSED
+  // length — so we drive the progress bar against this real decompressed total,
+  // or the bar would shoot past 100%.
+  {{ $wasmBytes := 0 }}{{ with (os.Stat "static/playground.wasm") }}{{ $wasmBytes = .Size }}{{ end }}
+  var wasmBytes={{ $wasmBytes }};
   var started=false;
 
   // Resolve the host page's theme (data-theme, else prefers-color-scheme) to a
@@ -168,7 +175,10 @@
     function streamFetch(url){
       return fetch(url,{cache:"reload"}).then(function(r){
         if(!r.ok) throw new Error("HTTP "+r.status+" fetching the engine at "+url);
-        var total=parseInt(r.headers.get("Content-Length")||"0",10)||0;
+        // Prefer the build-time DECOMPRESSED size: the reader below yields
+        // decompressed bytes, so a compressed Content-Length would make the bar
+        // overshoot. Fall back to Content-Length when the size is unknown.
+        var total=wasmBytes||parseInt(r.headers.get("Content-Length")||"0",10)||0;
         if(!r.body||!r.body.getReader){ return r.arrayBuffer(); } // no streaming: one shot
         var reader=r.body.getReader(), received=0, chunks=[];
         return (function pump(){
