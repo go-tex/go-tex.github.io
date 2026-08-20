@@ -121,6 +121,11 @@ func main() {
 	// OS-clipboard hooks it needs. See package playground (collab.go/collab_js.go).
 	state.EnableCollab(render)
 
+	// Remote git (browsergit over the Fetch RoundTripper): the canvas Git panel
+	// drives Clone/Pull/Commit/Push against a CORS-enabled origin; this installs
+	// the real backend. See package playground (git.go/git_js.go).
+	state.EnableGit(render)
+
 	// Debounced compile.
 	var timer js.Value
 	schedule := func() {
@@ -512,6 +517,26 @@ func main() {
 			out[i] = []any{r[0], r[1], r[2], r[3]}
 		}
 		return out
+	}))
+
+	// gotexGitDebug exposes the Git panel's state for headless verification: the
+	// open flag, the busy/loaded/error/notice session state, the formatted status
+	// line and the .tex files the picker offers.
+	js.Global().Set("gotexGitDebug", js.FuncOf(func(js.Value, []js.Value) any {
+		tex := state.GitTeXFiles()
+		files := make([]any, len(tex))
+		for i, f := range tex {
+			files[i] = f
+		}
+		return map[string]any{
+			"open":       state.GitActive(),
+			"busy":       state.GitBusy(),
+			"loadedPath": state.GitLoadedPath(),
+			"error":      state.GitError(),
+			"notice":     state.GitNotice(),
+			"statusLine": state.GitStatusLine(),
+			"texFiles":   files,
+		}
 	}))
 
 	render()
