@@ -506,7 +506,7 @@ func (s *State) CaretPixel(line, col int) (int, int) {
 func (s *State) LogEntryCount() int { return s.logView.Len() }
 
 // DividerX is the surface x of the resize grip's leading edge.
-func (s *State) DividerX() int { return s.paned.Bounds().X + s.paned.Position }
+func (s *State) DividerX() int { return s.paned.Bounds().X + s.paned.Position().Get() }
 
 // DebugRects returns the DEVICE-pixel [x,y,w,h] rectangles of the interactive
 // targets a headless verification harness needs to click precisely: the colour
@@ -614,7 +614,7 @@ func (s *State) applyLeftSplit() {
 	if eh < 0 {
 		eh = 0
 	}
-	leftW := s.paned.Position
+	leftW := s.paned.Position().Get()
 	mmW := toolkit.Scaled(84)
 	if s.showMinimap && leftW > 3*mmW {
 		editorW := leftW - mmW
@@ -741,8 +741,9 @@ func (s *State) onDivider(x, y int) bool {
 		return false
 	}
 	tol := toolkit.Scaled(3)
-	d0 := pr.X + s.paned.Position - tol
-	d1 := pr.X + s.paned.Position + toolkit.Scaled(toolkit.PanedHandleW) + tol
+	pos := s.paned.Position().Get()
+	d0 := pr.X + pos - tol
+	d1 := pr.X + pos + toolkit.Scaled(toolkit.PanedHandleW) + tol
 	return x >= d0 && x < d1
 }
 

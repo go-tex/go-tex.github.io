@@ -51,13 +51,13 @@ func TestHandleClickToolbarMiss(t *testing.T) {
 func TestOnDividerBounds(t *testing.T) {
 	s := newTestState(t, false)
 	pr := s.paned.Bounds()
-	if s.onDivider(pr.X+s.paned.Position, pr.Y-5) {
+	if s.onDivider(pr.X+s.paned.Position().Get(), pr.Y-5) {
 		t.Fatalf("a point above the paned should not be on the divider")
 	}
 	if s.onDivider(pr.X+5, pr.Y+5) {
 		t.Fatalf("a point far from the handle should not be on the divider")
 	}
-	if !s.onDivider(pr.X+s.paned.Position+1, pr.Y+5) {
+	if !s.onDivider(pr.X+s.paned.Position().Get()+1, pr.Y+5) {
 		t.Fatalf("a point on the handle should be on the divider")
 	}
 }
@@ -117,7 +117,7 @@ func TestIntrospectionAccessors(t *testing.T) {
 	if !s.ShowLog() {
 		t.Fatalf("ShowLog should be true after toggle")
 	}
-	if s.DividerX() != s.paned.Bounds().X+s.paned.Position {
+	if s.DividerX() != s.paned.Bounds().X+s.paned.Position().Get() {
 		t.Fatalf("DividerX mismatch")
 	}
 }

@@ -22,10 +22,10 @@ An equation $\nosuchmath x$ inline.
 func TestDividerDragChangesEditorWidth(t *testing.T) {
 	s := newTestState(t, false)
 	pr := s.paned.Bounds()
-	divX := pr.X + s.paned.Position
+	divX := pr.X + s.paned.Position().Get()
 	y := pr.Y + 20
 
-	beforePos := s.paned.Position
+	beforePos := s.paned.Position().Get()
 	beforeEditorW := s.editor.Bounds().W
 
 	if !s.HandleClick(divX, y) {
@@ -41,8 +41,8 @@ func TestDividerDragChangesEditorWidth(t *testing.T) {
 	if !s.HandleRelease(divX+150, y) {
 		t.Fatalf("divider release not consumed")
 	}
-	if s.paned.Position <= beforePos+100 {
-		t.Fatalf("divider did not move right: pos %d -> %d", beforePos, s.paned.Position)
+	if s.paned.Position().Get() <= beforePos+100 {
+		t.Fatalf("divider did not move right: pos %d -> %d", beforePos, s.paned.Position().Get())
 	}
 	if s.editor.Bounds().W <= beforeEditorW+100 {
 		t.Fatalf("editor width did not grow with the divider: %d -> %d", beforeEditorW, s.editor.Bounds().W)
