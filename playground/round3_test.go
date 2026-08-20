@@ -180,7 +180,7 @@ func TestRound3Introspection(t *testing.T) {
 func TestDebugRects(t *testing.T) {
 	s := newTestState(t, false)
 	r := s.DebugRects()
-	for _, name := range []string{"picker", "popover", "renderTab", "logTab", "renderPane", "renderContent"} {
+	for _, name := range []string{"picker", "popover", "renderTab", "logTab", "renderPane", "renderContent", "sourceTab", "wysiwygTab", "formatPicker"} {
 		v, ok := r[name]
 		if !ok {
 			t.Fatalf("DebugRects missing %q", name)

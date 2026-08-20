@@ -4,11 +4,19 @@
 package playground
 
 // This file adds the playground's WYSIWYG multi-format mode. It is deliberately
-// self-contained: the whole feature (format registry, the WYSIWYG toggle + a
-// format picker, a toolkit RichEditor shown in place of the CodeEditor, and the
+// self-contained: the whole feature (format registry, a "Source | WYSIWYG" tab
+// strip + a format picker pinned to the top of the editor pane, a toolkit
+// RichEditor shown in place of the CodeEditor on the WYSIWYG tab, and the
 // source<->document round-trip through the go-richdoc converters) lives here, so
 // app.go and the wasm driver only carry a handful of one-line additive hooks
 // (s.wysiwyg*(...)).
+//
+// The strip is the shared [toolkit.FolderTabs] — the SAME widget the render pane
+// uses for its Rendered│Log tabs — placed at the top of the editor (left) pane so
+// the two panes read consistently. The active editor tab is the single source of
+// truth (an [mvvm.Observable] on the strip, mirroring the render pane's tab
+// state): there is no shadow "active" bool. Selecting WYSIWYG parses the source
+// into the RichEditor; selecting Source writes the edited document back.
 //
 // A Format is bound to a Codec (Parse/Write over the neutral richdoc model) in a
 // map, so adding a new format later — go-odf/go-rtf were wired here from the
@@ -96,39 +104,68 @@ func formatNames() []string {
 	return names
 }
 
-// wysiwyg is the mode's whole state: the two toolbar controls (a toggle button
-// and a format DropDown), the RichEditor shown over the CodeEditor while active,
-// the selected format, a parse-error string (shown while it stays in source
-// mode) and a pointer-capture flag for a drag inside the RichEditor.
+// Editor-pane tab indices. Source shows the CodeEditor (LaTeX source, completion,
+// minimap, compile-on-edit); WYSIWYG shows the RichEditor. The strip's reactive
+// selection IS the mode's active state — see [wysiwyg.active].
+const (
+	tabSource  = 0
+	tabWysiwyg = 1
+)
+
+// wysiwyg is the mode's whole state: the editor-pane tab strip and the format
+// DropDown (both pinned to the top of the editor pane), the RichEditor shown on
+// the WYSIWYG tab, the selected format, a parse-error string (shown while it
+// bounces back to Source), a pointer-capture flag for a drag inside the
+// RichEditor, the strip rect for click routing and a re-entrancy guard raised
+// while a programmatic tab change (a parse-error bounce or an import) must not
+// re-run the enter/leave side effects.
 type wysiwyg struct {
 	s *State
 
 	editor *toolkit.RichEditor
-	toggle *toolkit.Button
+	tabs   *toolkit.FolderTabs
 	picker *toolkit.DropDown
 
-	active   bool
 	format   Format
 	parseErr string
 	pressing bool
+
+	strip      toolkit.Rect
+	syncingTab bool
 }
 
 // newWysiwyg builds the mode's widgets over State s. The RichEditor starts empty
-// (it is fed a parsed document on the first activation); the toggle flips the
-// mode and the picker selects the active format.
+// (it is fed a parsed document when the WYSIWYG tab is first selected); the tab
+// strip flips the mode and the picker selects the active format.
 func newWysiwyg(s *State) *wysiwyg {
 	// formatOrder is always non-empty (init registers the four built-ins before
 	// any State is built), so the default format is simply the first registered.
 	w := &wysiwyg{s: s, editor: toolkit.NewRichEditor(nil), format: formatOrder[0]}
-	w.toggle = toolkit.NewButton("WYSIWYG", w.toggle_)
+	w.tabs = toolkit.NewFolderTabs([]string{"Source", "WYSIWYG"}, tabSource)
 	w.picker = toolkit.NewDropDown(formatNames(), 0)
 	// The picker selects the session format; the change takes effect on the next
-	// enter (and, for a textual format, on the write-back at exit), so switching
-	// while in source mode simply re-aims the toggle. The widget lives for the
-	// whole app, so the unsubscribe handle is intentionally dropped.
+	// enter (and, for a textual format, on the write-back at leave), so switching
+	// while on the Source tab simply re-aims what the WYSIWYG tab will parse. The
+	// widget lives for the whole app, so the unsubscribe handle is dropped.
 	w.picker.Selected().Subscribe(func(idx int) {
 		if idx >= 0 && idx < len(formatOrder) {
 			w.format = formatOrder[idx]
+		}
+	})
+	// The active editor tab is the single source of truth (mirrors the render
+	// pane's Rendered│Log strip): selecting WYSIWYG parses the source into the
+	// RichEditor, selecting Source writes the edited document back. A parse
+	// failure bounces the strip back to Source under the syncingTab guard, so the
+	// guarded Set does not re-enter leave(). The strip lives for the whole app, so
+	// the unsubscribe handle is dropped.
+	w.tabs.Selected().Subscribe(func(idx int) {
+		if w.syncingTab {
+			return
+		}
+		if idx == tabWysiwyg {
+			w.enter()
+		} else {
+			w.leave()
 		}
 	})
 	return w
@@ -145,24 +182,37 @@ func (s *State) wysiwyg() *wysiwyg {
 // codec is the active format's Codec.
 func (w *wysiwyg) codec() Codec { return formatRegistry[w.format] }
 
-// toggle_ flips the mode: leaving WYSIWYG (writing a textual document back to the
-// source editor) or entering it (parsing the current source into the editor).
+// active reports whether the WYSIWYG tab is selected — read straight from the
+// strip's reactive Observable (the single source of truth, mirroring
+// [rightPane.isLog]); there is no shadow copy of the mode to keep in sync.
+func (w *wysiwyg) active() bool { return w.tabs.Selected().Get() == tabWysiwyg }
+
+// selectTab drives the strip's reactive selection, firing the enter/leave
+// transition through the strip subscriber — the single mutate path a host toggle
+// and a strip click both take.
+func (w *wysiwyg) selectTab(tab int) { w.tabs.Selected().Set(tab) }
+
+// toggle_ flips the active editor tab: Source <-> WYSIWYG. It Sets the strip's
+// reactive selection, so the enter/leave side effects run through the subscriber
+// exactly as a strip click would.
 func (w *wysiwyg) toggle_() {
-	if w.active {
-		w.deactivate()
-		return
+	if w.active() {
+		w.selectTab(tabSource)
+	} else {
+		w.selectTab(tabWysiwyg)
 	}
-	w.activate()
 }
 
-// activate parses the current source with the selected format and shows the
-// RichEditor. A parse failure records the error and stays in source mode (the
-// documented graceful path — malformed LaTeX, or a plain-text buffer handed to
-// the ODT reader, which wants a zip).
-func (w *wysiwyg) activate() {
+// enter is run when the WYSIWYG tab becomes active: it parses the current source
+// with the selected format into the RichEditor. A parse failure records the error
+// and bounces the strip back to Source (the documented graceful path — malformed
+// LaTeX, or a plain-text buffer handed to the ODT reader, which wants a zip), so
+// the strip's selection and the visible editor never disagree.
+func (w *wysiwyg) enter() {
 	doc, err := w.codec().Parse([]byte(w.s.Source()))
 	if err != nil {
 		w.parseErr = err.Error()
+		w.bounceToSource()
 		w.s.dirty = true
 		return
 	}
@@ -170,16 +220,15 @@ func (w *wysiwyg) activate() {
 	w.editor.SetDocument(doc)
 	w.editor.SetBounds(w.s.editor.Bounds())
 	w.editor.Focused().Set(true)
-	w.active = true
 	w.s.dirty = true
 }
 
-// deactivate leaves WYSIWYG. For a textual format the edited document is written
-// back into the source editor (driving the existing compile -> render pipeline);
-// a non-textual format is import/export only, so the source editor is left as it
-// is (the document leaves through WysiwygExport instead).
-func (w *wysiwyg) deactivate() {
-	w.active = false
+// leave is run when the Source tab becomes active. For a textual format the
+// edited document is written back into the source editor (driving the existing
+// compile -> render pipeline); a non-textual format is import/export only, so the
+// source editor is left as it is (the document leaves through WysiwygExport
+// instead).
+func (w *wysiwyg) leave() {
 	w.editor.Focused().Set(false)
 	if w.codec().Textual {
 		if out, err := w.codec().Write(w.editor.Document()); err != nil {
@@ -190,6 +239,14 @@ func (w *wysiwyg) deactivate() {
 		}
 	}
 	w.s.dirty = true
+}
+
+// bounceToSource forces the strip back to the Source tab without re-running the
+// leave() write-back — the guarded revert used when an enter() parse fails.
+func (w *wysiwyg) bounceToSource() {
+	w.syncingTab = true
+	w.tabs.Selected().Set(tabSource)
+	w.syncingTab = false
 }
 
 // WysiwygImport switches to format f, parses data into the RichEditor and enters
@@ -211,7 +268,12 @@ func (s *State) WysiwygImport(f Format, data []byte) error {
 	w.editor.SetDocument(doc)
 	w.editor.SetBounds(s.editor.Bounds())
 	w.editor.Focused().Set(true)
-	w.active = true
+	// Select the WYSIWYG tab WITHOUT re-running enter() (which would re-parse the
+	// plain-text source buffer, not this imported document): the RichEditor is
+	// already populated from data above, so the tab change is purely a view swap.
+	w.syncingTab = true
+	w.tabs.Selected().Set(tabWysiwyg)
+	w.syncingTab = false
 	s.dirty = true
 	return nil
 }
@@ -236,38 +298,70 @@ func (e wysiwygError) Error() string { return string(e) }
 
 // --- layout ---------------------------------------------------------------
 
-// wysiwygLayout places the toolbar controls to the right of the minimap toggle
-// and, while active, sizes the RichEditor to the editor pane. Called at the tail
-// of State.layout.
+// stripHeight is the device height reserved at the top of the editor pane for the
+// tab strip — the shared FolderTabs height, so the editor strip lines up exactly
+// with the render pane's Rendered│Log strip. applyLeftSplit reserves it above the
+// CodeEditor + minimap.
+func (w *wysiwyg) stripHeight() int { return toolkit.FolderTabsHeight() }
+
+// wysiwygLayout pins the Source│WYSIWYG strip to the top of the editor (left)
+// pane and floats the format DropDown at the strip's right edge; while the
+// WYSIWYG tab is active it sizes the RichEditor to the editor region (below the
+// strip). Called at the tail of State.layout (and after a divider drag), so the
+// strip tracks the left pane's current width.
 func (s *State) wysiwygLayout() {
 	w := s.wysiwyg()
-	mb := s.minimapBtn.Bounds()
+	pr := s.paned.Bounds()
+	leftW := s.paned.Position // Paned clamps the divider to [10, W-10], never < 0
+	h := w.stripHeight()
+	w.strip = toolkit.Rect{X: pr.X, Y: pr.Y, W: leftW, H: h}
+	// The FolderTabs spans the whole strip width (its background + bottom border
+	// read as the pane's top edge, matching the render pane); it hit-tests only
+	// the label-width tab rects, so the DropDown floated over its right end never
+	// clashes with a tab click.
+	w.tabs.SetBounds(w.strip)
 	gap := toolkit.Scaled(8)
-	yy := mb.Y
-	h := mb.H
-	x := mb.X + mb.W + gap
-	tw := toolkit.Scaled(92)
-	w.toggle.SetBounds(toolkit.Rect{X: x, Y: yy, W: tw, H: h})
-	x += tw + gap
 	pw := toolkit.Scaled(110)
-	w.picker.SetBounds(toolkit.Rect{X: x, Y: yy, W: pw, H: h})
-	if w.active {
+	if max := leftW - 2*gap; pw > max {
+		pw = max // shrink the picker to fit a narrow pane
+	}
+	if pw < 0 {
+		pw = 0 // a pane too narrow for even the gaps drops the picker to zero width
+	}
+	ph := toolkit.Scaled(20)
+	w.picker.SetBounds(toolkit.Rect{X: pr.X + leftW - gap - pw, Y: pr.Y + (h-ph)/2, W: pw, H: ph})
+	if w.active() {
 		w.editor.SetBounds(s.editor.Bounds())
 	}
 }
 
 // --- draw -----------------------------------------------------------------
 
-// wysiwygDraw paints the toolbar controls, then (while active) the RichEditor
-// over the editor pane and, on top, the open format popover; a pending parse
-// error is shown as a band. Called from State.Draw.
+// wysiwygDraw paints the editor-pane tab strip, then the active tab's editor
+// surface: on the WYSIWYG tab the RichEditor over the editor region; on the
+// Source tab for a NON-textual (binary) format a clear note instead of the
+// CodeEditor, since ODT/RTF have no human-editable source (the CodeEditor,
+// already painted by the Paned, is covered by the note). A pending parse error is
+// shown as a band; the format DropDown draws over the strip's right end and its
+// popover floats on top. Called from State.Draw.
 func (s *State) wysiwygDraw(p painter.Painter) {
 	w := s.wysiwyg()
-	w.toggle.Draw(p, s.theme)
-	w.picker.Draw(p, s.theme)
-	if w.active {
+	w.tabs.Draw(p, s.theme)
+	if w.active() {
 		w.editor.SetBounds(s.editor.Bounds())
 		w.editor.Draw(p, s.theme)
+	} else if !w.codec().Textual {
+		r := s.editor.Bounds()
+		p.FillRect(r, s.theme.SurfaceAlt)
+		// Clear the parse-error band (drawn next, 22px tall) when one is present, so
+		// the note is not overwritten by it.
+		noteY := r.Y + toolkit.Scaled(12)
+		if w.parseErr != "" {
+			noteY = r.Y + toolkit.Scaled(30)
+		}
+		toolkit.DrawText(p, r.X+toolkit.Scaled(12), noteY,
+			"Binary format ("+w.codec().Name+") — edit on the WYSIWYG tab; use import / export to load and save.",
+			s.theme.OnSurface)
 	}
 	if w.parseErr != "" {
 		r := s.editor.Bounds()
@@ -275,6 +369,7 @@ func (s *State) wysiwygDraw(p painter.Painter) {
 		p.FillRect(band, s.theme.SurfaceAlt)
 		toolkit.DrawText(p, r.X+toolkit.Scaled(8), r.Y+toolkit.Scaled(6), "Parse error: "+w.parseErr, s.theme.Accent)
 	}
+	w.picker.Draw(p, s.theme)
 	if w.picker.Open().Get() {
 		w.picker.DrawPopover(p, s.theme)
 	}
@@ -282,10 +377,11 @@ func (s *State) wysiwygDraw(p painter.Painter) {
 
 // --- input ----------------------------------------------------------------
 
-// wysiwygClick routes a pointer press: an open format popover, the toolbar
-// controls, or (while active) the RichEditor. It returns true when it consumed
-// the press so State.HandleClick stops. Called before the generic toolbar/editor
-// routing.
+// wysiwygClick routes a pointer press: an open format popover, the editor-pane
+// tab strip (the format DropDown overlaid at its right, else the Source│WYSIWYG
+// tabs), or (while the WYSIWYG tab is active) the RichEditor. It returns true when
+// it consumed the press so State.HandleClick stops. Called before the generic
+// toolbar/editor routing.
 func (s *State) wysiwygClick(x, y int) bool {
 	w := s.wysiwyg()
 	if w.picker.Open().Get() {
@@ -293,18 +389,21 @@ func (s *State) wysiwygClick(x, y int) bool {
 		s.dirty = true
 		return true
 	}
-	if y < s.toolbarH {
-		for _, ww := range []toolkit.Widget{w.toggle, w.picker} {
-			r := ww.Bounds()
-			if r.Contains(x, y) {
-				ww.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - r.X, Y: y - r.Y})
-				s.dirty = true
-				return true
-			}
+	if w.strip.Contains(x, y) {
+		// The DropDown is floated over the strip's right end; test it first, then
+		// fall through to the FolderTabs (which hit-tests its own label-width tabs
+		// and is a no-op on the empty strip between the tabs and the picker).
+		if pr := w.picker.Bounds(); pr.Contains(x, y) {
+			w.picker.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - pr.X, Y: y - pr.Y})
+			s.dirty = true
+			return true
 		}
-		return false
+		tr := w.tabs.Bounds()
+		w.tabs.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - tr.X, Y: y - tr.Y})
+		s.dirty = true
+		return true
 	}
-	if w.active && w.editor.Bounds().Contains(x, y) {
+	if w.active() && w.editor.Bounds().Contains(x, y) {
 		r := w.editor.Bounds()
 		w.editor.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - r.X, Y: y - r.Y})
 		w.pressing = true
@@ -341,7 +440,7 @@ func (s *State) wysiwygRelease(x, y int) bool {
 // the pointer.
 func (s *State) wysiwygScroll(x, y, dy int) bool {
 	w := s.wysiwyg()
-	if !w.active || !w.editor.Bounds().Contains(x, y) {
+	if !w.active() || !w.editor.Bounds().Contains(x, y) {
 		return false
 	}
 	r := w.editor.Bounds()
@@ -353,7 +452,7 @@ func (s *State) wysiwygScroll(x, y, dy int) bool {
 // wysiwygChar routes a printable character to the focused RichEditor.
 func (s *State) wysiwygChar(code string) bool {
 	w := s.wysiwyg()
-	if !w.active || !w.editor.Focused().Get() {
+	if !w.active() || !w.editor.Focused().Get() {
 		return false
 	}
 	w.editor.OnEvent(toolkit.Event{Kind: toolkit.EventChar, Code: code})
@@ -365,7 +464,7 @@ func (s *State) wysiwygChar(code string) bool {
 // into Code + the Shift modifier the RichEditor expects) to the focused editor.
 func (s *State) wysiwygKey(code string) bool {
 	w := s.wysiwyg()
-	if !w.active || !w.editor.Focused().Get() {
+	if !w.active() || !w.editor.Focused().Get() {
 		return false
 	}
 	ev := toolkit.Event{Kind: toolkit.EventKeyDown}
@@ -382,16 +481,41 @@ func (s *State) wysiwygKey(code string) bool {
 
 // --- host / test introspection -------------------------------------------
 
-// ToggleWysiwyg flips the mode from the host (the wasm driver's toolbar-less
-// callers and the headless harness).
+// ToggleWysiwyg flips the active editor tab (Source <-> WYSIWYG) from the host
+// (the wasm driver and the headless harness), driving the same enter/leave path a
+// strip click takes.
 func (s *State) ToggleWysiwyg() { s.wysiwyg().toggle_() }
+
+// SetEditorTab selects the editor pane's tab (0 = Source, 1 = WYSIWYG) directly,
+// driving the same enter/leave path a strip click takes — the host/headless hook
+// for the reactive active-tab state.
+func (s *State) SetEditorTab(idx int) { s.wysiwyg().selectTab(idx) }
+
+// ActiveEditorTab is the selected editor-pane tab index (0 = Source, 1 = WYSIWYG),
+// read from the strip's reactive Observable. Host/headless introspection.
+func (s *State) ActiveEditorTab() int { return s.wysiwyg().tabs.Selected().Get() }
+
+// EditorTabRect is the device rectangle of editor tab i (0 = Source, 1 = WYSIWYG)
+// in surface coordinates, so a headless harness can click a tab precisely.
+func (s *State) EditorTabRect(i int) [4]int {
+	r := s.wysiwyg().tabs.TabRect(i)
+	return [4]int{r.X, r.Y, r.W, r.H}
+}
+
+// FormatPickerRect is the device rectangle of the format DropDown, for the
+// headless harness.
+func (s *State) FormatPickerRect() [4]int {
+	r := s.wysiwyg().picker.Bounds()
+	return [4]int{r.X, r.Y, r.W, r.H}
+}
 
 // SetWysiwygFormat selects the session format by picker index, driving the same
 // path as a click on the picker.
 func (s *State) SetWysiwygFormat(idx int) { s.wysiwyg().picker.Select(idx) }
 
-// WysiwygActive reports whether the RichEditor is currently shown.
-func (s *State) WysiwygActive() bool { return s.wysiwyg().active }
+// WysiwygActive reports whether the RichEditor (the WYSIWYG tab) is currently
+// shown.
+func (s *State) WysiwygActive() bool { return s.wysiwyg().active() }
 
 // WysiwygFormat is the selected format's display name.
 func (s *State) WysiwygFormat() string { return s.wysiwyg().codec().Name }
