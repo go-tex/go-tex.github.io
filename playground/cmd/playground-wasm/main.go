@@ -596,6 +596,47 @@ func main() {
 		}
 	}))
 
+	// Git panel action hooks for the headless two-wasm proof. They drive the SAME
+	// State methods the panel buttons do (which route through the worker-RPC
+	// backend), so a headless run exercises the real off-thread git client without
+	// synthesising canvas clicks. Each network action is async (a worker
+	// round-trip); the harness polls gotexGitDebug().busy to await completion.
+
+	// gotexGitOpen(bool) opens/closes the panel; opening spawns the git worker.
+	js.Global().Set("gotexGitOpen", js.FuncOf(func(_ js.Value, a []js.Value) any {
+		state.SetGitOpen(len(a) > 0 && a[0].Bool())
+		render()
+		return nil
+	}))
+	// gotexGitConfigure(url, branch, author, email) fills the remote form.
+	js.Global().Set("gotexGitConfigure", js.FuncOf(func(_ js.Value, a []js.Value) any {
+		if len(a) < 4 {
+			return nil
+		}
+		state.SetGitURL(a[0].String())
+		state.SetGitBranch(a[1].String())
+		state.SetGitAuthor(a[2].String())
+		state.SetGitEmail(a[3].String())
+		render()
+		return nil
+	}))
+	// gotexGitClone/Commit/Push trigger the async panel actions.
+	js.Global().Set("gotexGitClone", js.FuncOf(func(js.Value, []js.Value) any {
+		state.GitClone(nil)
+		render()
+		return nil
+	}))
+	js.Global().Set("gotexGitCommit", js.FuncOf(func(js.Value, []js.Value) any {
+		state.GitCommit(nil)
+		render()
+		return nil
+	}))
+	js.Global().Set("gotexGitPush", js.FuncOf(func(js.Value, []js.Value) any {
+		state.GitPush(nil)
+		render()
+		return nil
+	}))
+
 	render()
 	js.Global().Set("gotexPlaygroundReady", true)
 	select {} // keep the Go runtime alive so the callbacks live
