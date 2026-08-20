@@ -122,16 +122,18 @@ const (
 type wysiwyg struct {
 	s *State
 
-	editor *toolkit.RichEditor
-	tabs   *toolkit.FolderTabs
-	picker *toolkit.DropDown
+	editor  *toolkit.RichEditor
+	toolbar *toolkit.RichEditorToolbar
+	tabs    *toolkit.FolderTabs
+	picker  *toolkit.DropDown
 
 	format   Format
 	parseErr string
 	pressing bool
 
-	strip      toolkit.Rect
-	syncingTab bool
+	strip       toolkit.Rect
+	toolbarRect toolkit.Rect
+	syncingTab  bool
 }
 
 // newWysiwyg builds the mode's widgets over State s. The RichEditor starts empty
@@ -141,6 +143,11 @@ func newWysiwyg(s *State) *wysiwyg {
 	// formatOrder is always non-empty (init registers the four built-ins before
 	// any State is built), so the default format is simply the first registered.
 	w := &wysiwyg{s: s, editor: toolkit.NewRichEditor(nil), format: formatOrder[0]}
+	// The formatting toolbar is bound to the one RichEditor for the whole app's
+	// life: it drives the editor's verbs and lights the buttons whose formatting is
+	// in force at the caret (it subscribes to the editor's Caret/Selection/Doc). It
+	// is shown only on the WYSIWYG tab, laid out directly under the tab strip.
+	w.toolbar = toolkit.NewRichEditorToolbar(w.editor)
 	w.tabs = toolkit.NewFolderTabs([]string{"Source", "WYSIWYG"}, tabSource)
 	w.picker = toolkit.NewDropDown(formatNames(), 0)
 	// The picker selects the session format; the change takes effect on the next
@@ -218,7 +225,7 @@ func (w *wysiwyg) enter() {
 	}
 	w.parseErr = ""
 	w.editor.SetDocument(doc)
-	w.editor.SetBounds(w.s.editor.Bounds())
+	w.applyWysiwygBounds()
 	w.editor.Focused().Set(true)
 	w.s.dirty = true
 }
@@ -266,7 +273,6 @@ func (s *State) WysiwygImport(f Format, data []byte) error {
 	w.format = f
 	w.parseErr = ""
 	w.editor.SetDocument(doc)
-	w.editor.SetBounds(s.editor.Bounds())
 	w.editor.Focused().Set(true)
 	// Select the WYSIWYG tab WITHOUT re-running enter() (which would re-parse the
 	// plain-text source buffer, not this imported document): the RichEditor is
@@ -274,6 +280,9 @@ func (s *State) WysiwygImport(f Format, data []byte) error {
 	w.syncingTab = true
 	w.tabs.Selected().Set(tabWysiwyg)
 	w.syncingTab = false
+	// Now that the WYSIWYG tab is active, reserve the toolbar strip above the
+	// RichEditor (toolbarShown reads the active tab).
+	w.applyWysiwygBounds()
 	s.dirty = true
 	return nil
 }
@@ -304,6 +313,52 @@ func (e wysiwygError) Error() string { return string(e) }
 // CodeEditor + minimap.
 func (w *wysiwyg) stripHeight() int { return toolkit.FolderTabsHeight() }
 
+// toolbarShown reports whether the formatting toolbar is visible. It shows ONLY
+// while the WYSIWYG tab is active — on either a textual (LaTeX/Markdown) or a
+// binary (ODT/RTF) format, since for the binary formats the RichEditor IS the
+// primary editing surface. On the Source tab (the CodeEditor, or the binary-note
+// placeholder) it is hidden.
+func (w *wysiwyg) toolbarShown() bool { return w.active() }
+
+// toolbarHeight is the device height the toolbar reserves above the RichEditor —
+// its measured icon-strip height (metric-scaled by the toolkit) — or 0 when it is
+// hidden, so the RichEditor claims the whole editor region on the Source path.
+func (w *wysiwyg) toolbarHeight() int {
+	if !w.toolbarShown() {
+		return 0
+	}
+	_, h := w.toolbar.Measure(0, 0)
+	return h
+}
+
+// layoutBounds splits the editor pane (below the Source│WYSIWYG tab strip) into
+// the toolbar strip pinned at the top and the RichEditor region below it. The
+// toolbar spans the full editor width (its Surface fill reads as a strip, like the
+// tab strip above it); the RichEditor takes the remainder. With the toolbar hidden
+// the toolbar rect is zero-height and the editor claims the whole region.
+func (w *wysiwyg) layoutBounds() (toolbar, editor toolkit.Rect) {
+	er := w.s.editor.Bounds()
+	th := w.toolbarHeight()
+	if th > er.H {
+		th = er.H
+	}
+	toolbar = toolkit.Rect{X: er.X, Y: er.Y, W: er.W, H: th}
+	editor = toolkit.Rect{X: er.X, Y: er.Y + th, W: er.W, H: er.H - th}
+	return
+}
+
+// applyWysiwygBounds pins the formatting toolbar to the top of the editor pane and
+// sizes the RichEditor to the region below it. It is the single seam every path
+// that (re)establishes the RichEditor bounds routes through — layout, a divider
+// drag, a draw, enter and import — so the reserved strip and the click routing
+// never disagree.
+func (w *wysiwyg) applyWysiwygBounds() {
+	tb, ed := w.layoutBounds()
+	w.toolbarRect = tb
+	w.toolbar.SetBounds(tb)
+	w.editor.SetBounds(ed)
+}
+
 // wysiwygLayout pins the Source│WYSIWYG strip to the top of the editor (left)
 // pane and floats the format DropDown at the strip's right edge; while the
 // WYSIWYG tab is active it sizes the RichEditor to the editor region (below the
@@ -312,7 +367,7 @@ func (w *wysiwyg) stripHeight() int { return toolkit.FolderTabsHeight() }
 func (s *State) wysiwygLayout() {
 	w := s.wysiwyg()
 	pr := s.paned.Bounds()
-	leftW := s.paned.Position // Paned clamps the divider to [10, W-10], never < 0
+	leftW := s.paned.Position().Get() // Paned clamps the divider to [10, W-10], never < 0
 	h := w.stripHeight()
 	w.strip = toolkit.Rect{X: pr.X, Y: pr.Y, W: leftW, H: h}
 	// The FolderTabs spans the whole strip width (its background + bottom border
@@ -331,7 +386,10 @@ func (s *State) wysiwygLayout() {
 	ph := toolkit.Scaled(20)
 	w.picker.SetBounds(toolkit.Rect{X: pr.X + leftW - gap - pw, Y: pr.Y + (h-ph)/2, W: pw, H: ph})
 	if w.active() {
-		w.editor.SetBounds(s.editor.Bounds())
+		// Reserve the formatting-toolbar strip above the RichEditor and size the
+		// editor to the region below it (tracks the left pane's current width on a
+		// divider drag / resize, exactly like the tab strip above).
+		w.applyWysiwygBounds()
 	}
 }
 
@@ -348,7 +406,11 @@ func (s *State) wysiwygDraw(p painter.Painter) {
 	w := s.wysiwyg()
 	w.tabs.Draw(p, s.theme)
 	if w.active() {
-		w.editor.SetBounds(s.editor.Bounds())
+		// Re-establish the toolbar + RichEditor bounds every frame (the editor pane
+		// may have been re-laid by a divider drag), then paint the formatting toolbar
+		// strip directly under the tab strip and the RichEditor below it.
+		w.applyWysiwygBounds()
+		w.toolbar.Draw(p, s.theme)
 		w.editor.Draw(p, s.theme)
 	} else if !w.codec().Textual {
 		r := s.editor.Bounds()
@@ -400,6 +462,16 @@ func (s *State) wysiwygClick(x, y int) bool {
 		}
 		tr := w.tabs.Bounds()
 		w.tabs.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - tr.X, Y: y - tr.Y})
+		s.dirty = true
+		return true
+	}
+	if w.active() && w.toolbarRect.Contains(x, y) {
+		// The formatting toolbar sits between the tab strip and the RichEditor:
+		// forward a press over it to the toolbar (parent-local coords, the same
+		// convention the strip uses), so the click lands on the icon button under the
+		// pointer rather than the editor. No drag capture — a toolbar press is a
+		// one-shot verb, not a selection drag.
+		w.toolbar.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - w.toolbarRect.X, Y: y - w.toolbarRect.Y})
 		s.dirty = true
 		return true
 	}
@@ -567,6 +639,84 @@ func (s *State) RichSelectBlock(bi int) {
 func (s *State) RichToggleStrong() {
 	s.wysiwyg().editor.ToggleStrong()
 	s.dirty = true
+}
+
+// Formatting-toolbar button indices, in the toolbar's grouped order (Inline,
+// Block, Lists). They index [State.RichToolbarButtonRects] /
+// [State.RichToolbarButtonPressed] so the host / headless harness can click and
+// probe a specific button by name.
+const (
+	rtbBold = iota
+	rtbItalic
+	rtbStrikethrough
+	rtbCode
+	rtbParagraph
+	rtbH1
+	rtbH2
+	rtbH3
+	rtbQuote
+	rtbCodeBlock
+	rtbBullet
+	rtbNumbered
+)
+
+// toolbarButtons is the toolbar's icon buttons in grouped order — the HBox
+// children that are Buttons (the group dividers, which are not, are skipped), so
+// the slice indices line up with the rtb* constants above.
+func (w *wysiwyg) toolbarButtons() []*toolkit.Button {
+	var bs []*toolkit.Button
+	for _, c := range w.toolbar.Children() {
+		if b, ok := c.(*toolkit.Button); ok {
+			bs = append(bs, b)
+		}
+	}
+	return bs
+}
+
+// RichToolbarVisible reports whether the formatting toolbar is currently shown
+// (the WYSIWYG tab is active). Host / headless introspection.
+func (s *State) RichToolbarVisible() bool { return s.wysiwyg().toolbarShown() }
+
+// RichToolbarRect is the device rectangle of the formatting-toolbar strip (zero
+// height while it is hidden), for the headless harness.
+func (s *State) RichToolbarRect() [4]int {
+	r := s.wysiwyg().toolbarRect
+	return [4]int{r.X, r.Y, r.W, r.H}
+}
+
+// RichToolbarButtonCount is the number of formatting buttons (12: 4 inline, 6
+// block, 2 list).
+func (s *State) RichToolbarButtonCount() int { return len(s.wysiwyg().toolbarButtons()) }
+
+// RichToolbarButtonRects is the device rectangle of every formatting button, in
+// grouped order (see the rtb* constants), so a headless harness can dispatch a
+// real pointer click at a button's centre.
+func (s *State) RichToolbarButtonRects() [][4]int {
+	bs := s.wysiwyg().toolbarButtons()
+	out := make([][4]int, len(bs))
+	for i, b := range bs {
+		r := b.Bounds()
+		out[i] = [4]int{r.X, r.Y, r.W, r.H}
+	}
+	return out
+}
+
+// RichToolbarButtonPressed reports whether button i shows its active (pressed)
+// pill — the toolbar's reflection of the formatting in force at the caret /
+// selection. An out-of-range index reports false.
+func (s *State) RichToolbarButtonPressed(i int) bool {
+	bs := s.wysiwyg().toolbarButtons()
+	if i < 0 || i >= len(bs) {
+		return false
+	}
+	return bs[i].Selected().Get()
+}
+
+// RichCurrentBlockKind is the caret block's kind as the toolkit BlockKind int
+// (BlockParagraph, BlockH1.., BlockCodeKind, BlockQuoteKind), so a headless test
+// can assert a block button changed the caret block.
+func (s *State) RichCurrentBlockKind() int {
+	return int(s.wysiwyg().editor.CurrentBlockKind())
 }
 
 // blockRuneLen is the number of editable caret cells in a text block (its

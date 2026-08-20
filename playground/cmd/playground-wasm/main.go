@@ -473,19 +473,45 @@ func main() {
 	}))
 	// gotexWysiwygDebug exposes the mode's state + parsed structure for headless
 	// verification (the active editor-tab index, active flag, format, parse error,
-	// block count, first-heading text, whether a bold run exists, and the
-	// document's plain text).
+	// block count, first-heading text, whether a bold run exists, the document's
+	// plain text, and the formatting-toolbar state: visible flag, button count,
+	// strip rect, the caret block kind and each button's pressed/lit state).
 	js.Global().Set("gotexWysiwygDebug", js.FuncOf(func(js.Value, []js.Value) any {
-		return map[string]any{
-			"activeTab":    state.ActiveEditorTab(),
-			"active":       state.WysiwygActive(),
-			"format":       state.WysiwygFormat(),
-			"parseError":   state.WysiwygParseError(),
-			"blockCount":   state.RichBlockCount(),
-			"firstHeading": state.RichFirstHeading(),
-			"hasBold":      state.RichHasBold(),
-			"plainText":    state.RichPlainText(),
+		n := state.RichToolbarButtonCount()
+		pressed := make([]any, n)
+		for i := 0; i < n; i++ {
+			pressed[i] = state.RichToolbarButtonPressed(i)
 		}
+		tr := state.RichToolbarRect()
+		return map[string]any{
+			"activeTab":          state.ActiveEditorTab(),
+			"active":             state.WysiwygActive(),
+			"format":             state.WysiwygFormat(),
+			"parseError":         state.WysiwygParseError(),
+			"blockCount":         state.RichBlockCount(),
+			"firstHeading":       state.RichFirstHeading(),
+			"hasBold":            state.RichHasBold(),
+			"plainText":          state.RichPlainText(),
+			"toolbarVisible":     state.RichToolbarVisible(),
+			"toolbarButtonCount": n,
+			"toolbarRect":        []any{tr[0], tr[1], tr[2], tr[3]},
+			"currentBlockKind":   state.RichCurrentBlockKind(),
+			"buttonsPressed":     pressed,
+		}
+	}))
+
+	// gotexRichToolbarRects exposes the device-pixel rectangle of every formatting
+	// button, in grouped order (0..3 inline: Bold/Italic/Strike/Code; 4..9 block:
+	// Paragraph/H1/H2/H3/Quote/CodeBlock; 10..11 lists: Bullet/Numbered), so a
+	// headless harness can dispatch a real pointer click at a button's centre and
+	// prove the click routes through the app to the editor verb.
+	js.Global().Set("gotexRichToolbarRects", js.FuncOf(func(js.Value, []js.Value) any {
+		rects := state.RichToolbarButtonRects()
+		out := make([]any, len(rects))
+		for i, r := range rects {
+			out[i] = []any{r[0], r[1], r[2], r[3]}
+		}
+		return out
 	}))
 
 	render()
