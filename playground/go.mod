@@ -14,7 +14,7 @@ require (
 	github.com/go-rtf/rtf v0.1.0
 	github.com/go-tex/engine v0.165.0
 	github.com/go-widgets/painter v0.11.0
-	github.com/go-widgets/toolkit v0.221.0
+	github.com/go-widgets/toolkit v0.224.0
 	github.com/go-widgets/toolkit/rougelex v0.2.0
 )
 
