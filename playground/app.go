@@ -174,6 +174,12 @@ type State struct {
 	// new Date().toLocaleTimeString()); defaults to a Go wall-clock format so a
 	// native build/test still gets non-empty timestamps.
 	now func() string
+
+	// wys is the WYSIWYG multi-format mode (format registry + toggle + a
+	// RichEditor shown over the CodeEditor). Lazily built via s.wysiwyg(); its
+	// whole implementation, and every hook this file calls into it, lives in
+	// wysiwyg.go so this mode stays an isolated, additive feature.
+	wys *wysiwyg
 }
 
 // NewState builds the playground at w×h DEVICE pixels, dark or light, compiles
@@ -566,6 +572,7 @@ func (s *State) layout() {
 	s.status.SetBounds(toolkit.Rect{X: 0, Y: s.toolbarH + bodyH, W: s.w, H: s.statusH})
 	s.layoutToolbar()
 	s.applyLeftSplit()
+	s.wysiwygLayout() // WYSIWYG toolbar controls + RichEditor bounds (wysiwyg.go)
 }
 
 // layoutToolbar places the colour-scheme picker and the minimap toggle
@@ -685,6 +692,10 @@ func (s *State) Draw(buf []byte) {
 	}
 	s.status.Draw(p, s.theme)
 
+	// WYSIWYG toolbar controls + (while active) the RichEditor overlay over the
+	// editor pane and its own format popover (wysiwyg.go).
+	s.wysiwygDraw(p)
+
 	// Popover floats above everything.
 	if s.schemePicker.Open().Get() {
 		s.schemePicker.DrawPopover(p, s.theme)
@@ -723,6 +734,11 @@ func (s *State) HandleClick(x, y int) bool {
 	if s.schemePicker.Open().Get() {
 		s.schemePicker.PopoverClick(x, y)
 		s.dirty = true
+		return true
+	}
+
+	// WYSIWYG controls / RichEditor claim the press first (wysiwyg.go).
+	if s.wysiwygClick(x, y) {
 		return true
 	}
 
@@ -795,6 +811,9 @@ func (s *State) HandleClick(x, y int) bool {
 // divider and the scrollbar thumbs draggable (previously a no-op, so move/up
 // were discarded and no widget ever received EventMouseDrag).
 func (s *State) HandleMove(x, y int) bool {
+	if s.wysiwygMove(x, y) { // WYSIWYG RichEditor drag (wysiwyg.go)
+		return true
+	}
 	switch s.pressKind {
 	case pressDivider:
 		pr := s.paned.Bounds()
@@ -822,6 +841,9 @@ func (s *State) HandleMove(x, y int) bool {
 
 // HandleRelease ends a captured drag, delivering EventMouseUp to the target.
 func (s *State) HandleRelease(x, y int) bool {
+	if s.wysiwygRelease(x, y) { // end a WYSIWYG RichEditor drag (wysiwyg.go)
+		return true
+	}
 	kind := s.pressKind
 	switch kind {
 	case pressDivider:
@@ -846,6 +868,9 @@ func (s *State) HandleRelease(x, y int) bool {
 // axes so a horizontal swipe moves its horizontal scrollbar, while the editor and
 // minimap scroll vertically only.
 func (s *State) HandleScroll(x, y, dx, dy int) bool {
+	if s.wysiwygScroll(x, y, dy) { // WYSIWYG RichEditor wheel scroll (wysiwyg.go)
+		return true
+	}
 	rr := s.rightPane.Bounds()
 	if rr.Contains(x, y) {
 		s.rightPane.scrollWheel(x, y, dx, dy)
@@ -871,6 +896,9 @@ func (s *State) HandleScroll(x, y, dx, dy int) bool {
 // When the render pane holds focus instead, a space bar pages the viewer and no
 // character reaches the (unfocused) editor.
 func (s *State) HandleChar(code string) bool {
+	if s.wysiwygChar(code) { // type into the WYSIWYG RichEditor (wysiwyg.go)
+		return true
+	}
 	if s.renderFocused() {
 		if code == " " || code == "Space" {
 			return s.rightPane.keyDown("Space")
@@ -906,6 +934,9 @@ func navBase(code string) string {
 // key extends the selection from an anchor; a plain navigation key moves the
 // caret and collapses any selection; every other key is forwarded as-is.
 func (s *State) HandleKeyDown(code string) bool {
+	if s.wysiwygKey(code) { // navigate/edit the WYSIWYG RichEditor (wysiwyg.go)
+		return true
+	}
 	if s.renderFocused() {
 		return s.rightPane.keyDown(code)
 	}
