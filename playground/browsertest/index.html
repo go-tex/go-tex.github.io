@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>go-tex playground — WebRTC collaboration proof</title>
+  </head>
+  <body>
+    <h3>go-tex playground: two peers editing over WebRTC</h3>
+    <!-- The Go toolchain's own loader, copied beside the wasm by the test. -->
+    <script src="wasm_exec.js"></script>
+    <script>
+      (async () => {
+        try {
+          const go = new Go();
+          const result = await WebAssembly.instantiateStreaming(
+            fetch("client.wasm"),
+            go.importObject,
+          );
+          await go.run(result.instance);
+        } catch (err) {
+          console.log("DONE page failed to run the wasm: " + err);
+          globalThis.__result = { ok: false, detail: "wasm did not run: " + err };
+        }
+      })();
+    </script>
+  </body>
+</html>

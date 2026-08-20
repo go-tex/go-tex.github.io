@@ -117,6 +117,11 @@ type State struct {
 	schemePicker *toolkit.DropDown
 	minimapBtn   *toolkit.Button
 
+	// collab is the live collaborative-editing affordance (Collaborate launcher +
+	// modal panel + WebRTC session). Self-contained in collab.go / collab_js.go;
+	// the fields below are the only app.go hooks it needs.
+	collab *collabView
+
 	// clip is the toolkit-wide clipboard the editor's copy/cut/paste go through;
 	// installed process-wide in NewState. Its onWrite hook lets the wasm host push
 	// copies to the real OS clipboard (navigator.clipboard).
@@ -244,6 +249,7 @@ func NewState(w, h int, dark bool) *State {
 	})
 
 	s.status = toolkit.NewStatusbar([]string{"Ln 1, Col 1", "UTF-8", "0 pages", ""})
+	s.collab = newCollabView(s) // Collaborate affordance (see collab.go)
 
 	// Route the toolkit-wide clipboard through this State so the editor's
 	// copy/cut/paste reach the host (and, on wasm, the OS clipboard).
@@ -700,6 +706,8 @@ func (s *State) Draw(buf []byte) {
 	if s.schemePicker.Open().Get() {
 		s.schemePicker.DrawPopover(p, s.theme)
 	}
+	// The Collaborate launcher + modal panel float above the whole scene.
+	s.collab.draw(p, s.theme)
 	s.dirty = false
 }
 
@@ -728,6 +736,10 @@ func (s *State) onDivider(x, y int) bool {
 
 // HandleClick routes a pointer press and captures it for a following drag.
 func (s *State) HandleClick(x, y int) bool {
+	// The Collaborate launcher/panel gets first refusal; an open panel is modal.
+	if s.collab.handleClick(x, y) {
+		return true
+	}
 	s.pressKind = pressNone
 
 	// An open colour-scheme popover intercepts the next click.
@@ -896,6 +908,9 @@ func (s *State) HandleScroll(x, y, dx, dy int) bool {
 // When the render pane holds focus instead, a space bar pages the viewer and no
 // character reaches the (unfocused) editor.
 func (s *State) HandleChar(code string) bool {
+	if s.collab.handleChar(code) { // typing edits the collab display name when focused
+		return true
+	}
 	if s.wysiwygChar(code) { // type into the WYSIWYG RichEditor (wysiwyg.go)
 		return true
 	}
@@ -934,6 +949,9 @@ func navBase(code string) string {
 // key extends the selection from an anchor; a plain navigation key moves the
 // caret and collapses any selection; every other key is forwarded as-is.
 func (s *State) HandleKeyDown(code string) bool {
+	if s.collab.handleKey(code) { // Backspace/Enter/Escape in the collab name field
+		return true
+	}
 	if s.wysiwygKey(code) { // navigate/edit the WYSIWYG RichEditor (wysiwyg.go)
 		return true
 	}

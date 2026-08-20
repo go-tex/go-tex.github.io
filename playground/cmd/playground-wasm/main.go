@@ -116,6 +116,11 @@ func main() {
 		ctx.Call("putImageData", imageData, 0, 0)
 	}
 
+	// Live collaborative editing (WebRTC, server-less copy-paste signalling): the
+	// canvas Collaborate panel drives it; this installs the real backend + the
+	// OS-clipboard hooks it needs. See package playground (collab.go/collab_js.go).
+	state.EnableCollab(render)
+
 	// Debounced compile.
 	var timer js.Value
 	schedule := func() {
