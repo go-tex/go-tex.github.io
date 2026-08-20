@@ -48,20 +48,46 @@ import (
 // loop and the UI event callbacks therefore never touch the editor at the same
 // instant, which is the one-goroutine contract CollabText asks for.
 
-// iceServers is the STUN/TURN configuration for the WebRTC peers. Empty is a
-// working configuration for two browsers on the same network and for the in-page
-// loopback + headless proof; a deployment that needs to cross NATs sets a STUN
-// server here.
-var iceServers []string
+// iceStorageKey is the localStorage entry the Collaborate ICE (STUN/TURN)
+// configuration is persisted under, so a user's chosen servers survive a reload.
+const iceStorageKey = "gotex-collab-ice"
 
 // EnableCollab installs the real WebRTC backend and the OS-clipboard hooks on
-// the playground's Collaborate affordance. The wasm driver calls it once, after
-// building the State, passing its repaint function.
+// the playground's Collaborate affordance, and restores any persisted ICE
+// (STUN/TURN) configuration. The wasm driver calls it once, after building the
+// State, passing its repaint function.
 func (s *State) EnableCollab(repaint func()) {
 	b := &webrtcBackend{s: s, repaint: repaint}
 	s.collab.attach(b, repaint)
 	s.collab.clipRead = readClipboard
 	s.collab.clipWrite = writeClipboard
+
+	// A persisted ICE configuration overrides the built-in public-STUN default.
+	if ls := js.Global().Get("localStorage"); ls.Truthy() {
+		if v := ls.Call("getItem", iceStorageKey); v.Type() == js.TypeString && v.String() != "" {
+			s.SetCollabICEServers(v.String())
+		}
+	}
+}
+
+// peerConfig builds the collab peer configuration from the view's ICE servers.
+// Credential-free entries (STUN, the default) go in ICEServers; entries with a
+// username or credential (a TURN relay) go in ICEServersAuth, which carries the
+// long-term credentials the plain URL list cannot express.
+func (b *webrtcBackend) peerConfig() collab.PeerConfig {
+	var cfg collab.PeerConfig
+	for _, sv := range b.s.CollabICEConfig() {
+		if sv.Username == "" && sv.Credential == "" {
+			cfg.ICEServers = append(cfg.ICEServers, sv.URL)
+			continue
+		}
+		cfg.ICEServersAuth = append(cfg.ICEServersAuth, collab.ICEServerAuth{
+			URLs:       []string{sv.URL},
+			Username:   sv.Username,
+			Credential: sv.Credential,
+		})
+	}
+	return cfg
 }
 
 // webrtcBackend is the live [collabBackend]: one collaborative session, host or
@@ -110,6 +136,11 @@ func (b *webrtcBackend) Host(name string, color toolkit.RGBA, done func(string, 
 		src := b.s.Source()
 
 		b.server = collab.NewServer(collab.Config{Store: collab.NewMemoryStore()})
+		// The loopback pair lives entirely inside this page, so it never needs a
+		// STUN/TURN server to find an address — it meets on host candidates. Giving
+		// it the real ICE config only adds STUN gathering latency to the host's
+		// critical path (the offer is non-trickle: it waits for gathering to
+		// COMPLETE), so it is deliberately configured empty.
 		joinCh, serveCh, peers, err := connectLoopback(b.ctx)
 		if err != nil {
 			done("", err)
@@ -132,7 +163,7 @@ func (b *webrtcBackend) Host(name string, color toolkit.RGBA, done func(string, 
 		// which flows the seed into the CRDT as this participant's first edit.
 		b.s.editor.SetText(src)
 
-		peer, err := collab.NewPeer(collab.PeerConfig{ICEServers: iceServers})
+		peer, err := collab.NewPeer(b.peerConfig())
 		if err != nil {
 			done("", err)
 			return
@@ -176,7 +207,7 @@ func (b *webrtcBackend) AcceptAnswer(answer string, done func(error)) {
 func (b *webrtcBackend) Join(name string, color toolkit.RGBA, offer string, done func(string, error)) {
 	go func() {
 		b.session()
-		peer, err := collab.NewPeer(collab.PeerConfig{ICEServers: iceServers})
+		peer, err := collab.NewPeer(b.peerConfig())
 		if err != nil {
 			done("", err)
 			return

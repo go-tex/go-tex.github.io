@@ -134,6 +134,11 @@ type collabView struct {
 	color       toolkit.RGBA
 	nameFocused bool // the name field has keyboard focus (typing edits the name)
 
+	// iceServers is the STUN/TURN configuration the browser backend hands to every
+	// WebRTC peer. It defaults to public STUN (defaultICEServers) so collaboration
+	// works across NATs out of the box; SetCollabICEServers reconfigures it.
+	iceServers []ICEServer
+
 	rng *rand.Rand
 
 	// geometry, recomputed by layout() before every draw and hit-test.
@@ -206,13 +211,96 @@ var (
 // build stays here; the wasm driver swaps in the real backend via [State.EnableCollab]).
 func newCollabView(s *State) *collabView {
 	v := &collabView{
-		s:       s,
-		backend: nopBackend{},
-		rng:     rand.New(rand.NewSource(collabSeed())),
+		s:          s,
+		backend:    nopBackend{},
+		iceServers: defaultICEServers(),
+		rng:        rand.New(rand.NewSource(collabSeed())),
 	}
 	v.name = v.randomName()
 	v.color = v.randomColor()
 	return v
+}
+
+// --- ICE (STUN/TURN) server configuration ------------------------------------
+
+// ICEServer is one STUN or TURN server the WebRTC peers use to discover an
+// address both browsers can reach. URL is the server ("stun:host:port" or
+// "turn:host:port"); Username and Credential are the long-term credentials a
+// TURN relay requires and are empty for a STUN server. It mirrors one entry of
+// an RTCPeerConnection's iceServers, so the Collaborate config shape can express
+// a credentialed TURN relay — the sovereign coturn planned for the EU host — and
+// not only credential-free STUN.
+type ICEServer struct {
+	URL        string
+	Username   string
+	Credential string
+}
+
+// defaultICEServers is the out-of-the-box configuration: Google's public STUN
+// servers, so two browsers behind different NATs can each discover a
+// server-reflexive address and connect today with no setup. STUN cannot relay
+// through a symmetric NAT — that needs a TURN server, added through
+// [State.SetCollabICEServers].
+//
+// TODO(go-tex): this public-STUN default is an interim. Replace it with the
+// sovereign coturn URL(s) on the EU host once that relay is stood up (it will
+// also supply TURN credentials, which the config shape above already carries).
+// The maintainer stands up coturn; this is only the config point.
+func defaultICEServers() []ICEServer {
+	return []ICEServer{
+		{URL: "stun:stun.l.google.com:19302"},
+		{URL: "stun:stun1.l.google.com:19302"},
+		{URL: "stun:stun2.l.google.com:19302"},
+	}
+}
+
+// parseICEServers parses the Collaborate ICE configuration string: a
+// comma-separated list of entries, each a STUN/TURN URL optionally followed by
+// "|username|credential" for a credentialed TURN relay (e.g.
+// "stun:stun.l.google.com:19302, turn:turn.eu.example:3478|user|secret").
+// Whitespace around entries and fields is trimmed and blank entries are dropped;
+// a string with no usable entry yields nil, which the backend treats as
+// host-candidate-only (LAN / same-machine, the pre-configuration behaviour).
+func parseICEServers(csv string) []ICEServer {
+	var out []ICEServer
+	for _, entry := range strings.Split(csv, ",") {
+		fields := strings.Split(entry, "|")
+		url := strings.TrimSpace(fields[0])
+		if url == "" {
+			continue
+		}
+		s := ICEServer{URL: url}
+		if len(fields) > 1 {
+			s.Username = strings.TrimSpace(fields[1])
+		}
+		if len(fields) > 2 {
+			s.Credential = strings.TrimSpace(fields[2])
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// SetCollabICEServers reconfigures the WebRTC ICE (STUN/TURN) servers from a
+// config string (see [parseICEServers]); it takes effect on the next Host/Join.
+// An empty or all-blank string restores host-candidate-only signalling.
+func (s *State) SetCollabICEServers(csv string) {
+	s.collab.iceServers = parseICEServers(csv)
+	s.collab.refresh()
+}
+
+// CollabICEConfig is the configured ICE servers, credentials included — the
+// browser backend reads this to build each peer's RTCPeerConnection.
+func (s *State) CollabICEConfig() []ICEServer { return s.collab.iceServers }
+
+// CollabICEServers is the configured ICE server URLs, for the config field's
+// current value and headless introspection.
+func (s *State) CollabICEServers() []string {
+	out := make([]string, 0, len(s.collab.iceServers))
+	for _, sv := range s.collab.iceServers {
+		out = append(out, sv.URL)
+	}
+	return out
 }
 
 // attach swaps in a real backend and the host repaint hook, wiring the backend's
@@ -379,6 +467,60 @@ func (s *State) CollabColorHex() string { return hexColor(s.collab.color) }
 // that shows them in a real textarea, or a test).
 func (s *State) CollabOffer() string  { return s.collab.offer }
 func (s *State) CollabAnswer() string { return s.collab.answer }
+
+// collabRoleName maps a panel role to a stable string key for the headless
+// two-tab harness, which locates a button by name and clicks its real rect.
+func collabRoleName(r collabRole) string {
+	switch r {
+	case roleClose:
+		return "close"
+	case roleHost:
+		return "host"
+	case roleJoin:
+		return "join"
+	case roleCopyOffer:
+		return "copyOffer"
+	case roleCopyAnswer:
+		return "copyAnswer"
+	case rolePasteOffer:
+		return "pasteOffer"
+	case rolePasteAnswer:
+		return "pasteAnswer"
+	case roleShuffle:
+		return "shuffle"
+	case roleCancel:
+		return "cancel"
+	case roleDisconnect:
+		return "disconnect"
+	default:
+		return ""
+	}
+}
+
+// CollabButtonRects returns the device-pixel [x,y,w,h] rectangles of the
+// Collaborate launcher and every currently-visible panel control, keyed by a
+// stable name ("launcher", "name", and one per button role), so a headless
+// two-tab harness can dispatch REAL pointer clicks at the actual buttons — the
+// same handleClick → dispatch path a user drives — rather than calling the
+// handlers directly. Host-facing introspection only.
+func (s *State) CollabButtonRects() map[string][4]int {
+	v := s.collab
+	v.layout()
+	rect := func(r toolkit.Rect) [4]int { return [4]int{r.X, r.Y, r.W, r.H} }
+	out := map[string][4]int{"launcher": rect(v.launcher)}
+	if !v.open {
+		return out
+	}
+	if v.nameRect.W > 0 {
+		out["name"] = rect(v.nameRect)
+	}
+	for _, b := range v.buttons {
+		if name := collabRoleName(b.role); name != "" {
+			out[name] = rect(b.rect)
+		}
+	}
+	return out
+}
 
 // CollabRemoteDecorations returns the remote carets currently painted into the
 // editor — the proof that a peer's caret, colour and name crossed the wire. It
