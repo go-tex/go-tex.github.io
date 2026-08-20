@@ -10,20 +10,22 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/go-tex/go-tex.github.io/playground/internal/browsergit"
 	"github.com/go-widgets/mvvm"
 	"github.com/go-widgets/painter"
 	"github.com/go-widgets/toolkit"
 )
 
 // This file is the tagless, browser-free half of the playground's remote-git
-// feature: the panel state machine, the config→[browsergit.Options] mapping, the
-// .tex file picker, the error→message mapping and the whole toolkit overlay
-// panel — everything that can be built and exercised by a native `go test`. The
-// syscall/js glue that actually opens a browsergit Client against a CORS origin
-// over the Fetch RoundTripper lives in git_js.go behind the [gitBackend] seam, so
-// this file never imports syscall/js and stays 100%-coverable off a browser. It
-// mirrors the shape of the Collaborate affordance in collab.go.
+// feature: the panel state machine, the .tex file picker, the error→message
+// mapping and the whole toolkit overlay panel — everything that can be built and
+// exercised by a native `go test`. The actual git client (go-git, via
+// internal/browsergit) is NOT linked into playground.wasm at all: it lives in a
+// separate git-worker.wasm loaded on demand in a Web Worker, driven over the
+// [gitrpc] message protocol by the [workerGitBackend] in gitworker.go, whose
+// syscall/js transport (the Worker + postMessage plumbing) lives in git_js.go
+// behind the [gitBackend] seam. So this file never imports syscall/js or go-git
+// and stays 100%-coverable off a browser. It mirrors the Collaborate affordance
+// in collab.go.
 //
 // # How a document round-trips
 //
@@ -52,32 +54,21 @@ import (
 // gitLogLimit is how many recent commits the status area shows.
 const gitLogLimit = 5
 
-// gitDefaultBranch is the branch the panel starts on.
-const gitDefaultBranch = browsergit.DefaultBranch
+// gitDefaultBranch is the branch the panel starts on. It matches the worker's own
+// default (browsergit.DefaultBranch); the string is kept here so the main app
+// stays free of the go-git-pulling browsergit import.
+const gitDefaultBranch = "main"
 
-// gitConfig is the remote + identity the panel drives a clone with. It maps 1:1
-// onto [browsergit.Options] via options(); keeping the mapping here (tagless)
-// makes it unit-testable without a browser.
+// gitConfig is the remote + identity the panel drives a clone with. The worker's
+// side maps it onto the browsergit client options; keeping the fields here
+// (tagless) makes the panel unit-testable without a browser. See [argsFromConfig]
+// for the RPC translation.
 type gitConfig struct {
 	URL    string
 	Branch string
 	Token  string
 	Author string
 	Email  string
-}
-
-// options maps the panel config onto the browsergit client options. The whole
-// remote URL rides in BaseURL with an empty repoPath, so both documented URL
-// forms reach the origin unchanged; the provider is always "generic" (the panel
-// authenticates every remote the same way, PAT-as-password).
-func (c gitConfig) options() browsergit.Options {
-	return browsergit.Options{
-		BaseURL:  strings.TrimSpace(c.URL),
-		Token:    strings.TrimSpace(c.Token),
-		Author:   strings.TrimSpace(c.Author),
-		Email:    strings.TrimSpace(c.Email),
-		Provider: "generic",
-	}
 }
 
 // gitStatus is the display snapshot of the open repo's branch + divergence, the
@@ -99,10 +90,10 @@ type GitCommitInfo struct {
 }
 
 // gitBackend is the browser-only seam this file drives. The real implementation
-// (git_js.go) runs a [browsergit.Client] against a CORS origin over the Fetch
-// RoundTripper and holds the open in-memory repo; a native build gets
-// [nopGitBackend], so the state machine and the panel are fully testable without
-// a browser.
+// ([workerGitBackend], wired in git_js.go) drives a separate git-worker.wasm over
+// the [gitrpc] protocol — the worker holds the open in-memory repo; a native build
+// gets [nopGitBackend], so the state machine and the panel are fully testable
+// without a browser.
 //
 // Clone/Pull/Commit/Push are asynchronous (a network round-trip): each reports
 // completion through done, which the implementation may call from another
@@ -246,6 +237,21 @@ func newGitView(s *State) *gitView {
 func (v *gitView) attach(b gitBackend, repaint func()) {
 	v.backend = b
 	v.repaint = repaint
+}
+
+// gitPrewarmer is the optional interface a backend implements to be spawned ahead
+// of the first operation. The worker-RPC backend uses it to create the Web Worker
+// (and start downloading git-worker.wasm) the moment the panel opens, so the
+// extra wasm streams in while the user fills the remote form.
+type gitPrewarmer interface{ Prewarm() }
+
+// openPanel opens the panel and prewarms the backend if it supports it. Idempotent
+// on the prewarm side (the transport spawns the worker at most once).
+func (v *gitView) openPanel() {
+	v.open = true
+	if p, ok := v.backend.(gitPrewarmer); ok {
+		p.Prewarm()
+	}
 }
 
 // refresh marks the scene dirty and repaints if a host hook is installed.
@@ -464,13 +470,13 @@ func gitErrorMessage(err error) string {
 	switch {
 	case err == nil:
 		return ""
-	case errors.Is(err, browsergit.ErrAuth):
+	case errors.Is(err, errGitAuth):
 		return "Authentication failed — check your access token."
-	case errors.Is(err, browsergit.ErrNonFastForward):
+	case errors.Is(err, errGitNonFastForward):
 		return "Push rejected: the remote moved on. Pull, then push again."
-	case errors.Is(err, browsergit.ErrRepoNotFound):
+	case errors.Is(err, errGitRepoNotFound):
 		return "Repository not found — check the remote URL."
-	case errors.Is(err, browsergit.ErrTransport):
+	case errors.Is(err, errGitTransport):
 		return "Network/CORS error reaching the remote — is it CORS-enabled?"
 	case errors.Is(err, errNoGitRepo):
 		return "Clone a repository first."
@@ -522,8 +528,16 @@ func primaryTeX(files []string) string {
 // GitActive reports whether the panel is open.
 func (s *State) GitActive() bool { return s.git.open }
 
-// SetGitOpen opens or closes the panel (host / headless-proof control).
-func (s *State) SetGitOpen(open bool) { s.git.open = open; s.git.refresh() }
+// SetGitOpen opens or closes the panel (host / headless-proof control). Opening
+// prewarms the worker so git-worker.wasm streams in before the first clone.
+func (s *State) SetGitOpen(open bool) {
+	if open {
+		s.git.openPanel()
+	} else {
+		s.git.open = false
+	}
+	s.git.refresh()
+}
 
 // GitBusy reports whether a network op is in flight (buttons are disabled).
 func (s *State) GitBusy() bool { return s.git.busy.Get() }
@@ -780,7 +794,7 @@ func (v *gitView) handleClick(x, y int) bool {
 	v.layout()
 	if !v.open {
 		if v.launcher.Contains(x, y) {
-			v.open = true
+			v.openPanel()
 			v.refresh()
 			return true
 		}

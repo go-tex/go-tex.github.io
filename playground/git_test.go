@@ -6,8 +6,6 @@ package playground
 import (
 	"errors"
 	"testing"
-
-	"github.com/go-tex/go-tex.github.io/playground/internal/browsergit"
 )
 
 // fakeGitBackend is an in-memory [gitBackend] for the panel's state-machine
@@ -87,7 +85,7 @@ func (f *fakeGitBackend) ReadFile(path string) ([]byte, error) {
 	if d, ok := f.fileData[path]; ok {
 		return []byte(d), nil
 	}
-	return nil, browsergit.ErrNotExist
+	return nil, errGitNotExist
 }
 
 func (f *fakeGitBackend) Status() (gitStatus, bool) { return f.status, f.statusOK }
@@ -105,14 +103,11 @@ func withGit(t *testing.T) (*State, *fakeGitBackend, *int) {
 	return s, f, &n
 }
 
-func TestGitConfigOptionsMapping(t *testing.T) {
-	c := gitConfig{URL: "  https://forge/owner/repo.git  ", Branch: "dev", Token: " tok ", Author: " Ada ", Email: " ada@x "}
-	o := c.options()
-	if o.BaseURL != "https://forge/owner/repo.git" || o.Token != "tok" || o.Author != "Ada" || o.Email != "ada@x" {
-		t.Fatalf("options mapping trimmed wrong: %+v", o)
-	}
-	if o.Provider != "generic" {
-		t.Fatalf("provider = %q, want generic", o.Provider)
+func TestArgsFromConfig(t *testing.T) {
+	c := gitConfig{URL: "  https://forge/owner/repo.git  ", Branch: " dev ", Token: " tok ", Author: " Ada ", Email: " ada@x "}
+	a := argsFromConfig(c)
+	if a.URL != "https://forge/owner/repo.git" || a.Branch != "dev" || a.Token != "tok" || a.Author != "Ada" || a.Email != "ada@x" {
+		t.Fatalf("argsFromConfig trimmed wrong: %+v", a)
 	}
 }
 
@@ -145,10 +140,10 @@ func TestGitErrorMessage(t *testing.T) {
 		want string
 	}{
 		{nil, ""},
-		{browsergit.ErrAuth, "Authentication failed — check your access token."},
-		{browsergit.ErrNonFastForward, "Push rejected: the remote moved on. Pull, then push again."},
-		{browsergit.ErrRepoNotFound, "Repository not found — check the remote URL."},
-		{browsergit.ErrTransport, "Network/CORS error reaching the remote — is it CORS-enabled?"},
+		{errGitAuth, "Authentication failed — check your access token."},
+		{errGitNonFastForward, "Push rejected: the remote moved on. Pull, then push again."},
+		{errGitRepoNotFound, "Repository not found — check the remote URL."},
+		{errGitTransport, "Network/CORS error reaching the remote — is it CORS-enabled?"},
 		{errNoGitRepo, "Clone a repository first."},
 		{errNoGitFile, "Open a file before committing."},
 		{errors.New("weird"), "weird"},
@@ -211,7 +206,7 @@ func TestGitCloneNoTeX(t *testing.T) {
 
 func TestGitCloneErrorAndBusyGuard(t *testing.T) {
 	s, f, _ := withGit(t)
-	f.cloneErr = browsergit.ErrRepoNotFound
+	f.cloneErr = errGitRepoNotFound
 	s.GitClone(nil)
 	if s.GitError() == "" || s.GitLoadedPath() != "" {
 		t.Fatalf("clone error not surfaced: err=%q", s.GitError())
@@ -239,7 +234,7 @@ func TestGitCloneErrorAndBusyGuard(t *testing.T) {
 func TestGitLoadFileReadError(t *testing.T) {
 	s, f, _ := withGit(t)
 	f.files = []string{"main.tex"}
-	f.readErr = browsergit.ErrTransport
+	f.readErr = errGitTransport
 	s.GitClone(nil)
 	if s.GitError() == "" {
 		t.Fatal("a read error during load should surface on the panel")
@@ -292,7 +287,7 @@ func TestGitCommitErrorAndBusy(t *testing.T) {
 	f.files = []string{"main.tex"}
 	f.fileData["main.tex"] = "x"
 	s.GitClone(nil)
-	f.commitErr = browsergit.ErrAuth
+	f.commitErr = errGitAuth
 	f.hold = true
 	s.GitCommit(nil)
 	if !s.GitBusy() {
@@ -332,7 +327,7 @@ func TestGitPushSuccessErrorAndGuards(t *testing.T) {
 	f3.files = []string{"main.tex"}
 	f3.fileData["main.tex"] = "x"
 	s3.GitClone(nil)
-	f3.pushErr = browsergit.ErrNonFastForward
+	f3.pushErr = errGitNonFastForward
 	f3.hold = true
 	s3.GitPush(nil)
 	if !s3.GitBusy() {
@@ -387,7 +382,7 @@ func TestGitPullReloadsAndGuards(t *testing.T) {
 	f3.files = []string{"main.tex"}
 	f3.fileData["main.tex"] = "x"
 	s3.GitClone(nil)
-	f3.pullErr = browsergit.ErrTransport
+	f3.pullErr = errGitTransport
 	f3.hold = true
 	s3.GitPull(nil)
 	if !s3.GitBusy() {
