@@ -537,7 +537,9 @@ func (v *collabView) draw(p painter.Painter, theme *toolkit.Theme) {
 	// Launcher pill: green dot when connected.
 	lb := toolkit.NewButton(v.launcherLabel(), nil)
 	lb.SetBounds(v.launcher)
-	lb.Selected = v.open || v.phase == phaseConnected
+	// Selected is a shared observable rather than a field, so the state is set
+	// through it; see the toolkit's MVVM migration.
+	lb.Selected().Set(v.open || v.phase == phaseConnected)
 	lb.Draw(p, theme)
 
 	if !v.open {
