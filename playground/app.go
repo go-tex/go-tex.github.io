@@ -122,6 +122,11 @@ type State struct {
 	// the fields below are the only app.go hooks it needs.
 	collab *collabView
 
+	// git is the remote-git affordance (Git launcher + modal panel + browsergit
+	// clone/commit/push). Self-contained in git.go / git_js.go, the same shape as
+	// collab; the hooks below (init, draw, click, char, key) are all app.go needs.
+	git *gitView
+
 	// clip is the toolkit-wide clipboard the editor's copy/cut/paste go through;
 	// installed process-wide in NewState. Its onWrite hook lets the wasm host push
 	// copies to the real OS clipboard (navigator.clipboard).
@@ -251,6 +256,7 @@ func NewState(w, h int, dark bool) *State {
 
 	s.status = toolkit.NewStatusbar([]string{"Ln 1, Col 1", "UTF-8", "0 pages", ""})
 	s.collab = newCollabView(s) // Collaborate affordance (see collab.go)
+	s.git = newGitView(s)       // Remote-git affordance (see git.go)
 
 	// Route the toolkit-wide clipboard through this State so the editor's
 	// copy/cut/paste reach the host (and, on wasm, the OS clipboard).
@@ -718,8 +724,10 @@ func (s *State) Draw(buf []byte) {
 	if s.schemePicker.Open().Get() {
 		s.schemePicker.DrawPopover(p, s.theme)
 	}
-	// The Collaborate launcher + modal panel float above the whole scene.
+	// The Collaborate + Git launchers and their modal panels float above the whole
+	// scene.
 	s.collab.draw(p, s.theme)
+	s.git.draw(p, s.theme)
 	s.dirty = false
 }
 
@@ -749,8 +757,12 @@ func (s *State) onDivider(x, y int) bool {
 
 // HandleClick routes a pointer press and captures it for a following drag.
 func (s *State) HandleClick(x, y int) bool {
-	// The Collaborate launcher/panel gets first refusal; an open panel is modal.
+	// The Collaborate / Git launchers + panels get first refusal; an open panel is
+	// modal.
 	if s.collab.handleClick(x, y) {
+		return true
+	}
+	if s.git.handleClick(x, y) {
 		return true
 	}
 	s.pressKind = pressNone
@@ -925,6 +937,9 @@ func (s *State) HandleChar(code string) bool {
 	if s.collab.handleChar(code) { // typing edits the collab display name when focused
 		return true
 	}
+	if s.git.handleChar(code) { // typing edits the focused git panel field
+		return true
+	}
 	if s.wysiwygChar(code) { // type into the WYSIWYG RichEditor (wysiwyg.go)
 		return true
 	}
@@ -964,6 +979,9 @@ func navBase(code string) string {
 // caret and collapses any selection; every other key is forwarded as-is.
 func (s *State) HandleKeyDown(code string) bool {
 	if s.collab.handleKey(code) { // Backspace/Enter/Escape in the collab name field
+		return true
+	}
+	if s.git.handleKey(code) { // Backspace/Enter/Tab/Escape in the git panel fields
 		return true
 	}
 	if s.wysiwygKey(code) { // navigate/edit the WYSIWYG RichEditor (wysiwyg.go)
