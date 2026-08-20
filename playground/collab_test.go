@@ -5,6 +5,7 @@ package playground
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/go-widgets/toolkit"
@@ -523,6 +524,126 @@ func TestHexRoundTrip(t *testing.T) {
 			t.Fatalf("parseHex(%q) should fail", bad)
 		}
 	}
+}
+
+func TestDefaultICEServersAreSTUN(t *testing.T) {
+	s := newTestState(t, false)
+	// Out of the box a participant is configured with public STUN, so
+	// collaboration crosses NATs without any setup.
+	got := s.CollabICEServers()
+	if len(got) == 0 {
+		t.Fatal("default ICE configuration is empty; collaboration would not cross NATs")
+	}
+	for _, u := range got {
+		if !strings.HasPrefix(u, "stun:") {
+			t.Fatalf("default ICE server %q is not a STUN URL", u)
+		}
+	}
+	// The full config carries no credentials for a bare STUN default.
+	for _, sv := range s.CollabICEConfig() {
+		if sv.Username != "" || sv.Credential != "" {
+			t.Fatalf("default STUN server %q should carry no credentials", sv.URL)
+		}
+	}
+}
+
+func TestParseICEServersAndSet(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []ICEServer
+	}{
+		{"", nil},
+		{"   ,  ,", nil},
+		{"stun:a:1", []ICEServer{{URL: "stun:a:1"}}},
+		{
+			" stun:a:1 , turn:b:2|user|secret ",
+			[]ICEServer{{URL: "stun:a:1"}, {URL: "turn:b:2", Username: "user", Credential: "secret"}},
+		},
+		// A URL with a username but no credential, and trailing empty fields.
+		{"turn:c:3|onlyuser|", []ICEServer{{URL: "turn:c:3", Username: "onlyuser"}}},
+		{"turn:d:4|", []ICEServer{{URL: "turn:d:4"}}},
+	}
+	for _, c := range cases {
+		got := parseICEServers(c.in)
+		if len(got) != len(c.want) {
+			t.Fatalf("parseICEServers(%q) = %d entries, want %d (%+v)", c.in, len(got), len(c.want), got)
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Fatalf("parseICEServers(%q)[%d] = %+v, want %+v", c.in, i, got[i], c.want[i])
+			}
+		}
+	}
+
+	// SetCollabICEServers reconfigures both the URL view and the full config; an
+	// empty string clears it back to host-candidate-only.
+	s := newTestState(t, false)
+	s.SetCollabICEServers("stun:x:1, turn:y:2|u|p")
+	if urls := s.CollabICEServers(); len(urls) != 2 || urls[0] != "stun:x:1" || urls[1] != "turn:y:2" {
+		t.Fatalf("CollabICEServers after set = %v", urls)
+	}
+	cfg := s.CollabICEConfig()
+	if len(cfg) != 2 || cfg[1].Username != "u" || cfg[1].Credential != "p" {
+		t.Fatalf("CollabICEConfig after set = %+v", cfg)
+	}
+	s.SetCollabICEServers("")
+	if len(s.CollabICEServers()) != 0 {
+		t.Fatalf("empty config should clear the servers, got %v", s.CollabICEServers())
+	}
+}
+
+func TestCollabButtonRects(t *testing.T) {
+	s := newTestState(t, false)
+	// Closed: only the launcher is exposed.
+	r := s.CollabButtonRects()
+	if _, ok := r["launcher"]; !ok {
+		t.Fatal("launcher rect not exposed while closed")
+	}
+	if _, ok := r["host"]; ok {
+		t.Fatal("panel buttons should not be exposed while closed")
+	}
+	// Open + idle: Host and Join buttons and the name field appear.
+	s.SetCollabOpen(true)
+	r = s.CollabButtonRects()
+	for _, name := range []string{"launcher", "name", "host", "join", "close", "shuffle"} {
+		rc, ok := r[name]
+		if !ok {
+			t.Fatalf("expected %q rect while open+idle; have %v", name, keysOf(r))
+		}
+		if rc[2] <= 0 || rc[3] <= 0 {
+			t.Fatalf("%q rect has non-positive size %v", name, rc)
+		}
+	}
+	// Every button role maps to its stable, non-empty name; the non-button roles
+	// (roleNone / roleNameField) map to the empty string.
+	wantNames := map[collabRole]string{
+		roleClose:       "close",
+		roleHost:        "host",
+		roleJoin:        "join",
+		roleCopyOffer:   "copyOffer",
+		roleCopyAnswer:  "copyAnswer",
+		rolePasteOffer:  "pasteOffer",
+		rolePasteAnswer: "pasteAnswer",
+		roleShuffle:     "shuffle",
+		roleCancel:      "cancel",
+		roleDisconnect:  "disconnect",
+		roleNone:        "",
+		roleNameField:   "",
+	}
+	for role, want := range wantNames {
+		if got := collabRoleName(role); got != want {
+			t.Fatalf("collabRoleName(%d) = %q, want %q", role, got, want)
+		}
+	}
+}
+
+// keysOf lists a rect map's keys for a failure message.
+func keysOf(m map[string][4]int) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 func TestCollabPhaseAndConnectedAccessors(t *testing.T) {

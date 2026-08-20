@@ -3,7 +3,7 @@ module github.com/go-tex/go-tex.github.io/playground
 go 1.26.4
 
 require (
-	github.com/go-crdt/collab v0.19.0
+	github.com/go-crdt/collab v0.20.0
 	github.com/go-crdt/crdt v0.25.0
 	github.com/go-gfx/gfx v0.7.0
 	github.com/go-git/go-billy/v5 v5.9.0

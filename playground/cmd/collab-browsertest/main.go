@@ -61,6 +61,15 @@ func run() (bool, string) {
 	renderGuest := showCanvas("guest", "Guest (Bob) — watch for Alice's caret", guest)
 	guest.EnableCollab(renderGuest)
 
+	// This in-page proof runs both peers in one process, and its driver exposes
+	// raw host candidates (--disable-features=WebRtcHideLocalIpsWithMdns), so the
+	// peers meet on host candidates without a STUN server. Pin the config to
+	// host-candidate-only: the public-STUN default (exercised by the two-tab proof)
+	// would only add non-trickle ICE-gathering latency to a STUN server here, for
+	// no gain, and slow this fast regression down.
+	host.SetCollabICEServers("")
+	guest.SetCollabICEServers("")
+
 	// The copy-paste handshake, in process: host offers → guest answers → host
 	// accepts. Each step's blob is handed straight to the next, the way a person
 	// would carry it.

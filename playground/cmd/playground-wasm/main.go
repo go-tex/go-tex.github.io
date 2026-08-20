@@ -514,6 +514,63 @@ func main() {
 		return out
 	}))
 
+	// --- Collaborate (WebRTC) headless introspection -------------------------
+	// The real two-tab proof (collab_twotab_test.go) drives the ACTUAL panel
+	// buttons across two independent pages: gotexCollabRects locates each control
+	// so the harness can click its real rect, and gotexCollabState reads back the
+	// handshake phase, the signalling blobs and the remote carets to assert on.
+
+	// gotexCollabRects() -> device-pixel [x,y,w,h] of the launcher and every
+	// visible panel control, keyed by name.
+	js.Global().Set("gotexCollabRects", js.FuncOf(func(js.Value, []js.Value) any {
+		out := map[string]any{}
+		for name, r := range state.CollabButtonRects() {
+			out[name] = []any{r[0], r[1], r[2], r[3]}
+		}
+		return out
+	}))
+
+	// gotexSetICEServers(csv) reconfigures the WebRTC STUN/TURN servers and
+	// persists the choice, so a deployment (or a headless run) can point the peers
+	// at its own relay; see playground.SetCollabICEServers for the format.
+	js.Global().Set("gotexSetICEServers", js.FuncOf(func(_ js.Value, a []js.Value) any {
+		if len(a) > 0 && a[0].Type() == js.TypeString {
+			csv := a[0].String()
+			state.SetCollabICEServers(csv)
+			if ls := js.Global().Get("localStorage"); ls.Truthy() {
+				ls.Call("setItem", "gotex-collab-ice", csv)
+			}
+			render()
+		}
+		return nil
+	}))
+
+	// gotexCollabState() -> the live session snapshot for headless assertions.
+	js.Global().Set("gotexCollabState", js.FuncOf(func(js.Value, []js.Value) any {
+		decos := state.CollabRemoteDecorations()
+		ds := make([]any, len(decos))
+		for i, d := range decos {
+			ds[i] = map[string]any{"label": d.Label, "color": d.ColorHex, "line": d.Line, "col": d.Col}
+		}
+		iceURLs := state.CollabICEServers()
+		ice := make([]any, len(iceURLs))
+		for i, u := range iceURLs {
+			ice[i] = u
+		}
+		return map[string]any{
+			"phase":       state.CollabPhase(),
+			"connected":   state.CollabConnected(),
+			"peers":       state.CollabPeerCount(),
+			"open":        state.CollabActive(),
+			"offer":       state.CollabOffer(),
+			"answer":      state.CollabAnswer(),
+			"name":        state.CollabName(),
+			"color":       state.CollabColorHex(),
+			"iceServers":  ice,
+			"decorations": ds,
+		}
+	}))
+
 	render()
 	js.Global().Set("gotexPlaygroundReady", true)
 	select {} // keep the Go runtime alive so the callbacks live
