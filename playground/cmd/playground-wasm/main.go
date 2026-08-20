@@ -395,6 +395,82 @@ func main() {
 		return nil
 	}))
 
+	// --- WYSIWYG multi-format mode (playground/wysiwyg.go) -------------------
+	// A discrete, additive block of host bridges so the source-vs-visual toggle,
+	// the format picker, the ODT/RTF file import/export and the headless
+	// introspection all reach the mode without touching the handlers above.
+
+	// gotexWysiwygToggle flips between the source editor and the visual RichEditor.
+	js.Global().Set("gotexWysiwygToggle", js.FuncOf(func(js.Value, []js.Value) any {
+		state.ToggleWysiwyg()
+		render()
+		return nil
+	}))
+	// gotexSetWysiwygFormat(idx) selects the session format by picker index.
+	js.Global().Set("gotexSetWysiwygFormat", js.FuncOf(func(_ js.Value, a []js.Value) any {
+		if len(a) > 0 {
+			state.SetWysiwygFormat(a[0].Int())
+			render()
+		}
+		return nil
+	}))
+	// gotexRichSelectBlock(idx) selects a whole block; gotexRichToggleStrong bolds
+	// the current selection — the visual-edit verbs a headless run drives.
+	js.Global().Set("gotexRichSelectBlock", js.FuncOf(func(_ js.Value, a []js.Value) any {
+		if len(a) > 0 {
+			state.RichSelectBlock(a[0].Int())
+			render()
+		}
+		return nil
+	}))
+	js.Global().Set("gotexRichToggleStrong", js.FuncOf(func(js.Value, []js.Value) any {
+		state.RichToggleStrong()
+		render()
+		return nil
+	}))
+	// gotexWysiwygImport(idx, Uint8Array) opens a document of format idx (an .odt
+	// package, an .rtf/.tex/.md file) into the RichEditor; returns "" or an error.
+	js.Global().Set("gotexWysiwygImport", js.FuncOf(func(_ js.Value, a []js.Value) any {
+		if len(a) < 2 {
+			return "missing arguments"
+		}
+		buf := make([]byte, a[1].Get("length").Int())
+		js.CopyBytesToGo(buf, a[1])
+		if err := state.WysiwygImport(playground.Format(a[0].Int()), buf); err != nil {
+			return err.Error()
+		}
+		render()
+		return ""
+	}))
+	// gotexWysiwygExport(idx) serialises the current document with format idx's
+	// writer and returns it as a Uint8Array (for a browser download).
+	js.Global().Set("gotexWysiwygExport", js.FuncOf(func(_ js.Value, a []js.Value) any {
+		if len(a) < 1 {
+			return js.Null()
+		}
+		out, err := state.WysiwygExport(playground.Format(a[0].Int()))
+		if err != nil {
+			return js.Null()
+		}
+		dst := js.Global().Get("Uint8Array").New(len(out))
+		js.CopyBytesToJS(dst, out)
+		return dst
+	}))
+	// gotexWysiwygDebug exposes the mode's state + parsed structure for headless
+	// verification (active flag, format, parse error, block count, first-heading
+	// text, whether a bold run exists, and the document's plain text).
+	js.Global().Set("gotexWysiwygDebug", js.FuncOf(func(js.Value, []js.Value) any {
+		return map[string]any{
+			"active":       state.WysiwygActive(),
+			"format":       state.WysiwygFormat(),
+			"parseError":   state.WysiwygParseError(),
+			"blockCount":   state.RichBlockCount(),
+			"firstHeading": state.RichFirstHeading(),
+			"hasBold":      state.RichHasBold(),
+			"plainText":    state.RichPlainText(),
+		}
+	}))
+
 	render()
 	js.Global().Set("gotexPlaygroundReady", true)
 	select {} // keep the Go runtime alive so the callbacks live
