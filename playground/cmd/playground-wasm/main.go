@@ -411,6 +411,16 @@ func main() {
 		render()
 		return nil
 	}))
+	// gotexSetEditorTab(idx) selects the editor pane's tab (0 = Source, 1 = WYSIWYG)
+	// directly — the reactive-tab equivalent of gotexWysiwygToggle, so a headless
+	// harness can drive either tab explicitly.
+	js.Global().Set("gotexSetEditorTab", js.FuncOf(func(_ js.Value, a []js.Value) any {
+		if len(a) > 0 {
+			state.SetEditorTab(a[0].Int())
+			render()
+		}
+		return nil
+	}))
 	// gotexSetWysiwygFormat(idx) selects the session format by picker index.
 	js.Global().Set("gotexSetWysiwygFormat", js.FuncOf(func(_ js.Value, a []js.Value) any {
 		if len(a) > 0 {
@@ -462,10 +472,12 @@ func main() {
 		return dst
 	}))
 	// gotexWysiwygDebug exposes the mode's state + parsed structure for headless
-	// verification (active flag, format, parse error, block count, first-heading
-	// text, whether a bold run exists, and the document's plain text).
+	// verification (the active editor-tab index, active flag, format, parse error,
+	// block count, first-heading text, whether a bold run exists, and the
+	// document's plain text).
 	js.Global().Set("gotexWysiwygDebug", js.FuncOf(func(js.Value, []js.Value) any {
 		return map[string]any{
+			"activeTab":    state.ActiveEditorTab(),
 			"active":       state.WysiwygActive(),
 			"format":       state.WysiwygFormat(),
 			"parseError":   state.WysiwygParseError(),

@@ -180,10 +180,11 @@ type State struct {
 	// native build/test still gets non-empty timestamps.
 	now func() string
 
-	// wys is the WYSIWYG multi-format mode (format registry + toggle + a
-	// RichEditor shown over the CodeEditor). Lazily built via s.wysiwyg(); its
-	// whole implementation, and every hook this file calls into it, lives in
-	// wysiwyg.go so this mode stays an isolated, additive feature.
+	// wys is the WYSIWYG multi-format mode (format registry + a Source│WYSIWYG tab
+	// strip atop the editor pane + a RichEditor shown on the WYSIWYG tab). Lazily
+	// built via s.wysiwyg(); its whole implementation, and every hook this file
+	// calls into it, lives in wysiwyg.go so this mode stays an isolated, additive
+	// feature.
 	wys *wysiwyg
 }
 
@@ -522,6 +523,9 @@ func (s *State) DebugRects() map[string][4]int {
 		"logTab":        rect(s.rightPane.tabRect(tabLog)),
 		"renderPane":    rect(s.renderView.Bounds()),
 		"renderContent": rect(s.renderContentRect()),
+		"sourceTab":     s.EditorTabRect(tabSource),
+		"wysiwygTab":    s.EditorTabRect(tabWysiwyg),
+		"formatPicker":  s.FormatPickerRect(),
 	}
 }
 
@@ -578,7 +582,7 @@ func (s *State) layout() {
 	s.status.SetBounds(toolkit.Rect{X: 0, Y: s.toolbarH + bodyH, W: s.w, H: s.statusH})
 	s.layoutToolbar()
 	s.applyLeftSplit()
-	s.wysiwygLayout() // WYSIWYG toolbar controls + RichEditor bounds (wysiwyg.go)
+	s.wysiwygLayout() // editor-pane Source│WYSIWYG tab strip + RichEditor bounds (wysiwyg.go)
 }
 
 // layoutToolbar places the colour-scheme picker and the minimap toggle
@@ -597,19 +601,27 @@ func (s *State) layoutToolbar() {
 	s.minimapBtn.SetBounds(toolkit.Rect{X: x, Y: yy, W: bw, H: h})
 }
 
-// applyLeftSplit reserves a strip of the left pane for the minimap (when shown),
-// shrinking the editor to fit. Recomputed after every layout AND after a divider
-// drag, because Paned re-lays its First child to the full left width.
+// applyLeftSplit reserves the top strip of the left pane for the editor's
+// Source│WYSIWYG tabs (wysiwyg.go) and a strip on its right for the minimap (when
+// shown), shrinking the CodeEditor to the remaining area below the tabs.
+// Recomputed after every layout AND after a divider drag, because Paned re-lays
+// its First child to the full left region.
 func (s *State) applyLeftSplit() {
 	pr := s.paned.Bounds()
+	stripH := s.wysiwyg().stripHeight() // Source│WYSIWYG tabs sit above the editor
+	ey := pr.Y + stripH
+	eh := pr.H - stripH
+	if eh < 0 {
+		eh = 0
+	}
 	leftW := s.paned.Position
 	mmW := toolkit.Scaled(84)
 	if s.showMinimap && leftW > 3*mmW {
 		editorW := leftW - mmW
-		s.editor.SetBounds(toolkit.Rect{X: pr.X, Y: pr.Y, W: editorW, H: pr.H})
-		s.minimap.SetBounds(toolkit.Rect{X: pr.X + editorW, Y: pr.Y, W: mmW, H: pr.H})
+		s.editor.SetBounds(toolkit.Rect{X: pr.X, Y: ey, W: editorW, H: eh})
+		s.minimap.SetBounds(toolkit.Rect{X: pr.X + editorW, Y: ey, W: mmW, H: eh})
 	} else {
-		s.editor.SetBounds(toolkit.Rect{X: pr.X, Y: pr.Y, W: leftW, H: pr.H})
+		s.editor.SetBounds(toolkit.Rect{X: pr.X, Y: ey, W: leftW, H: eh})
 		s.minimap.SetBounds(toolkit.Rect{})
 	}
 }
@@ -831,6 +843,7 @@ func (s *State) HandleMove(x, y int) bool {
 		pr := s.paned.Bounds()
 		s.paned.OnEvent(toolkit.Event{Kind: toolkit.EventMouseDrag, X: x - pr.X, Y: y - pr.Y})
 		s.applyLeftSplit() // Paned re-laid First to full width; re-reserve the minimap
+		s.wysiwygLayout()  // and re-size the editor tab strip to the new left width
 		s.dirty = true
 		return true
 	case pressEditor:

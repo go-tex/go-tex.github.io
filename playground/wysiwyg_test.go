@@ -225,9 +225,10 @@ func TestWysiwygImportParseError(t *testing.T) {
 	}
 }
 
-// TestWysiwygDeactivateWriteError covers deactivate's write-error branch: a
-// textual codec whose Parse succeeds but Write fails.
-func TestWysiwygDeactivateWriteError(t *testing.T) {
+// TestWysiwygLeaveWriteError covers leave's write-error branch: a textual codec
+// whose Parse succeeds but Write fails. It drives the transition through the tab
+// strip (Set WYSIWYG to enter, Set Source to leave), the real user path.
+func TestWysiwygLeaveWriteError(t *testing.T) {
 	const f = Format(91)
 	formatRegistry[f] = Codec{Name: "FailWrite", Textual: true,
 		Parse: func([]byte) (*richdoc.Document, error) { return &richdoc.Document{}, nil },
@@ -237,11 +238,11 @@ func TestWysiwygDeactivateWriteError(t *testing.T) {
 	s := newWysState(t)
 	w := s.wysiwyg()
 	w.format = f
-	w.activate()
-	if !w.active {
-		t.Fatal("activate should have succeeded")
+	s.SetEditorTab(tabWysiwyg) // fires enter(): Parse succeeds, WYSIWYG becomes active
+	if !w.active() {
+		t.Fatal("selecting the WYSIWYG tab should have entered (parse succeeded)")
 	}
-	w.deactivate()
+	s.SetEditorTab(tabSource) // fires leave(): Write fails, error recorded
 	if s.WysiwygParseError() != "nope" {
 		t.Fatalf("write error not recorded: %q", s.WysiwygParseError())
 	}
@@ -263,13 +264,13 @@ func TestWysiwygEventRouting(t *testing.T) {
 	s := newWysState(t)
 	s.SetSource(wysSnippet)
 
-	// Toolbar: click the WYSIWYG toggle button to activate.
-	tb := s.wysiwyg().toggle.Bounds()
+	// Click the "WYSIWYG" tab in the editor-pane strip to activate the mode.
+	tb := s.wysiwyg().tabs.TabRect(tabWysiwyg)
 	if !s.HandleClick(tb.X+tb.W/2, tb.Y+tb.H/2) {
-		t.Fatal("toggle click not consumed")
+		t.Fatal("WYSIWYG tab click not consumed")
 	}
 	if !s.WysiwygActive() {
-		t.Fatal("toolbar toggle did not activate")
+		t.Fatal("clicking the WYSIWYG tab did not activate")
 	}
 
 	// Click inside the RichEditor overlay, then drag + release (selection).
@@ -368,6 +369,50 @@ func TestWysiwygIntrospectionEdges(t *testing.T) {
 	if got := blockRuneLen(richdoc.ThematicBreak{}); got != 0 {
 		t.Fatalf("rule len = %d, want 0", got)
 	}
+}
+
+// TestWysiwygEditorTabState covers the reactive active-editor-tab hooks: the tab
+// index reported by ActiveEditorTab tracks SetEditorTab / the toggle, and the
+// non-textual Source note is painted when a binary format is selected on Source.
+func TestWysiwygEditorTabState(t *testing.T) {
+	s := newWysState(t)
+	s.SetSource(wysSnippet)
+
+	if got := s.ActiveEditorTab(); got != tabSource {
+		t.Fatalf("initial active tab = %d, want Source (%d)", got, tabSource)
+	}
+	s.SetEditorTab(tabWysiwyg)
+	if s.ActiveEditorTab() != tabWysiwyg || !s.WysiwygActive() {
+		t.Fatalf("SetEditorTab(WYSIWYG): tab=%d active=%v", s.ActiveEditorTab(), s.WysiwygActive())
+	}
+	s.ToggleWysiwyg() // flip back to Source
+	if s.ActiveEditorTab() != tabSource || s.WysiwygActive() {
+		t.Fatalf("ToggleWysiwyg back: tab=%d active=%v", s.ActiveEditorTab(), s.WysiwygActive())
+	}
+
+	// A non-textual format on the Source tab paints the "binary format" note over
+	// the CodeEditor (no human-editable source for ODT/RTF).
+	s.SetWysiwygFormat(3) // RTF (non-textual)
+	if s.ActiveEditorTab() != tabSource {
+		t.Fatal("selecting a format must not change the active tab")
+	}
+	buf := make([]byte, testW*testH*4)
+	s.Draw(buf) // exercises the non-textual Source-tab note branch
+}
+
+// TestWysiwygLayoutNarrowPane drives the divider hard left so the editor pane is
+// narrower than the format DropDown, covering wysiwygLayout's picker-shrink and
+// zero-width clamps.
+func TestWysiwygLayoutNarrowPane(t *testing.T) {
+	s := newWysState(t)
+	s.paned.MoveHandle(10) // clamps to the minimum left width
+	s.layout()             // re-runs applyLeftSplit + wysiwygLayout at that width
+	if got := s.FormatPickerRect(); got[2] != 0 {
+		t.Fatalf("picker width in a 10px pane = %d, want 0 (clamped)", got[2])
+	}
+	// Draw must not panic at this degenerate size.
+	buf := make([]byte, testW*testH*4)
+	s.Draw(buf)
 }
 
 // TestBlockRuneLenSelectionOnParagraph makes RichSelectBlock hit its valid path
