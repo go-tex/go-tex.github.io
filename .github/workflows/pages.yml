@@ -34,6 +34,14 @@ jobs:
         env:
           GOWORK: "off"
         run: GOOS=js GOARCH=wasm go build -trimpath -o ../static/playground.wasm ./cmd/playground-wasm
+      # Build the on-demand git worker wasm FRESH too (same freshness reasoning as
+      # above). It is loaded in a Web Worker only when the user opens the Git panel,
+      # so it stays out of the main playground.wasm download.
+      - name: build git worker wasm
+        working-directory: playground
+        env:
+          GOWORK: "off"
+        run: GOOS=js GOARCH=wasm go build -trimpath -o ../static/git-worker.wasm ./cmd/git-worker
       - uses: peaceiris/actions-hugo@v3
         with:
           hugo-version: "0.161.1"

@@ -119,6 +119,15 @@
   var wasmBytes={{ $wasmBytes }};
   var started=false;
 
+  // The Git panel's remote-git client lives in a SEPARATE git-worker.wasm, loaded
+  // on demand in a Web Worker the first time a user opens the Git panel (so the
+  // base download never pays for go-git). Publish the cache-busted worker
+  // bootstrap URL for the wasm to spawn; the ?v=<sha> is inherited by the worker's
+  // own git-worker.wasm fetch, the same anti-stale trick as the main wasm above.
+  {{ $gitWorker := "git-worker.js" | absURL }}
+  {{ with $sha }}{{ $gitWorker = printf "%s?v=%s" $gitWorker . }}{{ end }}
+  globalThis.gotexGitWorkerURL={{ $gitWorker }};
+
   // Resolve the host page's theme (data-theme, else prefers-color-scheme) to a
   // dark boolean, and keep the canvas app in sync as theme.js flips it.
   function isDark(){

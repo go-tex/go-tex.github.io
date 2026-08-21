@@ -121,6 +121,11 @@ func main() {
 	// OS-clipboard hooks it needs. See package playground (collab.go/collab_js.go).
 	state.EnableCollab(render)
 
+	// Remote git (browsergit over the Fetch RoundTripper): the canvas Git panel
+	// drives Clone/Pull/Commit/Push against a CORS-enabled origin; this installs
+	// the real backend. See package playground (git.go/git_js.go).
+	state.EnableGit(render)
+
 	// Debounced compile.
 	var timer js.Value
 	schedule := func() {
@@ -569,6 +574,67 @@ func main() {
 			"iceServers":  ice,
 			"decorations": ds,
 		}
+	}))
+
+	// gotexGitDebug exposes the Git panel's state for headless verification: the
+	// open flag, the busy/loaded/error/notice session state, the formatted status
+	// line and the .tex files the picker offers.
+	js.Global().Set("gotexGitDebug", js.FuncOf(func(js.Value, []js.Value) any {
+		tex := state.GitTeXFiles()
+		files := make([]any, len(tex))
+		for i, f := range tex {
+			files[i] = f
+		}
+		return map[string]any{
+			"open":       state.GitActive(),
+			"busy":       state.GitBusy(),
+			"loadedPath": state.GitLoadedPath(),
+			"error":      state.GitError(),
+			"notice":     state.GitNotice(),
+			"statusLine": state.GitStatusLine(),
+			"texFiles":   files,
+		}
+	}))
+
+	// Git panel action hooks for the headless two-wasm proof. They drive the SAME
+	// State methods the panel buttons do (which route through the worker-RPC
+	// backend), so a headless run exercises the real off-thread git client without
+	// synthesising canvas clicks. Each network action is async (a worker
+	// round-trip); the harness polls gotexGitDebug().busy to await completion.
+
+	// gotexGitOpen(bool) opens/closes the panel; opening spawns the git worker.
+	js.Global().Set("gotexGitOpen", js.FuncOf(func(_ js.Value, a []js.Value) any {
+		state.SetGitOpen(len(a) > 0 && a[0].Bool())
+		render()
+		return nil
+	}))
+	// gotexGitConfigure(url, branch, author, email) fills the remote form.
+	js.Global().Set("gotexGitConfigure", js.FuncOf(func(_ js.Value, a []js.Value) any {
+		if len(a) < 4 {
+			return nil
+		}
+		state.SetGitURL(a[0].String())
+		state.SetGitBranch(a[1].String())
+		state.SetGitAuthor(a[2].String())
+		state.SetGitEmail(a[3].String())
+		render()
+		return nil
+	}))
+	// gotexGitClone/Commit/Push trigger the async panel actions.
+	js.Global().Set("gotexGitClone", js.FuncOf(func(js.Value, []js.Value) any {
+		state.GitClone(nil)
+		render()
+		return nil
+	}))
+	js.Global().Set("gotexGitCommit", js.FuncOf(func(js.Value, []js.Value) any {
+		state.GitCommit(nil)
+		render()
+		return nil
+	}))
+	js.Global().Set("gotexGitPush", js.FuncOf(func(js.Value, []js.Value) any {
+		state.GitPush(nil)
+		render()
+		return nil
 	}))
 
 	render()
