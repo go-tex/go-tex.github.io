@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/go-widgets/mvvm"
 	"github.com/go-widgets/painter"
 	"github.com/go-widgets/toolkit"
 )
@@ -139,6 +140,14 @@ type collabView struct {
 	// works across NATs out of the box; SetCollabICEServers reconfigures it.
 	iceServers []ICEServer
 
+	// iceText is the editable value of the panel's "ICE servers (STUN/TURN)" field,
+	// held as an observable (the app's MVVM contract) so typing mutates one source
+	// of truth the view renders; committing it (blur/Enter) parses it through
+	// [parseICEServers] into iceServers and persists it via icePersist.
+	iceText    *mvvm.Observable[string]
+	iceFocused bool             // the ICE field has keyboard focus
+	icePersist func(csv string) // host hook: persist the config (localStorage); nil in tests
+
 	rng *rand.Rand
 
 	// geometry, recomputed by layout() before every draw and hit-test.
@@ -148,6 +157,7 @@ type collabView struct {
 	labels   []collabLabel
 	swatches []collabSwatch
 	nameRect toolkit.Rect
+	iceRect  toolkit.Rect
 }
 
 // collabItem is one clickable button in the panel: its role drives dispatch.
@@ -218,6 +228,10 @@ func newCollabView(s *State) *collabView {
 	}
 	v.name = v.randomName()
 	v.color = v.randomColor()
+	// The ICE field is pre-filled with the effective configuration — the public
+	// STUN default out of the box — so the user sees (and can edit) what the peers
+	// will actually use.
+	v.iceText = mvvm.NewObservable(iceConfigString(v.iceServers))
 	return v
 }
 
@@ -281,11 +295,32 @@ func parseICEServers(csv string) []ICEServer {
 	return out
 }
 
+// iceConfigString renders an ICE configuration back into the field's
+// comma-separated form, the inverse of [parseICEServers]: a bare URL for a
+// credential-free STUN server, "url|username|credential" for a credentialed TURN
+// relay. It is what the panel field is pre-filled with and what a programmatic
+// reconfiguration reflects back into the field.
+func iceConfigString(servers []ICEServer) string {
+	parts := make([]string, 0, len(servers))
+	for _, sv := range servers {
+		p := sv.URL
+		if sv.Username != "" || sv.Credential != "" {
+			p += "|" + sv.Username + "|" + sv.Credential
+		}
+		parts = append(parts, p)
+	}
+	return strings.Join(parts, ", ")
+}
+
 // SetCollabICEServers reconfigures the WebRTC ICE (STUN/TURN) servers from a
 // config string (see [parseICEServers]); it takes effect on the next Host/Join.
-// An empty or all-blank string restores host-candidate-only signalling.
+// An empty or all-blank string restores host-candidate-only signalling. The panel
+// field is kept in sync with the resulting configuration, so a programmatic
+// reconfiguration (a restored setting, the gotexSetICEServers hook) shows up in
+// the visible field.
 func (s *State) SetCollabICEServers(csv string) {
 	s.collab.iceServers = parseICEServers(csv)
+	s.collab.iceText.Set(iceConfigString(s.collab.iceServers))
 	s.collab.refresh()
 }
 
@@ -301,6 +336,41 @@ func (s *State) CollabICEServers() []string {
 		out = append(out, sv.URL)
 	}
 	return out
+}
+
+// CollabICEText is the current text of the panel's ICE-servers field, for the DOM
+// host and headless introspection (the visible, editable value).
+func (s *State) CollabICEText() string { return s.collab.iceText.Get() }
+
+// commitICE applies the ICE field's current text: it parses the value through
+// [parseICEServers] into the live configuration and persists it, so the NEXT
+// Host/Join uses it. An empty or all-blank field is treated as "use the default"
+// — it falls back to the public STUN servers rather than breaking collaboration —
+// and the field is refilled with that effective default so what is shown always
+// matches what the peers will use.
+func (v *collabView) commitICE() {
+	csv := strings.TrimSpace(v.iceText.Get())
+	if csv == "" {
+		v.iceServers = defaultICEServers()
+		v.iceText.Set(iceConfigString(v.iceServers))
+	} else {
+		// Reuse #29's parser via the public setter, which also normalises the field.
+		v.s.SetCollabICEServers(csv)
+	}
+	if v.icePersist != nil {
+		v.icePersist(v.iceText.Get())
+	}
+	v.refresh()
+}
+
+// blurICE defocuses the ICE field, committing its value first. It is the field's
+// blur path (a click away, Enter, Escape).
+func (v *collabView) blurICE() {
+	if !v.iceFocused {
+		return
+	}
+	v.iceFocused = false
+	v.commitICE()
 }
 
 // attach swaps in a real backend and the host repaint hook, wiring the backend's
@@ -514,6 +584,9 @@ func (s *State) CollabButtonRects() map[string][4]int {
 	if v.nameRect.W > 0 {
 		out["name"] = rect(v.nameRect)
 	}
+	if v.iceRect.W > 0 {
+		out["ice"] = rect(v.iceRect)
+	}
 	for _, b := range v.buttons {
 		if name := collabRoleName(b.role); name != "" {
 			out[name] = rect(b.rect)
@@ -562,6 +635,7 @@ func (v *collabView) layout() {
 	v.labels = v.labels[:0]
 	v.swatches = v.swatches[:0]
 	v.nameRect = toolkit.Rect{}
+	v.iceRect = toolkit.Rect{}
 	if !v.open {
 		return
 	}
@@ -594,6 +668,19 @@ func (v *collabView) layout() {
 	v.swatches = append(v.swatches, collabSwatch{rect: toolkit.Rect{X: nameX + nameW + gap, Y: cur + (bh-swatch)/2, W: swatch, H: swatch}, color: v.color})
 	v.buttons = append(v.buttons, collabItem{role: roleShuffle, rect: toolkit.Rect{X: x + pw - pad - shuffleW, Y: cur, W: shuffleW, H: bh}, label: "Shuffle"})
 	cur += bh + gap + gap
+
+	// ICE (STUN/TURN) row: a labelled field so a user can point the WebRTC peers at
+	// their own relay. Empty falls back to public STUN; a credentialed sovereign
+	// coturn URL goes here later (see defaultICEServers's TODO).
+	v.labels = append(v.labels, collabLabel{rect: toolkit.Rect{X: innerX, Y: cur, W: innerW, H: line}, text: "ICE servers (STUN/TURN):"})
+	cur += line
+	v.iceRect = toolkit.Rect{X: innerX, Y: cur, W: innerW, H: bh}
+	cur += bh + gap
+	hintInk := toolkit.RGBA{R: 0x8A, G: 0x8A, B: 0x8A, A: 0xFF}
+	v.labels = append(v.labels, collabLabel{rect: toolkit.Rect{X: innerX, Y: cur, W: innerW, H: line}, text: "Comma-separated stun:host:port or turn:host:port|user|cred.", ink: hintInk})
+	cur += line
+	v.labels = append(v.labels, collabLabel{rect: toolkit.Rect{X: innerX, Y: cur, W: innerW, H: line}, text: "Empty falls back to public STUN.", ink: hintInk})
+	cur += line + gap
 
 	// Phase-specific rows.
 	addLabel := func(text string) {
@@ -713,6 +800,20 @@ func (v *collabView) draw(p painter.Painter, theme *toolkit.Theme) {
 		toolkit.DrawText(p, v.nameRect.X+toolkit.Scaled(4), v.nameRect.Y+toolkit.Scaled(6), nameText, theme.OnSurface)
 	}
 
+	// ICE-servers field: a bordered box in the same style as the name field.
+	if v.iceRect.W > 0 {
+		p.FillRect(v.iceRect, theme.SurfaceAlt)
+		if v.iceFocused {
+			p.FillRect(toolkit.Rect{X: v.iceRect.X, Y: v.iceRect.Y, W: v.iceRect.W, H: border}, theme.Accent)
+			p.FillRect(toolkit.Rect{X: v.iceRect.X, Y: v.iceRect.Y + v.iceRect.H - border, W: v.iceRect.W, H: border}, theme.Accent)
+		}
+		iceText := v.iceText.Get()
+		if v.iceFocused {
+			iceText += "|"
+		}
+		toolkit.DrawText(p, v.iceRect.X+toolkit.Scaled(4), v.iceRect.Y+toolkit.Scaled(6), iceText, theme.OnSurface)
+	}
+
 	for _, l := range v.labels {
 		ink := theme.OnSurface
 		if l.ink.A != 0 {
@@ -752,11 +853,19 @@ func (v *collabView) handleClick(x, y int) bool {
 		return false
 	}
 	// Modal: swallow everything, dispatching any control hit.
+	if v.iceRect.W > 0 && v.iceRect.Contains(x, y) {
+		v.nameFocused = false
+		v.iceFocused = true
+		v.refresh()
+		return true
+	}
 	if v.nameRect.Contains(x, y) {
+		v.blurICE() // commit the ICE field if focus is leaving it
 		v.nameFocused = true
 		v.refresh()
 		return true
 	}
+	v.blurICE()
 	v.nameFocused = false
 	for _, b := range v.buttons {
 		if b.rect.Contains(x, y) {
@@ -796,7 +905,17 @@ func (v *collabView) dispatch(role collabRole) {
 // handleChar edits the display name when its field is focused. Returns whether
 // it consumed the character.
 func (v *collabView) handleChar(code string) bool {
-	if !v.open || !v.nameFocused {
+	if !v.open {
+		return false
+	}
+	if v.iceFocused {
+		if r := []rune(code); len(r) == 1 {
+			v.iceText.Set(v.iceText.Get() + code)
+			v.refresh()
+		}
+		return true
+	}
+	if !v.nameFocused {
 		return false
 	}
 	if r := []rune(code); len(r) == 1 && len(v.name) < 24 {
@@ -813,10 +932,25 @@ func (v *collabView) handleKey(code string) bool {
 		return false
 	}
 	if code == "Escape" {
-		if v.nameFocused {
+		switch {
+		case v.iceFocused:
+			v.blurICE()
+		case v.nameFocused:
 			v.nameFocused = false
-		} else {
+		default:
 			v.open = false
+		}
+		v.refresh()
+		return true
+	}
+	if v.iceFocused {
+		switch code {
+		case "Backspace":
+			if r := []rune(v.iceText.Get()); len(r) > 0 {
+				v.iceText.Set(string(r[:len(r)-1]))
+			}
+		case "Enter", "Return":
+			v.blurICE()
 		}
 		v.refresh()
 		return true

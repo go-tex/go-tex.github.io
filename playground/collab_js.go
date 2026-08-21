@@ -61,6 +61,14 @@ func (s *State) EnableCollab(repaint func()) {
 	s.collab.attach(b, repaint)
 	s.collab.clipRead = readClipboard
 	s.collab.clipWrite = writeClipboard
+	// Persist the ICE field's committed value so a user's chosen STUN/TURN servers
+	// survive a reload; it lands under the same key EnableCollab restores from below
+	// and the gotexSetICEServers hook writes.
+	s.collab.icePersist = func(csv string) {
+		if ls := js.Global().Get("localStorage"); ls.Truthy() {
+			ls.Call("setItem", iceStorageKey, csv)
+		}
+	}
 
 	// A persisted ICE configuration overrides the built-in public-STUN default.
 	if ls := js.Global().Get("localStorage"); ls.Truthy() {
