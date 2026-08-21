@@ -3,21 +3,18 @@ module github.com/go-tex/go-tex.github.io/playground
 go 1.26.4
 
 require (
-	github.com/go-crdt/collab v0.20.0
+	github.com/go-crdt/collab v0.21.0
 	github.com/go-crdt/crdt v0.25.0
 	github.com/go-gfx/gfx v0.7.0
 	github.com/go-git/go-billy/v5 v5.9.0
 	github.com/go-git/go-git/v5 v5.19.2
-	github.com/go-odf/odf v0.1.0
 	github.com/go-opentype/fonts v0.8.0
-	github.com/go-richdoc/latex v0.1.0
-	github.com/go-richdoc/markdown v0.1.0
-	github.com/go-richdoc/richdoc v0.1.0
-	github.com/go-rtf/rtf v0.1.0
+	github.com/go-richdoc/latex v0.2.0
+	github.com/go-richdoc/richdoc v0.2.0
 	github.com/go-tex/engine v0.165.0
 	github.com/go-widgets/mvvm v0.7.0
 	github.com/go-widgets/painter v0.11.0
-	github.com/go-widgets/toolkit v0.228.0
+	github.com/go-widgets/toolkit v0.233.0
 	github.com/go-widgets/toolkit/rougelex v0.2.0
 )
 
@@ -53,7 +50,6 @@ require (
 	github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3 // indirect
 	github.com/skeema/knownhosts v1.3.1 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
-	github.com/yuin/goldmark v1.8.5 // indirect
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/image v0.45.0 // indirect
 	golang.org/x/net v0.56.0 // indirect

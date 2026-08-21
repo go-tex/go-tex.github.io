@@ -782,7 +782,7 @@ func (v *gitView) draw(p painter.Painter, theme *toolkit.Theme) {
 		btn := toolkit.NewButton(b.label, nil)
 		btn.SetBounds(b.rect)
 		if v.busy.Get() && b.role != gitRoleClose {
-			btn.Disabled = true // network buttons are inert while busy
+			btn.Disabled().Set(true) // network buttons are inert while busy
 		}
 		btn.Draw(p, theme)
 	}
