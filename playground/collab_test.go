@@ -461,6 +461,7 @@ func TestCollabDrawEveryPhase(t *testing.T) {
 		{"connected", func() { v.phase = phaseConnected }},
 		{"error", func() { v.phase, v.errMsg = phaseIdle, "boom" }},
 		{"name-focused", func() { v.phase, v.errMsg, v.nameFocused = phaseIdle, "", true }},
+		{"ice-focused", func() { v.phase, v.errMsg, v.nameFocused, v.iceFocused = phaseIdle, "", false, true }},
 	}
 	for _, ph := range phases {
 		ph.setup()
@@ -656,5 +657,197 @@ func TestCollabPhaseAndConnectedAccessors(t *testing.T) {
 	}
 	if s.CollabPhase() != int(phaseIdle) {
 		t.Fatal("fresh state should be idle")
+	}
+}
+
+func TestCollabICEFieldPrefillAndConfigString(t *testing.T) {
+	s := newTestState(t, false)
+	// The field is pre-filled with the effective configuration — the public STUN
+	// default out of the box — so the user sees what the peers will use.
+	want := iceConfigString(defaultICEServers())
+	if want == "" {
+		t.Fatal("default ICE config string is empty")
+	}
+	if got := s.CollabICEText(); got != want {
+		t.Fatalf("CollabICEText prefill = %q, want %q", got, want)
+	}
+	// iceConfigString renders a credentialed TURN relay as url|user|cred and a bare
+	// STUN URL as just the URL, the inverse of parseICEServers; a programmatic
+	// reconfiguration reflects into the visible field.
+	s.SetCollabICEServers("stun:a:1, turn:b:2|user|secret")
+	if got := s.CollabICEText(); got != "stun:a:1, turn:b:2|user|secret" {
+		t.Fatalf("CollabICEText after set = %q", got)
+	}
+	// An empty configuration clears the field too.
+	s.SetCollabICEServers("")
+	if got := s.CollabICEText(); got != "" {
+		t.Fatalf("CollabICEText after clearing = %q, want empty", got)
+	}
+}
+
+// focusICEField opens the panel (if needed), lays it out and clicks the ICE field
+// so the following keystrokes edit it, mirroring what a user does.
+func focusICEField(t *testing.T, s *State) {
+	t.Helper()
+	v := s.collab
+	v.open = true
+	v.layout()
+	ice, ok := s.CollabButtonRects()["ice"]
+	if !ok {
+		t.Fatal("ICE field rect not exposed while open")
+	}
+	if !v.handleClick(ice[0]+2, ice[1]+2) || !v.iceFocused {
+		t.Fatal("clicking the ICE field did not focus it")
+	}
+}
+
+// typeICE types s character-by-character into the focused ICE field.
+func typeICE(t *testing.T, v *collabView, s string) {
+	t.Helper()
+	for _, r := range s {
+		if !v.handleChar(string(r)) {
+			t.Fatalf("ICE field did not consume %q", string(r))
+		}
+	}
+}
+
+// clearICE empties the focused ICE field with Backspace.
+func clearICE(v *collabView) {
+	for v.iceText.Get() != "" {
+		v.handleKey("Backspace")
+	}
+}
+
+func TestCollabICEFieldEditCommitPersist(t *testing.T) {
+	s := newTestState(t, false)
+	v := s.collab
+
+	// Capture what the field persists — the host hook the wasm driver installs.
+	var persisted string
+	persistCalls := 0
+	v.icePersist = func(csv string) { persisted, persistCalls = csv, persistCalls+1 }
+
+	focusICEField(t, s)
+	if v.nameFocused {
+		t.Fatal("focusing the ICE field should defocus the name field")
+	}
+
+	// Replace the default with a credentialed TURN relay, then commit with Enter.
+	clearICE(v)
+	const custom = "turn:relay.example:3478|alice|s3cret"
+	typeICE(t, v, custom)
+	if got := v.iceText.Get(); got != custom {
+		t.Fatalf("typed ICE text = %q, want %q", got, custom)
+	}
+	if !v.handleKey("Enter") || v.iceFocused {
+		t.Fatal("Enter should commit and defocus the ICE field")
+	}
+	// Committing parsed the field through #29's parser into the live config…
+	cfg := s.CollabICEConfig()
+	if len(cfg) != 1 || cfg[0] != (ICEServer{URL: "turn:relay.example:3478", Username: "alice", Credential: "s3cret"}) {
+		t.Fatalf("CollabICEConfig after commit = %+v", cfg)
+	}
+	if urls := s.CollabICEServers(); len(urls) != 1 || urls[0] != "turn:relay.example:3478" {
+		t.Fatalf("CollabICEServers after commit = %v", urls)
+	}
+	// …and persisted it.
+	if persistCalls != 1 || persisted != custom {
+		t.Fatalf("persist after commit: calls=%d value=%q", persistCalls, persisted)
+	}
+
+	// Clearing the field and committing falls back to the public STUN default
+	// rather than breaking collaboration, and the field shows that effective
+	// default.
+	focusICEField(t, s)
+	clearICE(v)
+	if !v.handleKey("Enter") || v.iceFocused {
+		t.Fatal("Enter on the emptied field should commit and defocus")
+	}
+	def := defaultICEServers()
+	if got := s.CollabICEConfig(); len(got) != len(def) || got[0] != def[0] {
+		t.Fatalf("empty commit did not fall back to STUN default: %+v", got)
+	}
+	if got, wantStr := s.CollabICEText(), iceConfigString(def); got != wantStr {
+		t.Fatalf("field after empty commit = %q, want default %q", got, wantStr)
+	}
+	if persistCalls != 2 || persisted != iceConfigString(def) {
+		t.Fatalf("persist after fallback: calls=%d value=%q", persistCalls, persisted)
+	}
+}
+
+func TestCollabICEFieldBlurPaths(t *testing.T) {
+	s := newTestState(t, false)
+	v := s.collab
+
+	// Escape while the ICE field is focused commits and defocuses it but keeps the
+	// panel open.
+	focusICEField(t, s)
+	clearICE(v)
+	typeICE(t, v, "stun:esc:1")
+	if !v.handleKey("Escape") || v.iceFocused || !v.open {
+		t.Fatal("Escape should defocus the ICE field but keep the panel open")
+	}
+	if urls := s.CollabICEServers(); len(urls) != 1 || urls[0] != "stun:esc:1" {
+		t.Fatalf("Escape did not commit the ICE field: %v", urls)
+	}
+
+	// A non-editing key while the ICE field is focused is still swallowed (modal).
+	focusICEField(t, s)
+	if !v.handleKey("ArrowLeft") {
+		t.Fatal("a focused ICE field should swallow other keys")
+	}
+	// A multi-rune key name is not inserted as text.
+	before := v.iceText.Get()
+	if !v.handleChar("Shift") {
+		t.Fatal("a focused ICE field should consume a key-name char event")
+	}
+	if v.iceText.Get() != before {
+		t.Fatal("a key-name should not be inserted into the ICE field")
+	}
+
+	// Clicking the name field commits the ICE field and moves focus.
+	focusICEField(t, s)
+	clearICE(v)
+	typeICE(t, v, "stun:name:2")
+	v.layout()
+	if !v.handleClick(v.nameRect.X+2, v.nameRect.Y+2) || !v.nameFocused || v.iceFocused {
+		t.Fatal("clicking the name field should move focus off the ICE field")
+	}
+	if urls := s.CollabICEServers(); len(urls) != 1 || urls[0] != "stun:name:2" {
+		t.Fatalf("clicking away did not commit the ICE field: %v", urls)
+	}
+
+	// Clicking a button commits the ICE field before dispatching.
+	focusICEField(t, s)
+	clearICE(v)
+	typeICE(t, v, "stun:btn:3")
+	v.layout()
+	clicked := false
+	for _, b := range v.buttons {
+		if b.role == roleHost {
+			clicked = v.handleClick(b.rect.X+1, b.rect.Y+1)
+		}
+	}
+	if !clicked {
+		t.Fatal("Host button click not consumed")
+	}
+	if v.iceFocused {
+		t.Fatal("clicking a button should defocus the ICE field")
+	}
+	if urls := s.CollabICEServers(); len(urls) != 1 || urls[0] != "stun:btn:3" {
+		t.Fatalf("clicking a button did not commit the ICE field: %v", urls)
+	}
+
+	// blurICE is a no-op when the field is not focused (the click-away path runs it
+	// unconditionally), and commitICE tolerates a nil persist hook.
+	s2 := newTestState(t, false)
+	v2 := s2.collab
+	v2.open = true
+	v2.blurICE() // not focused: early return
+	v2.iceFocused = true
+	v2.iceText.Set("stun:nopersist:9")
+	v2.commitICE() // icePersist is nil here
+	if urls := s2.CollabICEServers(); len(urls) != 1 || urls[0] != "stun:nopersist:9" {
+		t.Fatalf("commit with a nil persist hook did not apply: %v", urls)
 	}
 }
