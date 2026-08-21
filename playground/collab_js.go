@@ -29,11 +29,12 @@ import (
 //
 //   - The HOST runs a [collab.Server] with an in-memory store and, so its OWN
 //     editor sees the shared document, joins that server as an ordinary client
-//     over an IN-PAGE loopback WebRTC pair (the pattern collab's own browsertest
-//     uses — there is no in-process pipe transport, so a loopback connection is
-//     the supported way for a page to be a client of a server it also runs). The
-//     host seeds the document with the current editor source, then serves the
-//     remote guest over the real WebRTC data channel.
+//     over an in-process [collab.Pipe] — two Go channels, no carrier — rather than
+//     a loopback WebRTC connection to itself. This is the honest way for a page to
+//     be a client of a server it also runs, with no second RTCPeerConnection and
+//     no STUN gathering on the host's critical path. The host seeds the document
+//     with the current editor source, then serves the remote guest over the real
+//     WebRTC data channel.
 //   - The GUEST is a plain [collab.Client] joined over the real data channel; its
 //     editor adopts the shared document.
 //
@@ -110,8 +111,7 @@ type webrtcBackend struct {
 
 	server     *collab.Server
 	remotePeer *collab.Peer        // the WebRTC peer to the remote participant
-	loopPeers  []*collab.Peer      // host: the in-page loopback pair, closed on teardown
-	client     *collab.Client      // the local editor's client (host: its loopback client)
+	client     *collab.Client      // the local editor's client (host: its in-process Pipe client)
 	ct         *toolkit.CollabText // the binding of s.editor to the shared text part
 
 	connected bool
@@ -135,35 +135,31 @@ func (b *webrtcBackend) session() {
 	b.ctx, b.cancel = context.WithCancel(context.Background())
 }
 
-// Host starts a hosting session: it runs a server, joins it over a loopback pair
-// so the host's own editor is a client, seeds the document with the current
-// source, and makes the offer to hand to the guest.
+// Host starts a hosting session: it runs a server, joins it over an in-process
+// [collab.Pipe] so the host's own editor is a client, seeds the document with the
+// current source, and makes the offer to hand to the guest.
 func (b *webrtcBackend) Host(name string, color toolkit.RGBA, done func(string, error)) {
 	go func() {
 		b.session()
 		src := b.s.Source()
 
 		b.server = collab.NewServer(collab.Config{Store: collab.NewMemoryStore()})
-		// The loopback pair lives entirely inside this page, so it never needs a
-		// STUN/TURN server to find an address — it meets on host candidates. Giving
-		// it the real ICE config only adds STUN gathering latency to the host's
-		// critical path (the offer is non-trickle: it waits for gathering to
-		// COMPLETE), so it is deliberately configured empty.
-		joinCh, serveCh, peers, err := connectLoopback(b.ctx)
-		if err != nil {
-			done("", err)
-			return
-		}
-		b.loopPeers = peers
-		go func() { _ = b.server.ServeDataChannel(b.ctx, serveCh) }()
+		// The host's own editor is an ordinary participant of the document it
+		// serves, so it joins over an in-process [collab.Pipe] — a Transport backed
+		// by two Go channels — rather than a loopback WebRTC connection to itself.
+		// Nothing crosses a wire, so there is no second RTCPeerConnection to dial,
+		// answer and encrypt and no STUN gathering on the host's critical path (the
+		// remote guest still meets over the real data channel below).
+		client, server := collab.Pipe()
+		go func() { _ = b.server.ServePipe(b.ctx, server) }()
 
-		client, err := collab.Join(b.ctx, collab.DataChannel(joinCh),
+		hostClient, err := collab.Join(b.ctx, client,
 			collab.ClientConfig{Document: docName, Site: randSite()})
 		if err != nil {
 			done("", err)
 			return
 		}
-		if err := b.bind(client, name, color); err != nil {
+		if err := b.bind(hostClient, name, color); err != nil {
 			done("", err)
 			return
 		}
@@ -281,10 +277,6 @@ func (b *webrtcBackend) Disconnect() {
 		_ = b.remotePeer.Close()
 		b.remotePeer = nil
 	}
-	for _, p := range b.loopPeers {
-		_ = p.Close()
-	}
-	b.loopPeers = nil
 	if b.server != nil {
 		_ = b.server.Close(context.Background())
 		b.server = nil
@@ -327,41 +319,6 @@ func (b *webrtcBackend) fail(err error) {
 		b.s.collab.errMsg = err.Error()
 	}
 	b.notify()
-}
-
-// connectLoopback opens one WebRTC connection entirely inside this page: a host
-// Peer offers, a guest Peer answers, and the offer/answer are handed across in
-// process. It returns the channel to JOIN on (the client side), the channel to
-// SERVE on (the server side), and the two peers to close on teardown.
-func connectLoopback(ctx context.Context) (joinCh, serveCh js.Value, peers []*collab.Peer, err error) {
-	h, err := collab.NewPeer(collab.PeerConfig{})
-	if err != nil {
-		return js.Value{}, js.Value{}, nil, err
-	}
-	g, err := collab.NewPeer(collab.PeerConfig{})
-	if err != nil {
-		_ = h.Close()
-		return js.Value{}, js.Value{}, nil, err
-	}
-	peers = []*collab.Peer{h, g}
-	offer, err := h.Offer(ctx, "loopback")
-	if err != nil {
-		return js.Value{}, js.Value{}, peers, err
-	}
-	answer, err := g.Answer(ctx, offer)
-	if err != nil {
-		return js.Value{}, js.Value{}, peers, err
-	}
-	if err := h.AcceptAnswer(answer); err != nil {
-		return js.Value{}, js.Value{}, peers, err
-	}
-	if serveCh, err = h.DataChannel(ctx); err != nil {
-		return js.Value{}, js.Value{}, peers, err
-	}
-	if joinCh, err = g.DataChannel(ctx); err != nil {
-		return js.Value{}, js.Value{}, peers, err
-	}
-	return joinCh, serveCh, peers, nil
 }
 
 // randSite mints a random replica identity. Site 0 is the server's own, so it is

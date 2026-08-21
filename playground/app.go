@@ -531,7 +531,6 @@ func (s *State) DebugRects() map[string][4]int {
 		"renderContent": rect(s.renderContentRect()),
 		"sourceTab":     s.EditorTabRect(tabSource),
 		"wysiwygTab":    s.EditorTabRect(tabWysiwyg),
-		"formatPicker":  s.FormatPickerRect(),
 	}
 }
 

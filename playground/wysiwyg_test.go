@@ -9,14 +9,11 @@ import (
 
 	"github.com/go-richdoc/richdoc"
 	"github.com/go-widgets/toolkit"
-
-	odf "github.com/go-odf/odf"
-	rtf "github.com/go-rtf/rtf"
 )
 
-// wysSnippet is a small LaTeX document exercising the three structures the
-// headless harness also asserts on: a \section, an existing \textbf, a plain
-// paragraph to embolden, and an itemize list.
+// wysSnippet is a small LaTeX document exercising the structures the headless
+// harness also asserts on: a \section, an existing \textbf, a plain paragraph to
+// embolden, and an itemize list.
 const wysSnippet = `\section{Introduction}
 
 This has \textbf{bold} already.
@@ -27,6 +24,13 @@ A plain line to embolden.
 \item First
 \item Second
 \end{itemize}`
+
+// wysRefSnippet exercises the go-richdoc v0.2.0 reference inlines: a \section
+// whose \label folds into Heading.ID, a \footnote (an inline Footnote), and a
+// \ref + a \cite (two CrossRefs). It is the fixture for the v0.2-node proof.
+const wysRefSnippet = `\section{Intro}\label{sec:i}
+
+A paragraph with a note\footnote{a note} and a reference to \ref{sec:i} plus a citation \cite{knuth}.`
 
 // newWysState builds a laid-out State (light theme) at the test surface size.
 func newWysState(t *testing.T) *State {
@@ -41,9 +45,6 @@ func TestWysiwygLaTeXRoundTrip(t *testing.T) {
 
 	if s.WysiwygActive() {
 		t.Fatal("mode should start inactive")
-	}
-	if got := s.WysiwygFormat(); got != "LaTeX" {
-		t.Fatalf("default format = %q, want LaTeX", got)
 	}
 
 	// Enter WYSIWYG: parse the LaTeX into the RichEditor.
@@ -86,98 +87,63 @@ func TestWysiwygLaTeXRoundTrip(t *testing.T) {
 	}
 }
 
-func TestWysiwygMarkdownRoundTrip(t *testing.T) {
+// TestWysiwygV02Nodes is the go-richdoc v0.2.0 proof: a document carrying a
+// \footnote, a \ref, a \cite and a \section+\label parses into the RichEditor as
+// Footnote / CrossRef inlines and a Heading with an ID (the marker + accent runs
+// the RichEditor paints), and toggling back to Source round-trips every construct
+// unchanged.
+func TestWysiwygV02Nodes(t *testing.T) {
 	s := newWysState(t)
-	const md = "# Title\n\nSome **bold** and *italic*.\n\n- a\n- b\n"
-	s.SetSource(md)
-	s.SetWysiwygFormat(1) // Markdown
+	s.SetSource(wysRefSnippet)
 
 	s.ToggleWysiwyg()
-	if !s.WysiwygActive() || s.WysiwygFormat() != "Markdown" {
-		t.Fatalf("markdown activation failed: active=%v format=%q", s.WysiwygActive(), s.WysiwygFormat())
-	}
-	if h := s.RichFirstHeading(); h != "Title" {
-		t.Fatalf("first heading = %q, want Title", h)
-	}
-	if !s.RichHasBold() {
-		t.Fatal("markdown **bold** did not survive into the document")
-	}
-	if txt := s.RichPlainText(); !strings.Contains(txt, "italic") {
-		t.Fatalf("plain text = %q, want it to contain italic", txt)
+	if !s.WysiwygActive() || s.WysiwygParseError() != "" {
+		t.Fatalf("activation failed: active=%v err=%q", s.WysiwygActive(), s.WysiwygParseError())
 	}
 
-	s.ToggleWysiwyg() // write back as Markdown
-	if src := s.Source(); !strings.Contains(src, "# Title") || !strings.Contains(src, "**bold**") {
-		t.Fatalf("markdown round-trip lost structure:\n%s", src)
+	// The RichEditor holds the v0.2 reference inlines — the nodes it renders as a
+	// superscript footnote marker and an accent-coloured crossref run.
+	if got := s.WysiwygFootnoteCount(); got != 1 {
+		t.Fatalf("footnote count = %d, want 1", got)
 	}
-}
+	if got := s.WysiwygCrossRefCount(); got != 2 { // \ref + \cite
+		t.Fatalf("crossref count = %d, want 2 (\\ref + \\cite)", got)
+	}
+	// \section{Intro}\label{sec:i} folds the label into the heading's anchor id.
+	if got := s.RichFirstHeadingID(); got != "sec:i" {
+		t.Fatalf("first heading id = %q, want sec:i", got)
+	}
+	if got := s.RichFirstHeading(); got != "Intro" {
+		t.Fatalf("first heading = %q, want Intro", got)
+	}
+	if txt := s.RichPlainText(); !strings.Contains(txt, "a note") || !strings.Contains(txt, "Intro") {
+		t.Fatalf("plain text = %q, want it to carry the heading + footnote body", txt)
+	}
 
-func TestWysiwygRTFImportExport(t *testing.T) {
-	doc := &richdoc.Document{Blocks: []richdoc.Block{
-		richdoc.Heading{Level: 1, Inlines: []richdoc.Inline{richdoc.Text{Value: "Hi"}}},
-		richdoc.Paragraph{Inlines: []richdoc.Inline{richdoc.Strong{Inlines: []richdoc.Inline{richdoc.Text{Value: "b"}}}}},
-	}}
-	src, err := rtf.Write(doc)
-	if err != nil {
-		t.Fatalf("rtf.Write: %v", err)
-	}
+	// Draw the active WYSIWYG tab so the RichEditor paints its footnote marker and
+	// crossref run (a headless render, asserting no panic at the surface size).
+	buf := make([]byte, testW*testH*4)
+	s.Draw(buf)
 
-	s := newWysState(t)
-	if err := s.WysiwygImport(FormatRTF, src); err != nil {
-		t.Fatalf("import RTF: %v", err)
-	}
-	if !s.WysiwygActive() || s.WysiwygFormat() != "RTF" {
-		t.Fatalf("RTF import state: active=%v format=%q", s.WysiwygActive(), s.WysiwygFormat())
-	}
-	if !s.RichHasBold() {
-		t.Fatal("RTF bold run lost on import")
-	}
-	// A non-textual format leaves the source editor untouched on exit.
-	before := s.Source()
+	// Toggle back to Source: the written LaTeX preserves every v0.2 construct.
 	s.ToggleWysiwyg()
-	if s.Source() != before {
-		t.Fatal("leaving a non-textual WYSIWYG must not overwrite the source editor")
+	if s.WysiwygActive() {
+		t.Fatal("toggle back did not deactivate")
 	}
-	out, err := s.WysiwygExport(FormatRTF)
-	if err != nil {
-		t.Fatalf("export RTF: %v", err)
-	}
-	if _, err := rtf.Parse(out); err != nil {
-		t.Fatalf("exported RTF does not re-parse: %v", err)
-	}
-}
-
-func TestWysiwygODTImportExport(t *testing.T) {
-	doc := &richdoc.Document{Blocks: []richdoc.Block{
-		richdoc.Heading{Level: 1, Inlines: []richdoc.Inline{richdoc.Text{Value: "Doc"}}},
-		richdoc.Paragraph{Inlines: []richdoc.Inline{richdoc.Text{Value: "body"}}},
-	}}
-	pkg, err := odf.Write(doc)
-	if err != nil {
-		t.Fatalf("odf.Write: %v", err)
-	}
-	s := newWysState(t)
-	if err := s.WysiwygImport(FormatODT, pkg); err != nil {
-		t.Fatalf("import ODT: %v", err)
-	}
-	if s.RichFirstHeading() != "Doc" {
-		t.Fatalf("ODT heading lost: %q", s.RichFirstHeading())
-	}
-	out, err := s.WysiwygExport(FormatODT)
-	if err != nil {
-		t.Fatalf("export ODT: %v", err)
-	}
-	if _, err := odf.Parse(out); err != nil {
-		t.Fatalf("exported ODT does not re-parse: %v", err)
+	src := s.Source()
+	for _, want := range []string{`\footnote{`, `\label{sec:i}`, `\ref{sec:i}`, `\cite{knuth}`} {
+		if !strings.Contains(src, want) {
+			t.Fatalf("round-tripped source lost %q:\n%s", want, src)
+		}
 	}
 }
 
-// TestWysiwygParseErrorStaysInSource feeds a plain-text buffer to the ODT reader
-// (which wants a zip): the mode records the error and stays in source mode.
-func TestWysiwygParseErrorStaysInSource(t *testing.T) {
+// TestWysiwygParseErrorBounces feeds malformed LaTeX (an unclosed environment):
+// enter() records the error and bounces the strip back to Source, and the error
+// band is painted while inactive.
+func TestWysiwygParseErrorBounces(t *testing.T) {
 	s := newWysState(t)
-	s.SetSource("this is not a zip container")
-	s.SetWysiwygFormat(2) // ODT
+	s.SetSource("\\begin{itemize}\n\\item orphan") // never closed -> latex.Parse fails
 	s.ToggleWysiwyg()
 	if s.WysiwygActive() {
 		t.Fatal("a parse failure must not activate WYSIWYG")
@@ -185,77 +151,12 @@ func TestWysiwygParseErrorStaysInSource(t *testing.T) {
 	if s.WysiwygParseError() == "" {
 		t.Fatal("expected a recorded parse error")
 	}
+	if s.ActiveEditorTab() != tabSource {
+		t.Fatalf("a parse failure must bounce to Source, tab = %d", s.ActiveEditorTab())
+	}
 	// The error band is painted while inactive.
 	buf := make([]byte, testW*testH*4)
 	s.Draw(buf)
-}
-
-// TestWysiwygImportExportUnknownFormat covers the unregistered-format guards.
-func TestWysiwygImportExportUnknownFormat(t *testing.T) {
-	s := newWysState(t)
-	if err := s.WysiwygImport(Format(999), []byte("x")); err != errUnknownFormat {
-		t.Fatalf("import unknown = %v, want errUnknownFormat", err)
-	}
-	if _, err := s.WysiwygExport(Format(999)); err != errUnknownFormat {
-		t.Fatalf("export unknown = %v, want errUnknownFormat", err)
-	}
-	if errUnknownFormat.Error() != "unknown format" {
-		t.Fatalf("error text = %q", errUnknownFormat.Error())
-	}
-}
-
-// TestWysiwygImportParseError covers WysiwygImport's parse-error path with a
-// synthetic failing codec (also the seam future formats plug in through).
-func TestWysiwygImportParseError(t *testing.T) {
-	const f = Format(90)
-	formatRegistry[f] = Codec{Name: "FailParse", Textual: true,
-		Parse: func([]byte) (*richdoc.Document, error) { return nil, wysiwygError("boom") },
-		Write: func(*richdoc.Document) ([]byte, error) { return nil, nil }}
-	defer delete(formatRegistry, f)
-
-	s := newWysState(t)
-	if err := s.WysiwygImport(f, []byte("x")); err == nil {
-		t.Fatal("expected a parse error")
-	}
-	if s.WysiwygActive() {
-		t.Fatal("a failed import must not activate")
-	}
-	if s.WysiwygParseError() != "boom" {
-		t.Fatalf("parseErr = %q", s.WysiwygParseError())
-	}
-}
-
-// TestWysiwygLeaveWriteError covers leave's write-error branch: a textual codec
-// whose Parse succeeds but Write fails. It drives the transition through the tab
-// strip (Set WYSIWYG to enter, Set Source to leave), the real user path.
-func TestWysiwygLeaveWriteError(t *testing.T) {
-	const f = Format(91)
-	formatRegistry[f] = Codec{Name: "FailWrite", Textual: true,
-		Parse: func([]byte) (*richdoc.Document, error) { return &richdoc.Document{}, nil },
-		Write: func(*richdoc.Document) ([]byte, error) { return nil, wysiwygError("nope") }}
-	defer delete(formatRegistry, f)
-
-	s := newWysState(t)
-	w := s.wysiwyg()
-	w.format = f
-	s.SetEditorTab(tabWysiwyg) // fires enter(): Parse succeeds, WYSIWYG becomes active
-	if !w.active() {
-		t.Fatal("selecting the WYSIWYG tab should have entered (parse succeeded)")
-	}
-	s.SetEditorTab(tabSource) // fires leave(): Write fails, error recorded
-	if s.WysiwygParseError() != "nope" {
-		t.Fatalf("write error not recorded: %q", s.WysiwygParseError())
-	}
-}
-
-// TestRegisterFormatReRegistration covers the "already seen" branch (the codec is
-// overwritten but the picker order does not grow).
-func TestRegisterFormatReRegistration(t *testing.T) {
-	before := len(formatOrder)
-	RegisterFormat(FormatLaTeX, formatRegistry[FormatLaTeX])
-	if len(formatOrder) != before {
-		t.Fatalf("re-registration grew formatOrder %d -> %d", before, len(formatOrder))
-	}
 }
 
 // TestWysiwygEventRouting drives the State-level event hooks so a real pointer/
@@ -271,6 +172,12 @@ func TestWysiwygEventRouting(t *testing.T) {
 	}
 	if !s.WysiwygActive() {
 		t.Fatal("clicking the WYSIWYG tab did not activate")
+	}
+
+	// Click on the formatting toolbar strip (a one-shot verb, no drag capture).
+	tr := s.wysiwyg().toolbarRect
+	if !s.HandleClick(tr.X+tr.W/2, tr.Y+tr.H/2) {
+		t.Fatal("toolbar click not consumed")
 	}
 
 	// Click inside the RichEditor overlay, then drag + release (selection).
@@ -304,18 +211,9 @@ func TestWysiwygEventRouting(t *testing.T) {
 	// Re-layout while active so wysiwygLayout re-sizes the RichEditor overlay.
 	s.Resize(testW-40, testH-20)
 
-	// Open the format picker and draw with the popover up, then click it.
-	pk := s.wysiwyg().picker.Bounds()
-	if !s.HandleClick(pk.X+pk.W/2, pk.Y+pk.H/2) {
-		t.Fatal("picker click not consumed")
-	}
-	if !s.wysiwyg().picker.Open().Get() {
-		t.Fatal("picker did not open")
-	}
+	// Draw the active tab (RichEditor + toolbar strip).
 	buf := make([]byte, testW*testH*4)
-	s.Draw(buf) // draws the RichEditor overlay AND the open format popover
-	pb := s.wysiwyg().picker.PopoverBounds()
-	s.HandleClick(pb.X+pb.W/2, pb.Y+2) // popover intercept closes it
+	s.Draw(buf)
 }
 
 // TestWysiwygInactiveHooksPassThrough asserts the hooks return false while the
@@ -331,18 +229,15 @@ func TestWysiwygInactiveHooksPassThrough(t *testing.T) {
 	if s.wysiwygChar("a") || s.wysiwygKey("ArrowLeft") {
 		t.Fatal("inactive char/key must pass through")
 	}
-	// A toolbar click that misses both WYSIWYG controls passes through.
-	if s.wysiwygClick(1, 1) {
-		t.Fatal("empty toolbar spot must pass through")
-	}
-	// A body click while inactive passes through (not over the RichEditor).
+	// A body click while inactive (not over the strip nor the RichEditor) passes
+	// through.
 	if s.wysiwygClick(s.editor.Bounds().X+5, s.editor.Bounds().Y+5) {
 		t.Fatal("inactive body click must pass through")
 	}
 }
 
-// TestWysiwygIntrospectionEdges covers the empty-heading / no-bold / out-of-range
-// / default-block-length branches.
+// TestWysiwygIntrospectionEdges covers the empty-heading / no-bold / no-refs /
+// out-of-range / default-block-length branches.
 func TestWysiwygIntrospectionEdges(t *testing.T) {
 	doc := &richdoc.Document{Blocks: []richdoc.Block{
 		richdoc.List{Items: []richdoc.ListItem{{Blocks: []richdoc.Block{richdoc.Paragraph{Inlines: []richdoc.Inline{richdoc.Text{Value: "x"}}}}}}},
@@ -353,13 +248,20 @@ func TestWysiwygIntrospectionEdges(t *testing.T) {
 	if h := s.RichFirstHeading(); h != "" {
 		t.Fatalf("no heading, got %q", h)
 	}
+	if id := s.RichFirstHeadingID(); id != "" {
+		t.Fatalf("no heading id, got %q", id)
+	}
 	if s.RichHasBold() {
 		t.Fatal("no bold expected")
 	}
-	s.RichSelectBlock(-1) // out of range: no-op
-	s.RichSelectBlock(0)  // a List block: blockRuneLen default branch -> 0
+	if s.WysiwygFootnoteCount() != 0 || s.WysiwygCrossRefCount() != 0 || s.WysiwygAnchorCount() != 0 {
+		t.Fatal("no reference inlines expected")
+	}
+	s.RichSelectBlock(-1)  // out of range (negative): no-op
+	s.RichSelectBlock(0)   // a List block: blockRuneLen default branch -> 0
+	s.RichSelectBlock(999) // out of range (high): no-op
 
-	// blockRuneLen over each editable block kind.
+	// blockRuneLen over each editable block kind + the default branch.
 	if got := blockRuneLen(richdoc.Heading{Inlines: []richdoc.Inline{richdoc.Text{Value: "abc"}}}); got != 3 {
 		t.Fatalf("heading len = %d, want 3", got)
 	}
@@ -371,9 +273,30 @@ func TestWysiwygIntrospectionEdges(t *testing.T) {
 	}
 }
 
+// TestWysiwygRefCounterAnchor covers refCounter's Anchor branch with a point
+// Anchor (no heading to fold into), which a document can carry directly.
+func TestWysiwygRefCounterAnchor(t *testing.T) {
+	s := newWysState(t)
+	s.wysiwyg().editor.SetDocument(&richdoc.Document{Blocks: []richdoc.Block{
+		richdoc.Paragraph{Inlines: []richdoc.Inline{
+			richdoc.Anchor{ID: "pt"},
+			richdoc.Footnote{Blocks: []richdoc.Block{richdoc.Paragraph{Inlines: []richdoc.Inline{richdoc.Text{Value: "n"}}}}},
+			richdoc.CrossRef{Target: "pt", Kind: richdoc.RefLabel},
+		}},
+	}})
+	if s.WysiwygAnchorCount() != 1 {
+		t.Fatalf("anchor count = %d, want 1", s.WysiwygAnchorCount())
+	}
+	if s.WysiwygFootnoteCount() != 1 {
+		t.Fatalf("footnote count = %d, want 1", s.WysiwygFootnoteCount())
+	}
+	if s.WysiwygCrossRefCount() != 1 {
+		t.Fatalf("crossref count = %d, want 1", s.WysiwygCrossRefCount())
+	}
+}
+
 // TestWysiwygEditorTabState covers the reactive active-editor-tab hooks: the tab
-// index reported by ActiveEditorTab tracks SetEditorTab / the toggle, and the
-// non-textual Source note is painted when a binary format is selected on Source.
+// index reported by ActiveEditorTab tracks SetEditorTab / the toggle.
 func TestWysiwygEditorTabState(t *testing.T) {
 	s := newWysState(t)
 	s.SetSource(wysSnippet)
@@ -389,29 +312,58 @@ func TestWysiwygEditorTabState(t *testing.T) {
 	if s.ActiveEditorTab() != tabSource || s.WysiwygActive() {
 		t.Fatalf("ToggleWysiwyg back: tab=%d active=%v", s.ActiveEditorTab(), s.WysiwygActive())
 	}
-
-	// A non-textual format on the Source tab paints the "binary format" note over
-	// the CodeEditor (no human-editable source for ODT/RTF).
-	s.SetWysiwygFormat(3) // RTF (non-textual)
-	if s.ActiveEditorTab() != tabSource {
-		t.Fatal("selecting a format must not change the active tab")
-	}
-	buf := make([]byte, testW*testH*4)
-	s.Draw(buf) // exercises the non-textual Source-tab note branch
 }
 
-// TestWysiwygLayoutNarrowPane drives the divider hard left so the editor pane is
-// narrower than the format DropDown, covering wysiwygLayout's picker-shrink and
-// zero-width clamps.
-func TestWysiwygLayoutNarrowPane(t *testing.T) {
+// TestWysiwygTabRectsAndToolbar covers the editor-tab rect hook and the
+// formatting-toolbar introspection (visible flag, rect, button count/rects,
+// pressed state incl. the out-of-range guard, current block kind).
+func TestWysiwygTabRectsAndToolbar(t *testing.T) {
 	s := newWysState(t)
-	s.paned.MoveHandle(10) // clamps to the minimum left width
-	s.layout()             // re-runs applyLeftSplit + wysiwygLayout at that width
-	if got := s.FormatPickerRect(); got[2] != 0 {
-		t.Fatalf("picker width in a 10px pane = %d, want 0 (clamped)", got[2])
+	s.SetSource(wysSnippet)
+
+	if r := s.EditorTabRect(tabSource); r[2] <= 0 || r[3] <= 0 {
+		t.Fatalf("source tab rect non-positive: %v", r)
 	}
-	// Draw must not panic at this degenerate size.
-	buf := make([]byte, testW*testH*4)
+	if s.RichToolbarVisible() {
+		t.Fatal("toolbar must be hidden on the Source tab")
+	}
+
+	s.SetEditorTab(tabWysiwyg)
+	if !s.RichToolbarVisible() {
+		t.Fatal("toolbar must be visible on the WYSIWYG tab")
+	}
+	if n := s.RichToolbarButtonCount(); n != 12 {
+		t.Fatalf("toolbar button count = %d, want 12", n)
+	}
+	if rects := s.RichToolbarButtonRects(); len(rects) != 12 {
+		t.Fatalf("toolbar button rects = %d, want 12", len(rects))
+	}
+	if r := s.RichToolbarRect(); r[3] <= 0 {
+		t.Fatalf("toolbar strip rect non-positive height: %v", r)
+	}
+	// A block button's pressed state is a bool; the out-of-range index guards false.
+	_ = s.RichToolbarButtonPressed(rtbBold)
+	if s.RichToolbarButtonPressed(-1) || s.RichToolbarButtonPressed(999) {
+		t.Fatal("out-of-range toolbar button must report not-pressed")
+	}
+	// The caret block kind is readable while active.
+	_ = s.RichCurrentBlockKind()
+}
+
+// TestWysiwygLayoutShortPane enters WYSIWYG then resizes to a very short surface,
+// covering layoutBounds's toolbar-height clamp (toolbar taller than the editor
+// region) and a draw at that degenerate size.
+func TestWysiwygLayoutShortPane(t *testing.T) {
+	s := newWysState(t)
+	s.SetSource(wysSnippet)
+	s.SetEditorTab(tabWysiwyg)
+	s.Resize(testW, 90) // editor region shorter than the toolbar strip
+	tb := s.RichToolbarRect()
+	er := s.wysiwyg().editor.Bounds()
+	if er.H < 0 {
+		t.Fatalf("editor height must never go negative: %d (toolbar %v)", er.H, tb)
+	}
+	buf := make([]byte, testW*90*4)
 	s.Draw(buf)
 }
 

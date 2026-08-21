@@ -405,10 +405,10 @@ func main() {
 		return nil
 	}))
 
-	// --- WYSIWYG multi-format mode (playground/wysiwyg.go) -------------------
-	// A discrete, additive block of host bridges so the source-vs-visual toggle,
-	// the format picker, the ODT/RTF file import/export and the headless
-	// introspection all reach the mode without touching the handlers above.
+	// --- WYSIWYG mode (playground/wysiwyg.go) --------------------------------
+	// A discrete, additive block of host bridges so the source-vs-visual toggle
+	// and the headless introspection reach the LaTeX-only mode without touching
+	// the handlers above.
 
 	// gotexWysiwygToggle flips between the source editor and the visual RichEditor.
 	js.Global().Set("gotexWysiwygToggle", js.FuncOf(func(js.Value, []js.Value) any {
@@ -422,14 +422,6 @@ func main() {
 	js.Global().Set("gotexSetEditorTab", js.FuncOf(func(_ js.Value, a []js.Value) any {
 		if len(a) > 0 {
 			state.SetEditorTab(a[0].Int())
-			render()
-		}
-		return nil
-	}))
-	// gotexSetWysiwygFormat(idx) selects the session format by picker index.
-	js.Global().Set("gotexSetWysiwygFormat", js.FuncOf(func(_ js.Value, a []js.Value) any {
-		if len(a) > 0 {
-			state.SetWysiwygFormat(a[0].Int())
 			render()
 		}
 		return nil
@@ -448,37 +440,10 @@ func main() {
 		render()
 		return nil
 	}))
-	// gotexWysiwygImport(idx, Uint8Array) opens a document of format idx (an .odt
-	// package, an .rtf/.tex/.md file) into the RichEditor; returns "" or an error.
-	js.Global().Set("gotexWysiwygImport", js.FuncOf(func(_ js.Value, a []js.Value) any {
-		if len(a) < 2 {
-			return "missing arguments"
-		}
-		buf := make([]byte, a[1].Get("length").Int())
-		js.CopyBytesToGo(buf, a[1])
-		if err := state.WysiwygImport(playground.Format(a[0].Int()), buf); err != nil {
-			return err.Error()
-		}
-		render()
-		return ""
-	}))
-	// gotexWysiwygExport(idx) serialises the current document with format idx's
-	// writer and returns it as a Uint8Array (for a browser download).
-	js.Global().Set("gotexWysiwygExport", js.FuncOf(func(_ js.Value, a []js.Value) any {
-		if len(a) < 1 {
-			return js.Null()
-		}
-		out, err := state.WysiwygExport(playground.Format(a[0].Int()))
-		if err != nil {
-			return js.Null()
-		}
-		dst := js.Global().Get("Uint8Array").New(len(out))
-		js.CopyBytesToJS(dst, out)
-		return dst
-	}))
 	// gotexWysiwygDebug exposes the mode's state + parsed structure for headless
-	// verification (the active editor-tab index, active flag, format, parse error,
-	// block count, first-heading text, whether a bold run exists, the document's
+	// verification (the active editor-tab index, active flag, parse error, block
+	// count, first-heading text + its \label anchor id, whether a bold run exists,
+	// the v0.2.0 reference-node tallies footnotes/crossRefs/anchors, the document's
 	// plain text, and the formatting-toolbar state: visible flag, button count,
 	// strip rect, the caret block kind and each button's pressed/lit state).
 	js.Global().Set("gotexWysiwygDebug", js.FuncOf(func(js.Value, []js.Value) any {
@@ -491,10 +456,13 @@ func main() {
 		return map[string]any{
 			"activeTab":          state.ActiveEditorTab(),
 			"active":             state.WysiwygActive(),
-			"format":             state.WysiwygFormat(),
 			"parseError":         state.WysiwygParseError(),
 			"blockCount":         state.RichBlockCount(),
 			"firstHeading":       state.RichFirstHeading(),
+			"firstHeadingID":     state.RichFirstHeadingID(),
+			"footnotes":          state.WysiwygFootnoteCount(),
+			"crossRefs":          state.WysiwygCrossRefCount(),
+			"anchors":            state.WysiwygAnchorCount(),
 			"hasBold":            state.RichHasBold(),
 			"plainText":          state.RichPlainText(),
 			"toolbarVisible":     state.RichToolbarVisible(),
