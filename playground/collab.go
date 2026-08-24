@@ -76,7 +76,22 @@ const (
 	phaseGuestWait
 	// phaseConnected is a live session.
 	phaseConnected
+	// phaseFailed is a handshake that will not complete: ICE found no candidate
+	// pair, so no direct path to the peer exists (the common full-tunnel-VPN /
+	// symmetric-NAT case, where STUN alone cannot traverse). The panel shows
+	// [collabFailedMsg] pointing at the TURN fix and offers a reset to idle,
+	// rather than waiting silently forever.
+	phaseFailed
 )
+
+// collabFailedMsg is the guidance shown when a connection fails with no path to
+// the peer: it names the likely cause (a full-tunnel VPN or a strict/symmetric
+// NAT that STUN cannot traverse) and the fix (a TURN relay in the ICE field).
+// layout splits it across Label lines (the toolkit Label does not wrap); the
+// join of those lines is this exact string, which [State.CollabFailureMessage]
+// also returns for the headless proof.
+const collabFailedMsg = "Connection failed — no direct path to the peer. " +
+	"If you're on a VPN or behind a strict NAT, add a TURN server in the ICE servers field above and retry."
 
 // CollabDecoration is one remote participant's caret as it is painted into the
 // local editor — the read-back a headless test asserts on to prove a peer's
@@ -109,6 +124,11 @@ type collabBackend interface {
 	Disconnect()
 	// Connected reports whether a peer's channel is open and joined.
 	Connected() bool
+	// ConnFailed reports whether the connection attempt failed with no usable path
+	// to the peer — ICE reached "failed" (or lingered in "disconnected"), or the
+	// channel never opened within the deadline. When true (and not Connected), the
+	// view moves the panel to [phaseFailed] and shows [collabFailedMsg].
+	ConnFailed() bool
 	// PeerCount is how many remote participants are in the document.
 	PeerCount() int
 	// SetOnChange installs the hook fired when the connection state, the peer set
@@ -412,15 +432,22 @@ func (v *collabView) refresh() {
 	}
 }
 
-// onBackendChange advances the phase when a live connection appears or drops and
-// repaints. It is the backend's "something moved" signal (connect, peer join or
-// leave, a remote edit).
+// onBackendChange advances the phase when a live connection appears, fails or
+// drops, and repaints. It is the backend's "something moved" signal (connect,
+// connection failure, peer join or leave, a remote edit).
 func (v *collabView) onBackendChange() {
 	switch {
 	case v.backend.Connected():
 		if v.phase != phaseConnected {
 			v.phase = phaseConnected
 			v.busy = false
+			v.errMsg = ""
+		}
+	case v.backend.ConnFailed():
+		// ICE found no candidate pair (or the channel never opened): the wait would
+		// otherwise be silent forever. Surface the failure with the TURN guidance.
+		if v.phase != phaseFailed {
+			v.connectionFailed()
 		}
 	case v.phase == phaseConnected:
 		// The peer left or the channel dropped; fall back to idle.
@@ -428,6 +455,20 @@ func (v *collabView) onBackendChange() {
 		v.offer, v.answer = "", ""
 		v.errMsg = "the peer disconnected"
 	}
+	v.refresh()
+}
+
+// connectionFailed moves the panel into [phaseFailed]: it clears the in-flight
+// busy flag and the stale signalling blobs and shows [collabFailedMsg] with a
+// "Try again" reset back to idle. The browser backend routes an ICE failure here
+// through onBackendChange; a native test drives it directly.
+func (v *collabView) connectionFailed() {
+	v.busy = false
+	v.phase = phaseFailed
+	v.offer, v.answer = "", ""
+	// The failed panel renders collabFailedMsg on its own lines; keep errMsg clear
+	// so the guidance is not also repeated as a one-line ⚠ overflow.
+	v.errMsg = ""
 	v.refresh()
 }
 
@@ -531,9 +572,21 @@ func (s *State) CollabConnected() bool { return s.collab.backend.Connected() }
 // CollabPeerCount is how many remote participants are in the document.
 func (s *State) CollabPeerCount() int { return s.collab.backend.PeerCount() }
 
-// CollabPhase is the session phase as an int (0 idle … 4 connected), for a
-// headless assertion.
+// CollabPhase is the session phase as an int (0 idle … 4 connected, 5 failed),
+// for a headless assertion.
 func (s *State) CollabPhase() int { return int(s.collab.phase) }
+
+// CollabFailureMessage is the panel's failure guidance when the connection could
+// not be established ([phaseFailed]) — the TURN-server hint the user needs — and
+// the empty string in every other phase. It is what the failure-path test and a
+// gotex* debug hook read to prove the message is surfaced rather than the panel
+// hanging silently.
+func (s *State) CollabFailureMessage() string {
+	if s.collab.phase == phaseFailed {
+		return collabFailedMsg
+	}
+	return ""
+}
 
 // CollabActive reports whether the panel is open.
 func (s *State) CollabActive() bool { return s.collab.open }
@@ -747,6 +800,15 @@ func (v *collabView) layout() {
 			cur += line
 		}
 		addButtons(collabItem{role: roleDisconnect, label: "Disconnect"})
+	case v.phase == phaseFailed:
+		// No candidate path to the peer. Show the guidance (wrapped, since the
+		// toolkit Label does not) in the warning tone, and offer a reset to idle.
+		warn := toolkit.RGBA{R: 0xE5, G: 0x39, B: 0x35, A: 0xFF}
+		for _, ln := range wrapWords(collabFailedMsg, failedWrap) {
+			v.labels = append(v.labels, collabLabel{rect: toolkit.Rect{X: innerX, Y: cur, W: innerW, H: line}, text: ln, ink: warn})
+			cur += line
+		}
+		addButtons(collabItem{role: roleCancel, label: "Try again"})
 	}
 
 	if v.errMsg != "" {
@@ -1087,6 +1149,37 @@ type clipboardHooks struct {
 	clipWrite func(text string)
 }
 
+// failedWrap is the per-line character budget wrapWords uses to fit
+// [collabFailedMsg] inside the panel's inner width with the 5x7 bitmap font. It
+// is comfortably under what the ICE hint line already occupies, so a wrapped
+// failure line never overruns the card.
+const failedWrap = 50
+
+// wrapWords greedily wraps s into lines of at most max runes, breaking only at
+// single spaces so the join of the returned lines with a space is s again. A word
+// longer than max still goes on its own line unbroken (a URL is not chopped). It
+// lets a long message be shown across several toolkit Labels, which do not wrap
+// on their own.
+func wrapWords(s string, max int) []string {
+	var lines []string
+	var line string
+	for _, word := range strings.Fields(s) {
+		switch {
+		case line == "":
+			line = word
+		case len([]rune(line))+1+len([]rune(word)) <= max:
+			line += " " + word
+		default:
+			lines = append(lines, line)
+			line = word
+		}
+	}
+	if line != "" {
+		lines = append(lines, line)
+	}
+	return lines
+}
+
 // --- colour helpers ----------------------------------------------------------
 
 // hexColor renders an opaque RGBA as "#rrggbb".
@@ -1126,6 +1219,7 @@ func (nopBackend) Join(_ string, _ toolkit.RGBA, _ string, done func(string, err
 func (nopBackend) AcceptAnswer(_ string, done func(error)) { done(errNoBrowser) }
 func (b nopBackend) Disconnect()                           { _ = b } // no session to tear down
 func (nopBackend) Connected() bool                         { return false }
+func (nopBackend) ConnFailed() bool                        { return false }
 func (nopBackend) PeerCount() int                          { return 0 }
 func (b nopBackend) SetOnChange(func())                    { _ = b } // nothing ever changes
 
