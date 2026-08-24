@@ -174,6 +174,19 @@ type gitView struct {
 	buttons  []gitItem
 	labels   []gitLabel
 	boxes    []gitFieldBox
+
+	// Persistent toolkit widgets the panel is built from — created once and re-used
+	// every frame so a Button keeps its pressed / hover face between the mousedown
+	// that presses it and the mouseup that releases it, and an Entry keeps its
+	// caret. The panel draws + routes events through these instead of hand-painting
+	// rectangles and text. Buttons are keyed by role+arg (the file-picker has one
+	// per .tex file); fields by their gitField.
+	launcherBtn *toolkit.Button
+	scrim       *toolkit.Backdrop
+	card        *toolkit.Backdrop
+	btns        map[string]*toolkit.Button
+	entries     map[gitField]*toolkit.Entry
+	labelPool   []*toolkit.Label
 }
 
 // gitItem is one clickable button in the panel; role drives dispatch and arg
@@ -730,79 +743,132 @@ func shortHash(h string) string {
 	return h
 }
 
-// draw paints the launcher and, when open, the overlay panel.
+// ensureWidgets lazily builds the persistent toolkit widgets the panel is drawn
+// from and routes events through. Called at the top of every draw / input path.
+func (v *gitView) ensureWidgets() {
+	if v.launcherBtn != nil {
+		return
+	}
+	v.launcherBtn = toolkit.NewButton("Git", func() { v.openPanel(); v.refresh() })
+	v.scrim = &toolkit.Backdrop{Fill: toolkit.RGBA{A: 0x66}, Interactive: true}
+	v.card = &toolkit.Backdrop{}
+	v.btns = map[string]*toolkit.Button{}
+	v.entries = map[gitField]*toolkit.Entry{}
+}
+
+// btnKey uniquely identifies a persistent button: its role plus the file-picker
+// argument (0 for every non-picker button).
+func btnKey(role gitRole, arg int) string { return fmt.Sprintf("%d:%d", role, arg) }
+
+// btn returns the persistent Button for a role+arg, creating it (wired to dispatch
+// that role/arg) on first use so its pressed / hover state survives between frames.
+func (v *gitView) btn(role gitRole, arg int) *toolkit.Button {
+	k := btnKey(role, arg)
+	if b := v.btns[k]; b != nil {
+		return b
+	}
+	rr, aa := role, arg
+	b := toolkit.NewButton("", func() { v.dispatch(rr, aa) })
+	v.btns[k] = b
+	return b
+}
+
+// entry returns the persistent Entry for a field (the token field masked as
+// bullets), creating it on first use so it keeps its caret between frames.
+func (v *gitView) entry(f gitField, masked bool) *toolkit.Entry {
+	if e := v.entries[f]; e != nil {
+		return e
+	}
+	e := toolkit.NewEntry("")
+	if masked {
+		e.Mask = '•'
+	}
+	v.entries[f] = e
+	return e
+}
+
+// label returns a reused, pooled Label for the i-th visible text line, growing
+// the pool as needed so no widget is allocated per frame.
+func (v *gitView) label(i int) *toolkit.Label {
+	for len(v.labelPool) <= i {
+		v.labelPool = append(v.labelPool, toolkit.NewLabel(""))
+	}
+	return v.labelPool[i]
+}
+
+// draw paints the launcher and, when open, the overlay panel — entirely from
+// persistent toolkit widgets (a Backdrop scrim + card, Entry fields, Label lines,
+// Button controls), so every element carries its own press / hover / focus
+// feedback and nothing is hand-painted.
 func (v *gitView) draw(p painter.Painter, theme *toolkit.Theme) {
 	v.layout()
+	v.ensureWidgets()
 
-	lb := toolkit.NewButton("Git", nil)
-	lb.SetBounds(v.launcher)
-	lb.Selected().Set(v.open)
-	lb.Draw(p, theme)
+	v.launcherBtn.SetBounds(v.launcher)
+	v.launcherBtn.Selected().Set(v.open)
+	v.launcherBtn.Draw(p, theme)
 
 	if !v.open {
 		return
 	}
 
-	// Dim the scene behind the modal panel.
-	p.FillRect(toolkit.Rect{X: 0, Y: v.s.toolbarH, W: v.s.w, H: v.s.h - v.s.toolbarH - v.s.statusH}, toolkit.RGBA{A: 0x66})
+	// Modal scrim + panel body, each a Backdrop rather than hand-filled rects.
+	v.scrim.SetBounds(toolkit.Rect{X: 0, Y: v.s.toolbarH, W: v.s.w, H: v.s.h - v.s.toolbarH - v.s.statusH})
+	v.scrim.Draw(p, theme)
+	v.card.Fill = theme.Surface
+	v.card.Stroke = theme.Border
+	v.card.StrokeWidth = toolkit.Scaled(1)
+	v.card.SetBounds(v.panel)
+	v.card.Draw(p, theme)
 
-	// Panel body + border.
-	p.FillRect(v.panel, theme.Surface)
-	border := toolkit.Scaled(1)
-	p.FillRect(toolkit.Rect{X: v.panel.X, Y: v.panel.Y, W: v.panel.W, H: border}, theme.Border)
-	p.FillRect(toolkit.Rect{X: v.panel.X, Y: v.panel.Y + v.panel.H - border, W: v.panel.W, H: border}, theme.Border)
-	p.FillRect(toolkit.Rect{X: v.panel.X, Y: v.panel.Y, W: border, H: v.panel.H}, theme.Border)
-	p.FillRect(toolkit.Rect{X: v.panel.X + v.panel.W - border, Y: v.panel.Y, W: border, H: v.panel.H}, theme.Border)
-
-	// Text fields.
+	// Text fields: a real Entry each (own border, text/mask + focus caret).
 	for _, b := range v.boxes {
-		p.FillRect(b.rect, theme.SurfaceAlt)
-		if v.focus == b.field {
-			p.FillRect(toolkit.Rect{X: b.rect.X, Y: b.rect.Y, W: b.rect.W, H: border}, theme.Accent)
-			p.FillRect(toolkit.Rect{X: b.rect.X, Y: b.rect.Y + b.rect.H - border, W: b.rect.W, H: border}, theme.Accent)
-		}
-		text := b.value
-		if b.masked {
-			text = strings.Repeat("•", len([]rune(b.value)))
-		}
-		if v.focus == b.field {
-			text += "|"
-		}
-		toolkit.DrawText(p, b.rect.X+toolkit.Scaled(4), b.rect.Y+toolkit.Scaled(6), text, theme.OnSurface)
+		e := v.entry(b.field, b.masked)
+		e.SetBounds(b.rect)
+		e.SetText(b.value)
+		e.SetFocused(v.focus == b.field)
+		e.Draw(p, theme)
 	}
 
-	for _, l := range v.labels {
-		ink := theme.OnSurface
-		if l.ink.A != 0 {
-			ink = l.ink
-		}
-		toolkit.DrawText(p, l.rect.X, l.rect.Y+toolkit.Scaled(4), l.text, ink)
+	// Static text lines, each a reused Label.
+	for i, l := range v.labels {
+		lb := v.label(i)
+		lb.SetBounds(l.rect)
+		lb.Text().Set(l.text)
+		lb.Ink = l.ink
+		lb.Draw(p, theme)
 	}
+	// Action buttons, each a persistent Button so it depresses on press; the
+	// network buttons go inert (disabled) while an operation is in flight.
 	for _, b := range v.buttons {
-		btn := toolkit.NewButton(b.label, nil)
+		btn := v.btn(b.role, b.arg)
+		btn.Label().Set(b.label)
 		btn.SetBounds(b.rect)
-		if v.busy.Get() && b.role != gitRoleClose {
-			btn.Disabled().Set(true) // network buttons are inert while busy
-		}
+		btn.Disabled().Set(v.busy.Get() && b.role != gitRoleClose)
 		btn.Draw(p, theme)
 	}
 }
 
 // handleClick routes a pointer press to the launcher or, when open, to a panel
-// control. An open panel is modal. Returns whether it consumed the click.
+// control, resolving each hit through the target widget's own HitTest and
+// delivering a toolkit EventClick so a Button depresses + fires through the
+// toolkit. An open panel is modal. Returns whether it consumed the click.
 func (v *gitView) handleClick(x, y int) bool {
 	v.layout()
+	v.ensureWidgets()
 	if !v.open {
-		if v.launcher.Contains(x, y) {
-			v.openPanel()
-			v.refresh()
+		v.launcherBtn.SetBounds(v.launcher)
+		if v.launcherBtn.HitTest(x, y) {
+			v.launcherBtn.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - v.launcher.X, Y: y - v.launcher.Y})
 			return true
 		}
 		return false
 	}
 	// Focus a text field.
 	for _, b := range v.boxes {
-		if b.rect.Contains(x, y) {
+		e := v.entry(b.field, b.masked)
+		e.SetBounds(b.rect)
+		if e.HitTest(x, y) {
 			v.focus = b.field
 			v.refresh()
 			return true
@@ -810,13 +876,43 @@ func (v *gitView) handleClick(x, y int) bool {
 	}
 	v.focus = gitFieldNone
 	for _, b := range v.buttons {
-		if b.rect.Contains(x, y) {
-			v.dispatch(b.role, b.arg)
+		btn := v.btn(b.role, b.arg)
+		btn.SetBounds(b.rect)
+		if btn.HitTest(x, y) {
+			btn.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - b.rect.X, Y: y - b.rect.Y})
 			return true
 		}
 	}
 	v.refresh()
 	return true // modal: swallow everything over the body
+}
+
+// handleMove routes a pointer move over the open modal panel to its buttons so
+// each raises or clears its hover face through the toolkit. A no-op while closed.
+func (v *gitView) handleMove(x, y int) {
+	if !v.open {
+		return
+	}
+	v.layout()
+	v.ensureWidgets()
+	for _, b := range v.buttons {
+		btn := v.btn(b.role, b.arg)
+		btn.SetBounds(b.rect)
+		btn.OnEvent(toolkit.Event{Kind: toolkit.EventMouseMove, X: x - b.rect.X, Y: y - b.rect.Y})
+	}
+	v.s.dirty = true
+}
+
+// handleRelease ends a press: the launcher and every panel button clear their
+// pressed face on the mouseup, so a depress is momentary. Called whenever this
+// view captured the preceding press (even if the action closed the panel).
+func (v *gitView) handleRelease(x, y int) {
+	v.ensureWidgets()
+	v.launcherBtn.OnEvent(toolkit.Event{Kind: toolkit.EventMouseUp, X: x, Y: y})
+	for _, b := range v.btns {
+		b.OnEvent(toolkit.Event{Kind: toolkit.EventMouseUp, X: x, Y: y})
+	}
+	v.refresh()
 }
 
 // dispatch runs the action of a clicked control. Network actions are ignored

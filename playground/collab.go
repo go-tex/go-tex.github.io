@@ -158,6 +158,22 @@ type collabView struct {
 	swatches []collabSwatch
 	nameRect toolkit.Rect
 	iceRect  toolkit.Rect
+
+	// Persistent toolkit widgets the panel is built from — created once and
+	// re-used every frame so they hold their own interactive state (a Button's
+	// pressed/hover face, an Entry's caret) between the mousedown that presses a
+	// control and the mouseup that releases it. The panel draws and routes events
+	// through these instead of hand-painting rectangles + text, so press / hover /
+	// focus feedback is intrinsic to the widgets rather than absent. See the
+	// widget accessors (ensureWidgets / btn / label / swatch).
+	launcherBtn *toolkit.Button
+	scrim       *toolkit.Backdrop              // modal dim behind the panel
+	card        *toolkit.Backdrop              // the panel's Surface body + border
+	btns        map[collabRole]*toolkit.Button // one persistent Button per role
+	nameEntry   *toolkit.Entry
+	iceEntry    *toolkit.Entry
+	labelPool   []*toolkit.Label // reused, one per visible text line
+	swatchPool  []*toolkit.Backdrop
 }
 
 // collabItem is one clickable button in the panel: its role drives dispatch.
@@ -759,75 +775,115 @@ func (v *collabView) connectedSummary() string {
 	}
 }
 
-// draw paints the launcher and, when open, the overlay panel.
+// ensureWidgets lazily builds the persistent toolkit widgets the panel is drawn
+// from and routes events through. Called at the top of every draw / input path so
+// a freshly-constructed view (or a test) always has them.
+func (v *collabView) ensureWidgets() {
+	if v.launcherBtn != nil {
+		return
+	}
+	// The launcher opens the panel from its own OnClick, so a press on it depresses
+	// the pill through the same toolkit path as any other button.
+	v.launcherBtn = toolkit.NewButton("", func() { v.open = true; v.refresh() })
+	v.scrim = &toolkit.Backdrop{Fill: toolkit.RGBA{A: 0x66}, Interactive: true}
+	v.card = &toolkit.Backdrop{}
+	v.btns = map[collabRole]*toolkit.Button{}
+	v.nameEntry = toolkit.NewEntry("")
+	v.iceEntry = toolkit.NewEntry("")
+}
+
+// btn returns the persistent Button for a role, creating it (wired to dispatch
+// that role) on first use so its pressed / hover state survives between frames.
+func (v *collabView) btn(role collabRole) *toolkit.Button {
+	if b := v.btns[role]; b != nil {
+		return b
+	}
+	r := role
+	b := toolkit.NewButton("", func() { v.dispatch(r) })
+	v.btns[role] = b
+	return b
+}
+
+// label / swatch return reused, pooled widgets for the i-th visible text line /
+// colour chip, growing the pool as needed — so no widget is allocated per frame.
+func (v *collabView) label(i int) *toolkit.Label {
+	for len(v.labelPool) <= i {
+		v.labelPool = append(v.labelPool, toolkit.NewLabel(""))
+	}
+	return v.labelPool[i]
+}
+
+func (v *collabView) swatch(i int) *toolkit.Backdrop {
+	for len(v.swatchPool) <= i {
+		v.swatchPool = append(v.swatchPool, &toolkit.Backdrop{})
+	}
+	return v.swatchPool[i]
+}
+
+// draw paints the launcher and, when open, the overlay panel — entirely from
+// persistent toolkit widgets (a Backdrop scrim + card, Entry fields, Label lines,
+// Backdrop swatches, Button controls), so every element carries its own press /
+// hover / focus feedback and nothing is hand-painted.
 func (v *collabView) draw(p painter.Painter, theme *toolkit.Theme) {
 	v.layout()
+	v.ensureWidgets()
 
-	// Launcher pill: green dot when connected.
-	lb := toolkit.NewButton(v.launcherLabel(), nil)
-	lb.SetBounds(v.launcher)
-	// Selected is a shared observable rather than a field, so the state is set
-	// through it; see the toolkit's MVVM migration.
-	lb.Selected().Set(v.open || v.phase == phaseConnected)
-	lb.Draw(p, theme)
+	// Launcher pill: a real Button that depresses on press and lights (Selected)
+	// while the panel is open or a session is live.
+	v.launcherBtn.Label().Set(v.launcherLabel())
+	v.launcherBtn.SetBounds(v.launcher)
+	v.launcherBtn.Selected().Set(v.open || v.phase == phaseConnected)
+	v.launcherBtn.Draw(p, theme)
 
 	if !v.open {
 		return
 	}
 
-	// Dim the scene behind the modal panel.
-	p.FillRect(toolkit.Rect{X: 0, Y: v.s.toolbarH, W: v.s.w, H: v.s.h - v.s.toolbarH - v.s.statusH}, toolkit.RGBA{A: 0x66})
+	// Modal scrim + panel body, each a Backdrop rather than hand-filled rects.
+	v.scrim.SetBounds(toolkit.Rect{X: 0, Y: v.s.toolbarH, W: v.s.w, H: v.s.h - v.s.toolbarH - v.s.statusH})
+	v.scrim.Draw(p, theme)
+	v.card.Fill = theme.Surface
+	v.card.Stroke = theme.Border
+	v.card.StrokeWidth = toolkit.Scaled(1)
+	v.card.SetBounds(v.panel)
+	v.card.Draw(p, theme)
 
-	// Panel body.
-	p.FillRect(v.panel, theme.Surface)
-	border := toolkit.Scaled(1)
-	p.FillRect(toolkit.Rect{X: v.panel.X, Y: v.panel.Y, W: v.panel.W, H: border}, theme.Border)
-	p.FillRect(toolkit.Rect{X: v.panel.X, Y: v.panel.Y + v.panel.H - border, W: v.panel.W, H: border}, theme.Border)
-	p.FillRect(toolkit.Rect{X: v.panel.X, Y: v.panel.Y, W: border, H: v.panel.H}, theme.Border)
-	p.FillRect(toolkit.Rect{X: v.panel.X + v.panel.W - border, Y: v.panel.Y, W: border, H: v.panel.H}, theme.Border)
-
-	// Name field: a bordered box with the name and, when focused, a caret.
+	// Name field: a real Entry (own border, text + focus caret).
 	if v.nameRect.W > 0 {
-		p.FillRect(v.nameRect, theme.SurfaceAlt)
-		if v.nameFocused {
-			p.FillRect(toolkit.Rect{X: v.nameRect.X, Y: v.nameRect.Y, W: v.nameRect.W, H: border}, theme.Accent)
-			p.FillRect(toolkit.Rect{X: v.nameRect.X, Y: v.nameRect.Y + v.nameRect.H - border, W: v.nameRect.W, H: border}, theme.Accent)
-		}
-		nameText := v.name
-		if v.nameFocused {
-			nameText += "|"
-		}
-		toolkit.DrawText(p, v.nameRect.X+toolkit.Scaled(4), v.nameRect.Y+toolkit.Scaled(6), nameText, theme.OnSurface)
+		v.nameEntry.SetBounds(v.nameRect)
+		v.nameEntry.SetText(v.name)
+		v.nameEntry.SetFocused(v.nameFocused)
+		v.nameEntry.Draw(p, theme)
 	}
-
-	// ICE-servers field: a bordered box in the same style as the name field.
+	// ICE-servers field: a real Entry in the same style.
 	if v.iceRect.W > 0 {
-		p.FillRect(v.iceRect, theme.SurfaceAlt)
-		if v.iceFocused {
-			p.FillRect(toolkit.Rect{X: v.iceRect.X, Y: v.iceRect.Y, W: v.iceRect.W, H: border}, theme.Accent)
-			p.FillRect(toolkit.Rect{X: v.iceRect.X, Y: v.iceRect.Y + v.iceRect.H - border, W: v.iceRect.W, H: border}, theme.Accent)
-		}
-		iceText := v.iceText.Get()
-		if v.iceFocused {
-			iceText += "|"
-		}
-		toolkit.DrawText(p, v.iceRect.X+toolkit.Scaled(4), v.iceRect.Y+toolkit.Scaled(6), iceText, theme.OnSurface)
+		v.iceEntry.SetBounds(v.iceRect)
+		v.iceEntry.SetText(v.iceText.Get())
+		v.iceEntry.SetFocused(v.iceFocused)
+		v.iceEntry.Draw(p, theme)
 	}
 
-	for _, l := range v.labels {
-		ink := theme.OnSurface
-		if l.ink.A != 0 {
-			ink = l.ink
-		}
-		toolkit.DrawText(p, l.rect.X, l.rect.Y+toolkit.Scaled(4), l.text, ink)
+	// Static text lines, each a reused Label.
+	for i, l := range v.labels {
+		lb := v.label(i)
+		lb.SetBounds(l.rect)
+		lb.Text().Set(l.text)
+		lb.Ink = l.ink
+		lb.Draw(p, theme)
 	}
-	for _, sw := range v.swatches {
-		p.FillRect(sw.rect, sw.color)
+	// Colour chips, each a reused Backdrop.
+	for i, sw := range v.swatches {
+		sb := v.swatch(i)
+		sb.Fill = sw.color
+		sb.SetBounds(sw.rect)
+		sb.Draw(p, theme)
 	}
-	for _, b := range v.buttons {
-		btn := toolkit.NewButton(b.label, nil)
-		btn.SetBounds(b.rect)
-		btn.Draw(p, theme)
+	// Action buttons, each a persistent Button so it depresses on press.
+	for _, it := range v.buttons {
+		b := v.btn(it.role)
+		b.Label().Set(it.label)
+		b.SetBounds(it.rect)
+		b.Draw(p, theme)
 	}
 }
 
@@ -840,41 +896,81 @@ func (v *collabView) launcherLabel() string {
 }
 
 // handleClick routes a pointer press to the launcher or, when the panel is open,
-// to a panel control. An open panel is modal: it consumes every click over the
-// body so the scene beneath it is inert. Returns whether it consumed the click.
+// to a panel control. Every hit is resolved through the target widget's own
+// HitTest and delivered as a toolkit EventClick, so a Button depresses + fires
+// through the toolkit rather than a hand-written rect test. An open panel is
+// modal: it consumes every click over the body so the scene beneath it is inert.
+// Returns whether it consumed the click.
 func (v *collabView) handleClick(x, y int) bool {
 	v.layout()
+	v.ensureWidgets()
 	if !v.open {
-		if v.launcher.Contains(x, y) {
-			v.open = true
-			v.refresh()
+		v.launcherBtn.SetBounds(v.launcher)
+		if v.launcherBtn.HitTest(x, y) {
+			v.launcherBtn.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - v.launcher.X, Y: y - v.launcher.Y})
 			return true
 		}
 		return false
 	}
-	// Modal: swallow everything, dispatching any control hit.
-	if v.iceRect.W > 0 && v.iceRect.Contains(x, y) {
-		v.nameFocused = false
-		v.iceFocused = true
-		v.refresh()
-		return true
+	// Modal: swallow everything, routing a control hit through the widget's HitTest.
+	if v.iceRect.W > 0 {
+		v.iceEntry.SetBounds(v.iceRect)
+		if v.iceEntry.HitTest(x, y) {
+			v.nameFocused = false
+			v.iceFocused = true
+			v.refresh()
+			return true
+		}
 	}
-	if v.nameRect.Contains(x, y) {
-		v.blurICE() // commit the ICE field if focus is leaving it
-		v.nameFocused = true
-		v.refresh()
-		return true
+	if v.nameRect.W > 0 {
+		v.nameEntry.SetBounds(v.nameRect)
+		if v.nameEntry.HitTest(x, y) {
+			v.blurICE() // commit the ICE field if focus is leaving it
+			v.nameFocused = true
+			v.refresh()
+			return true
+		}
 	}
 	v.blurICE()
 	v.nameFocused = false
-	for _, b := range v.buttons {
-		if b.rect.Contains(x, y) {
-			v.dispatch(b.role)
+	for _, it := range v.buttons {
+		b := v.btn(it.role)
+		b.SetBounds(it.rect)
+		if b.HitTest(x, y) {
+			b.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - it.rect.X, Y: y - it.rect.Y})
 			return true
 		}
 	}
 	v.refresh()
 	return true
+}
+
+// handleMove routes a pointer move over the open modal panel to its buttons so
+// each raises or clears its hover face through the toolkit. A no-op while closed.
+func (v *collabView) handleMove(x, y int) {
+	if !v.open {
+		return
+	}
+	v.layout()
+	v.ensureWidgets()
+	for _, it := range v.buttons {
+		b := v.btn(it.role)
+		b.SetBounds(it.rect)
+		b.OnEvent(toolkit.Event{Kind: toolkit.EventMouseMove, X: x - it.rect.X, Y: y - it.rect.Y})
+	}
+	v.s.dirty = true
+}
+
+// handleRelease ends a press: the launcher and every panel button clear their
+// pressed face on the mouseup, so a depress is momentary. Called whenever this
+// view captured the preceding press (even if the action closed the panel).
+func (v *collabView) handleRelease(x, y int) {
+	v.ensureWidgets()
+	v.launcherBtn.OnEvent(toolkit.Event{Kind: toolkit.EventMouseUp, X: x, Y: y})
+	for _, b := range v.btns {
+		b.OnEvent(toolkit.Event{Kind: toolkit.EventMouseUp, X: x, Y: y})
+	}
+	v.refresh()
 }
 
 // dispatch runs the action of a clicked panel button.
