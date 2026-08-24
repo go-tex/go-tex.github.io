@@ -35,6 +35,21 @@ import (
 // a failure) and, for the default public STUN to yield a reflexive candidate,
 // network egress to a STUN server. It reuses the browser/puppeteer discovery and
 // the wasm-MIME + copyFile helpers from collab_browser_test.go.
+//
+// Environment caveat: STUN alone connects two peers only when their host or
+// server-reflexive candidates can actually reach each other. Two tabs on ONE
+// machine that sits behind a symmetric NAT, or whose default route is a
+// full-tunnel VPN (a POINTOPOINT utun interface), gather only a host candidate
+// that cannot hairpin and a reflexive candidate on a shared public address that
+// the NAT will not hairpin either — so the ICE check reaches "checking" and then
+// "failed" with no relay to fall back on, and this test's connect step times out.
+// That is the network, not the panel: the copy-paste handshake through the panel
+// widgets (Host / Copy / Join / Paste / Accept) still completes, and
+// TestCollabRealPanelWidgetHandshake proves that path deterministically offline.
+// To force a real connection on such a machine, point both tabs at any reachable
+// relay via the driver's ICE_SERVERS env, e.g. a loopback TURN server:
+// ICE_SERVERS="turn:127.0.0.1:3478|user|pass" — the relay candidate hairpins on
+// loopback and the two tabs connect + converge regardless of NAT/VPN.
 func TestCollabTwoTabConvergence(t *testing.T) {
 	required := os.Getenv("GOTEX_REQUIRE_BROWSER") != ""
 	need := func(what, path string, err error) string {
