@@ -46,7 +46,9 @@ jobs:
         with:
           go-version: "1.26.4"
       - name: Install bricolint
-        run: go install github.com/go-widgets/bricolint/cmd/bricolint@latest
+        # Pinned to @main until go-widgets/bricolint cuts its first tag; switch
+        # to a version pin (e.g. @v0.1.0) once tagged.
+        run: go install github.com/go-widgets/bricolint/cmd/bricolint@main
       - name: Guard against hand-drawn UI
         run: go vet -vettool="$(go env GOPATH)/bin/bricolint" ./...
       - name: Negative control (the guard must bite)
