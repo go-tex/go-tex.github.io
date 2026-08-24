@@ -29,3 +29,26 @@ jobs:
         run: go test -race -cover ./...
       - name: cross-compile to js/wasm
         run: GOOS=js GOARCH=wasm go build ./...
+
+  bricolint:
+    # Guard against new hand-drawn UI: no painter primitives in app code, no
+    # per-frame throwaway widgets. Genuine leaves opt out with a reasoned
+    # //bricolint:allow directive; everything else must be a toolkit widget.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: playground
+    env:
+      GOWORK: "off"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.4"
+      - name: Install bricolint
+        # Pinned to a version tag; bump when go-widgets/bricolint releases.
+        run: go install github.com/go-widgets/bricolint/cmd/bricolint@v0.1.0
+      - name: Guard against hand-drawn UI
+        run: go vet -vettool="$(go env GOPATH)/bin/bricolint" ./...
+      - name: Negative control (the guard must bite)
+        run: BRICOLINT="$(go env GOPATH)/bin/bricolint" bash hack/bricolint-negative-control.sh

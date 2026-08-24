@@ -64,6 +64,11 @@ type wysiwyg struct {
 	toolbar *toolkit.RichEditorToolbar
 	tabs    *toolkit.FolderTabs
 
+	// parseErrBand is the ground of the parse-error strip: a persistent Backdrop
+	// rather than a hand-filled rect (so it passes bricolint like every other
+	// element).
+	parseErrBand *toolkit.Backdrop
+
 	parseErr string
 	pressing bool
 
@@ -76,7 +81,7 @@ type wysiwyg struct {
 // (it is fed a parsed document when the WYSIWYG tab is first selected); the tab
 // strip flips the mode.
 func newWysiwyg(s *State) *wysiwyg {
-	w := &wysiwyg{s: s, editor: toolkit.NewRichEditor(nil)}
+	w := &wysiwyg{s: s, editor: toolkit.NewRichEditor(nil), parseErrBand: &toolkit.Backdrop{}}
 	// The formatting toolbar is bound to the one RichEditor for the whole app's
 	// life: it drives the editor's verbs and lights the buttons whose formatting is
 	// in force at the caret (it subscribes to the editor's Caret/Selection/Doc). It
@@ -268,7 +273,9 @@ func (s *State) wysiwygDraw(p painter.Painter) {
 	if w.parseErr != "" {
 		r := s.editor.Bounds()
 		band := toolkit.Rect{X: r.X, Y: r.Y, W: r.W, H: toolkit.Scaled(22)}
-		p.FillRect(band, s.theme.SurfaceAlt)
+		w.parseErrBand.Fill = s.theme.SurfaceAlt
+		w.parseErrBand.SetBounds(band)
+		w.parseErrBand.Draw(p, s.theme)
 		toolkit.DrawText(p, r.X+toolkit.Scaled(8), r.Y+toolkit.Scaled(6), "Parse error: "+w.parseErr, s.theme.Accent)
 	}
 }
