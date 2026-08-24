@@ -81,7 +81,9 @@ const (
 	pressDivider
 	pressEditor
 	pressMinimap
-	pressRight // the render ScrollView or the Log view (paned.Second)
+	pressRight  // the render ScrollView or the Log view (paned.Second)
+	pressCollab // the modal Collaborate panel captured the press
+	pressGit    // the modal Remote-Git panel captured the press
 )
 
 // SetupText installs the toolkit's anti-aliased text and metric scale for a
@@ -757,11 +759,14 @@ func (s *State) onDivider(x, y int) bool {
 // HandleClick routes a pointer press and captures it for a following drag.
 func (s *State) HandleClick(x, y int) bool {
 	// The Collaborate / Git launchers + panels get first refusal; an open panel is
-	// modal.
+	// modal. Record the capture so the following move/release reach the same panel
+	// (that mouseup is what clears a button's momentary pressed face).
 	if s.collab.handleClick(x, y) {
+		s.pressKind = pressCollab
 		return true
 	}
 	if s.git.handleClick(x, y) {
+		s.pressKind = pressGit
 		return true
 	}
 	s.pressKind = pressNone
@@ -847,6 +852,16 @@ func (s *State) HandleClick(x, y int) bool {
 // divider and the scrollbar thumbs draggable (previously a no-op, so move/up
 // were discarded and no widget ever received EventMouseDrag).
 func (s *State) HandleMove(x, y int) bool {
+	// An open Collaborate / Git panel is modal: route the move to it for button
+	// hover feedback regardless of whether a button is pressed.
+	if s.collab.open {
+		s.collab.handleMove(x, y)
+		return true
+	}
+	if s.git.open {
+		s.git.handleMove(x, y)
+		return true
+	}
 	if s.wysiwygMove(x, y) { // WYSIWYG RichEditor drag (wysiwyg.go)
 		return true
 	}
@@ -878,6 +893,18 @@ func (s *State) HandleMove(x, y int) bool {
 
 // HandleRelease ends a captured drag, delivering EventMouseUp to the target.
 func (s *State) HandleRelease(x, y int) bool {
+	// A Collaborate / Git panel that captured the press gets the release even if
+	// the action closed it — the mouseup clears the pressed button faces.
+	if s.pressKind == pressCollab {
+		s.collab.handleRelease(x, y)
+		s.pressKind = pressNone
+		return true
+	}
+	if s.pressKind == pressGit {
+		s.git.handleRelease(x, y)
+		s.pressKind = pressNone
+		return true
+	}
 	if s.wysiwygRelease(x, y) { // end a WYSIWYG RichEditor drag (wysiwyg.go)
 		return true
 	}
