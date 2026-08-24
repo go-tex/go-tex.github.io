@@ -27,6 +27,7 @@ type fakeBackend struct {
 	gotAnswer string // the answer passed to AcceptAnswer
 
 	connected bool
+	failed    bool
 	peers     int
 	onChange  func()
 
@@ -50,6 +51,7 @@ func (f *fakeBackend) AcceptAnswer(answer string, done func(error)) {
 
 func (f *fakeBackend) Disconnect()          { f.disconnected = true }
 func (f *fakeBackend) Connected() bool      { return f.connected }
+func (f *fakeBackend) ConnFailed() bool     { return f.failed }
 func (f *fakeBackend) PeerCount() int       { return f.peers }
 func (f *fakeBackend) SetOnChange(h func()) { f.onChange = h }
 
@@ -191,6 +193,112 @@ func TestOnBackendChangeConnectAndDrop(t *testing.T) {
 	f.onChange()
 	if s.CollabPhase() != int(phaseIdle) || s.collab.errMsg == "" {
 		t.Fatalf("after drop: phase=%d errMsg=%q", s.CollabPhase(), s.collab.errMsg)
+	}
+}
+
+// TestOnBackendChangeFailure drives the backend to its no-path failure state and
+// asserts the panel surfaces the TURN guidance and offers a reset, rather than
+// waiting silently — the state-machine proof for the ICE-failure UX fix.
+func TestOnBackendChangeFailure(t *testing.T) {
+	s, f, repaints := withFake(t)
+	s.collab.open = true
+	s.collab.phase = phaseGuestWait // waiting for the host to connect
+	s.collab.offer, s.collab.answer = "OFFER", "ANSWER"
+
+	// The connection attempt fails (ICE found no candidate pair): the backend
+	// reports it, the change hook moves the panel to the failed state.
+	f.failed = true
+	before := *repaints
+	f.onChange()
+
+	if s.CollabPhase() != int(phaseFailed) {
+		t.Fatalf("phase after failure = %d, want failed(%d)", s.CollabPhase(), int(phaseFailed))
+	}
+	// The guidance is exposed and names the TURN fix.
+	msg := s.CollabFailureMessage()
+	if !strings.Contains(msg, "TURN server") || !strings.Contains(msg, "Connection failed") {
+		t.Fatalf("failure message = %q, want the TURN guidance", msg)
+	}
+	// Stale signalling blobs are cleared and busy is dropped.
+	if s.CollabOffer() != "" || s.CollabAnswer() != "" || s.collab.busy {
+		t.Fatalf("after failure: offer=%q answer=%q busy=%v", s.CollabOffer(), s.CollabAnswer(), s.collab.busy)
+	}
+	// The failure repainted the panel.
+	if *repaints == before {
+		t.Fatal("failure did not repaint")
+	}
+
+	// The failed panel renders the guidance as visible labels (wrapped), and a
+	// "Try again" reset button — the way back to idle.
+	s.collab.layout()
+	var text string
+	var tryAgain bool
+	for _, l := range s.collab.labels {
+		text += l.text + " "
+	}
+	for _, b := range s.collab.buttons {
+		if b.label == "Try again" {
+			tryAgain = true
+		}
+	}
+	if !strings.Contains(text, "TURN server") {
+		t.Fatalf("failed panel labels do not show the guidance: %q", text)
+	}
+	if !tryAgain {
+		t.Fatal("failed panel has no Try again reset button")
+	}
+
+	// A second change while already failed is idempotent (no re-entry).
+	f.onChange()
+	if s.CollabPhase() != int(phaseFailed) {
+		t.Fatal("failed phase should stay put on a repeated change")
+	}
+
+	// Try again resets to idle and tears the attempt down.
+	s.collab.dispatch(roleCancel)
+	if s.CollabPhase() != int(phaseIdle) || !f.disconnected {
+		t.Fatalf("after Try again: phase=%d disconnected=%v", s.CollabPhase(), f.disconnected)
+	}
+	if s.CollabFailureMessage() != "" {
+		t.Fatalf("failure message should clear at idle, got %q", s.CollabFailureMessage())
+	}
+}
+
+// TestOnBackendChangeConnectClearsFailure proves a later successful connect wins
+// over a prior failure flag and clears any residual error text.
+func TestOnBackendChangeConnectClearsFailure(t *testing.T) {
+	s, f, _ := withFake(t)
+	s.collab.phase, s.collab.errMsg = phaseGuestWait, "stale"
+	f.connected = true
+	f.onChange()
+	if s.CollabPhase() != int(phaseConnected) || s.collab.errMsg != "" {
+		t.Fatalf("connect did not clear: phase=%d errMsg=%q", s.CollabPhase(), s.collab.errMsg)
+	}
+}
+
+func TestWrapWords(t *testing.T) {
+	// Reconstructs the source when wrapped, and honours the budget.
+	lines := wrapWords(collabFailedMsg, failedWrap)
+	if len(lines) < 2 {
+		t.Fatalf("expected the message to wrap onto several lines, got %d", len(lines))
+	}
+	if got := strings.Join(lines, " "); got != collabFailedMsg {
+		t.Fatalf("join(wrapWords) = %q, want %q", got, collabFailedMsg)
+	}
+	for _, l := range lines {
+		if len([]rune(l)) > failedWrap {
+			t.Fatalf("line %q exceeds budget %d", l, failedWrap)
+		}
+	}
+	// A single word longer than the budget still gets its own unbroken line (a URL
+	// is not chopped).
+	long := "turn:relay.example.org:3478|verylongusername|verylongsecretvalue"
+	if got := wrapWords(long, 10); len(got) != 1 || got[0] != long {
+		t.Fatalf("over-long word wrap = %v, want one unbroken line", got)
+	}
+	// An empty / all-space string yields no lines.
+	if got := wrapWords("   ", 10); got != nil {
+		t.Fatalf("wrapWords(blank) = %v, want nil", got)
 	}
 }
 
@@ -459,6 +567,7 @@ func TestCollabDrawEveryPhase(t *testing.T) {
 		{"guestOffer", func() { v.phase = phaseGuestOffer }},
 		{"guestWait", func() { v.phase, v.answer = phaseGuestWait, "ANSWER" }},
 		{"connected", func() { v.phase = phaseConnected }},
+		{"failed", func() { v.phase, v.errMsg = phaseFailed, "" }},
 		{"error", func() { v.phase, v.errMsg = phaseIdle, "boom" }},
 		{"name-focused", func() { v.phase, v.errMsg, v.nameFocused = phaseIdle, "", true }},
 		{"ice-focused", func() { v.phase, v.errMsg, v.nameFocused, v.iceFocused = phaseIdle, "", false, true }},
@@ -493,8 +602,8 @@ func TestCollabSetNameAndOpen(t *testing.T) {
 
 func TestNopBackend(t *testing.T) {
 	var b nopBackend
-	if b.Connected() || b.PeerCount() != 0 {
-		t.Fatal("nop backend should be unconnected with no peers")
+	if b.Connected() || b.ConnFailed() || b.PeerCount() != 0 {
+		t.Fatal("nop backend should be unconnected, not failed, with no peers")
 	}
 	b.SetOnChange(func() {})
 	b.Disconnect()

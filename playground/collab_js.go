@@ -10,11 +10,30 @@ import (
 	cryptorand "crypto/rand"
 	"encoding/binary"
 	"syscall/js"
+	"time"
 
 	"github.com/go-crdt/collab"
 	"github.com/go-crdt/crdt"
 	"github.com/go-widgets/toolkit"
 )
+
+// connectTimeout bounds the wait for the WebRTC data channel to open after the
+// handshake blobs are swapped. When ICE finds no candidate pair — the common
+// full-tunnel-VPN / symmetric-NAT case, where STUN-only cannot traverse — the
+// channel never opens and never errors, so the wait would otherwise hang
+// forever. On expiry the backend reports a connection failure so the panel shows
+// the TURN-server guidance instead of a silent "waiting". It is generous enough
+// that slow-but-working ICE (relayed candidates, a distant peer) still connects.
+// It is a var, not a const, only so the headless failure proof
+// (cmd/collab-failtest) can shorten it via [SetCollabConnectTimeout]; production
+// never changes it.
+var connectTimeout = 25 * time.Second
+
+// SetCollabConnectTimeout overrides the data-channel open-wait deadline. It is a
+// test/debug seam for the headless failure proof, which shortens it so an
+// unreachable-peer failure surfaces in seconds instead of the production default;
+// ordinary use never calls it.
+func SetCollabConnectTimeout(d time.Duration) { connectTimeout = d }
 
 // This is the browser half of the collaborative-editing feature — the
 // syscall/js glue behind the [collabBackend] seam in collab.go. It opens the
@@ -115,6 +134,7 @@ type webrtcBackend struct {
 	ct         *toolkit.CollabText // the binding of s.editor to the shared text part
 
 	connected bool
+	failed    bool // the connection attempt failed with no path to the peer
 }
 
 // SetOnChange installs the view's change hook; the backend fires it on connect,
@@ -130,9 +150,22 @@ func (b *webrtcBackend) notify() {
 	}
 }
 
-// session (re)creates the per-session context.
+// session (re)creates the per-session context and clears the previous attempt's
+// terminal state, so a "Try again" after a failure starts clean.
 func (b *webrtcBackend) session() {
 	b.ctx, b.cancel = context.WithCancel(context.Background())
+	b.connected, b.failed = false, false
+}
+
+// openChannel waits for the peer's data channel to open, but no longer than
+// [connectTimeout]: an unreachable peer (no ICE candidate pair) opens no channel
+// and fires no error, so an unbounded wait would hang the panel silently. A
+// deadline hit is reported to the caller as [context.DeadlineExceeded], which the
+// handshake paths turn into a [webrtcBackend.fail].
+func (b *webrtcBackend) openChannel(peer *collab.Peer) (js.Value, error) {
+	ctx, cancel := context.WithTimeout(b.ctx, connectTimeout)
+	defer cancel()
+	return peer.DataChannel(ctx)
 }
 
 // Host starts a hosting session: it runs a server, joins it over an in-process
@@ -195,7 +228,7 @@ func (b *webrtcBackend) AcceptAnswer(answer string, done func(error)) {
 			return
 		}
 		done(nil)
-		ch, err := b.remotePeer.DataChannel(b.ctx)
+		ch, err := b.openChannel(b.remotePeer)
 		if err != nil {
 			b.fail(err)
 			return
@@ -224,7 +257,7 @@ func (b *webrtcBackend) Join(name string, color toolkit.RGBA, offer string, done
 		}
 		done(answer, nil)
 
-		ch, err := peer.DataChannel(b.ctx) // waits for the host to accept
+		ch, err := b.openChannel(peer) // waits for the host to accept, bounded
 		if err != nil {
 			b.fail(err)
 			return
@@ -284,11 +317,15 @@ func (b *webrtcBackend) Disconnect() {
 	if b.cancel != nil {
 		b.cancel()
 	}
-	b.connected = false
+	b.connected, b.failed = false, false
 }
 
 // Connected reports whether the remote channel is open.
 func (b *webrtcBackend) Connected() bool { return b.connected }
+
+// ConnFailed reports whether the last attempt failed with no path to the peer,
+// so the view moves the panel to its failed state with the TURN guidance.
+func (b *webrtcBackend) ConnFailed() bool { return b.failed }
 
 // PeerCount is how many OTHER participants share the document (the presence
 // registry includes this replica, which is excluded here).
@@ -312,12 +349,19 @@ func (b *webrtcBackend) setConnected(v bool) {
 	b.notify()
 }
 
-// fail records a post-handshake failure on the panel and drops the connection.
+// fail records a connection failure (no path to the peer: the open-wait timed
+// out, or the channel errored) and wakes the view, which moves the panel to its
+// failed state with the TURN guidance. A user-initiated teardown cancels b.ctx
+// and surfaces here as context.Canceled through the blocked open-wait; that is
+// not a failure to show — the panel is already returning to idle — so it is
+// ignored.
 func (b *webrtcBackend) fail(err error) {
+	_ = err // the specific transport error is not shown; the panel gives actionable guidance
 	b.connected = false
-	if b.s.collab != nil {
-		b.s.collab.errMsg = err.Error()
+	if b.ctx != nil && b.ctx.Err() != nil {
+		return // torn down by the user, not a connection failure
 	}
+	b.failed = true
 	b.notify()
 }
 
