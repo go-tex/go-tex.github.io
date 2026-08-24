@@ -119,6 +119,14 @@ type State struct {
 	schemePicker *toolkit.DropDown
 	minimapBtn   *toolkit.Button
 
+	// Chrome grounds that were once hand-filled rectangles, now persistent
+	// Backdrop widgets (so they carry theming/HiDPI like every other element and
+	// pass bricolint): the toolbar surface, its bottom hairline, and the
+	// compile-error band drawn by drawError.
+	toolbarBg   *toolkit.Backdrop
+	toolbarRule *toolkit.Backdrop
+	errorBand   *toolkit.Backdrop
+
 	// collab is the live collaborative-editing affordance (Collaborate launcher +
 	// modal panel + WebRTC session). Self-contained in collab.go / collab_js.go;
 	// the fields below are the only app.go hooks it needs.
@@ -255,6 +263,12 @@ func NewState(w, h int, dark bool) *State {
 		s.layout()
 		s.dirty = true
 	})
+
+	// Persistent chrome grounds (see the struct fields): built once, positioned
+	// and drawn each frame, replacing hand-filled rectangles.
+	s.toolbarBg = &toolkit.Backdrop{}
+	s.toolbarRule = &toolkit.Backdrop{}
+	s.errorBand = &toolkit.Backdrop{}
 
 	s.status = toolkit.NewStatusbar([]string{"Ln 1, Col 1", "UTF-8", "0 pages", ""})
 	s.collab = newCollabView(s) // Collaborate affordance (see collab.go)
@@ -697,9 +711,14 @@ func (s *State) Draw(buf []byte) {
 	fillRGBA(buf, s.theme.Background)
 	p := painter.NewPixelPainter(buf, s.w, s.h)
 
-	// Toolbar.
-	p.FillRect(toolkit.Rect{X: 0, Y: 0, W: s.w, H: s.toolbarH}, s.theme.Surface)
-	p.FillRect(toolkit.Rect{X: 0, Y: s.toolbarH - toolkit.Scaled(1), W: s.w, H: toolkit.Scaled(1)}, s.theme.Border)
+	// Toolbar ground + bottom hairline, each a Backdrop rather than a hand-filled
+	// rect.
+	s.toolbarBg.Fill = s.theme.Surface
+	s.toolbarBg.SetBounds(toolkit.Rect{X: 0, Y: 0, W: s.w, H: s.toolbarH})
+	s.toolbarBg.Draw(p, s.theme)
+	s.toolbarRule.Fill = s.theme.Border
+	s.toolbarRule.SetBounds(toolkit.Rect{X: 0, Y: s.toolbarH - toolkit.Scaled(1), W: s.w, H: toolkit.Scaled(1)})
+	s.toolbarRule.Draw(p, s.theme)
 	s.schemePicker.Draw(p, s.theme)
 	s.minimapBtn.Draw(p, s.theme)
 
@@ -737,7 +756,9 @@ func (s *State) Draw(buf []byte) {
 func (s *State) drawError(p painter.Painter) {
 	r := s.renderContentRect()
 	band := toolkit.Rect{X: r.X, Y: r.Y, W: r.W, H: toolkit.Scaled(22)}
-	p.FillRect(band, s.theme.SurfaceAlt)
+	s.errorBand.Fill = s.theme.SurfaceAlt
+	s.errorBand.SetBounds(band)
+	s.errorBand.Draw(p, s.theme)
 	toolkit.DrawText(p, r.X+toolkit.Scaled(8), r.Y+toolkit.Scaled(6), "Error: "+s.errText, s.theme.Accent)
 }
 
