@@ -10,14 +10,21 @@
 # Copyright (c) 2026 the go-tex playground authors. BSD-3-Clause.
 set -euo pipefail
 
+# Never let a parent go.work turn the clean-tree vet into a false failure.
+export GOWORK=off
+
 BRICOLINT="${BRICOLINT:-bricolint}"
 TARGET="app.go"
 BACKUP="$(mktemp)"
+RESTORE=0
 MARK="bricolint-negative-control"
 ANCHOR="p := painter.NewPixelPainter(buf, s.w, s.h)"
 INJECT="	p.FillRect(toolkit.Rect{X: 0, Y: 0, W: 10, H: 10}, s.theme.Accent) // $MARK synthetic bricolage"
 
-cleanup() { [ -f "$BACKUP" ] && mv "$BACKUP" "$TARGET"; return 0; }
+# Restore the target ONLY when a real backup was taken (RESTORE=1) and it is
+# non-empty. Without this guard, a failure of the clean-tree vet below — before
+# the backup is populated — would mv the empty mktemp over $TARGET and wipe it.
+cleanup() { [ "$RESTORE" = 1 ] && [ -s "$BACKUP" ] && mv "$BACKUP" "$TARGET"; rm -f "$BACKUP"; return 0; }
 trap cleanup EXIT
 
 run() { go vet -vettool="$BRICOLINT" . >/dev/null 2>&1; }
@@ -31,7 +38,7 @@ echo "ok: clean tree passes bricolint"
 
 # 2. Inject a raw painter primitive on the line after the painter is created in
 #    Draw. Plain awk keeps the substitution free of regex/quoting hazards.
-cp "$TARGET" "$BACKUP"
+cp "$TARGET" "$BACKUP"; RESTORE=1   # arm restore ONLY once the backup is real
 awk -v anchor="$ANCHOR" -v inject="$INJECT" \
   'BEGIN{done=0} {print} (index($0, anchor) && !done){print inject; done=1}' \
   "$BACKUP" >"$TARGET"
