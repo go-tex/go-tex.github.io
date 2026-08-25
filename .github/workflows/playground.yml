@@ -30,6 +30,52 @@ jobs:
       - name: cross-compile to js/wasm
         run: GOOS=js GOARCH=wasm go build ./...
 
+  browser-proofs:
+    # Real headless-Chrome proofs. The playground/*_browser_test.go files drive an
+    # actual Chrome through puppeteer-core and assert on the rendered page, so they
+    # catch real-page regressions (e.g. the #46 full-width/height break) that the
+    # unit lanes miss. They SKIP when no browser is present; GOTEX_REQUIRE_BROWSER=1
+    # turns a missing browser into a FAILURE, so this job cannot pass by skipping.
+    #
+    # The -run selector includes only the same-origin, deterministic proofs:
+    # BroadcastChannel local collab, find/replace, sidebar, zones, text layer,
+    # toolbar, WYSIWYG, and the two-wasm git worker (a local CORS origin, no
+    # external network). It deliberately EXCLUDES the live-WebRTC collab proofs
+    # (TestCollabBrowserConvergence, TestCollabTwoTabConvergence) and the STUN/ICE
+    # config proofs (TestCollabICEFieldBrowser, TestCollabFailureBrowser): those
+    # need STUN network egress and are known-flaky in CI sandboxes.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: playground
+    env:
+      GOWORK: "off"
+      GOTEX_REQUIRE_BROWSER: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.4"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install headless Chrome
+        id: chrome
+        uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0
+        with:
+          chrome-version: stable
+          install-dependencies: true
+      - name: Install puppeteer-core
+        run: npm install --no-save --prefix "${{ runner.temp }}/puppeteer" puppeteer-core@24.43.1
+      - name: Run the deterministic browser proofs
+        env:
+          CHROME: ${{ steps.chrome.outputs.chrome-path }}
+          GOTEX_BROWSER_NODE_PATH: ${{ runner.temp }}/puppeteer/node_modules
+        run: >
+          go test -v -count=1
+          -run '^(TestFindReplaceBrowserWiring|TestSidebarLayoutBrowser|TestRenderIsSearchableInABrowser|TestToolbarBrowserWiring|TestWysiwygV02BrowserProof|TestZonesFullHeightBrowser|TestCollabLocalTabConvergence|TestCollabLocalTabSequentialConvergence|TestGitWorkerTwoWasmE2E)$'
+          .
+
   bricolint:
     # Guard against new hand-drawn UI: no painter primitives in app code, no
     # per-frame throwaway widgets. Genuine leaves opt out with a reasoned
