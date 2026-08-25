@@ -116,7 +116,7 @@ const (
 	pressCollab  // the modal Collaborate panel captured the press
 	pressGit     // the modal Remote-Git panel captured the press
 	pressSidebar // the workspace sidebar (left column) captured the press
-	pressFind    // the floating find-and-replace bar captured the press
+	pressFind    // the find-and-replace modal captured the press
 )
 
 // SetupText installs the toolkit's anti-aliased text and metric scale for a
@@ -184,11 +184,11 @@ type State struct {
 	sidebar    *sidebar
 	sidebarBtn *toolkit.Button
 
-	// fr is the regex find-and-replace affordance for the Source editor: a
-	// floating top-right bar (toolkit.FindReplace, v0.252.0) that this host drives
-	// over the editor buffer — running the regexp, pushing the count back and
-	// painting the match highlights. Self-contained in findreplace.go; findBtn is
-	// its toolbar toggle (⌘F/Ctrl+F is the keyboard peer).
+	// fr is the regex find-and-replace affordance: a MODAL window (toolkit
+	// v0.254.0 NewSearchModal, v0.253.0 RichEditor highlights) whose top input bar
+	// is the regex query, driven over WHICHEVER editor is active — the Source
+	// CodeEditor or the WYSIWYG RichEditor. Self-contained in findreplace.go;
+	// findBtn is its toolbar toggle (⌘F/Ctrl+F is the keyboard peer).
 	fr      *findReplace
 	findBtn *toolkit.Button
 
@@ -366,9 +366,9 @@ func NewState(w, h int, dark bool) *State {
 		s.dirty = true
 	})
 
-	// Regex find-and-replace over the Source editor (findreplace.go). The toolbar
-	// button toggles the floating bar; ⌘F/Ctrl+F is its keyboard peer (wired in
-	// the wasm driver to ToggleFindReplace).
+	// Regex find-and-replace over the active editor (findreplace.go). The toolbar
+	// button toggles the modal; ⌘F/Ctrl+F is its keyboard peer (wired in the wasm
+	// driver to ToggleFindReplace).
 	s.fr = newFindReplace(s)
 	s.findBtn = toolkit.NewButton("Find", func() {
 		s.fr.toggle()
@@ -608,8 +608,8 @@ func (s *State) SetSource(text string) {
 	s.dirty = true
 }
 
-// ToggleFindReplace shows or hides the regex find-and-replace bar over the
-// Source editor and relays out. It is the host hook the wasm driver wires to the
+// ToggleFindReplace shows or hides the regex find-and-replace modal over the
+// active editor and relays out. It is the host hook the wasm driver wires to the
 // ⌘F/Ctrl+F keydown (the toolbar Find button drives the same fr.toggle). It
 // always reports true so the driver re-renders after the toggle.
 func (s *State) ToggleFindReplace() bool {
@@ -619,8 +619,8 @@ func (s *State) ToggleFindReplace() bool {
 	return true
 }
 
-// FindVisible reports whether the find bar is open — the wasm driver reads it to
-// decide whether a Shift+Enter should reach the bar (previous match) rather than
+// FindVisible reports whether the find modal is open — the wasm driver reads it to
+// decide whether a Shift+Enter should reach the modal (previous match) rather than
 // the editor.
 func (s *State) FindVisible() bool { return s.fr.visible() }
 
@@ -686,26 +686,20 @@ func (s *State) CaretPixel(line, col int) (int, int) {
 	return x + 1, y + s.editor.EffectiveFont().Height()/2
 }
 
-// Find-and-replace host introspection for the headless proof: the bar's count
+// Find-and-replace host introspection for the headless proof: the modal's count
 // state and a device-pixel point inside each match's highlight band, so the
 // browser harness can read the count AND sample the canvas to prove the
-// highlights land on the matches.
-func (s *State) FindTotal() int        { return s.fr.fr.Total().Get() }
-func (s *State) FindCurrent() int      { return s.fr.fr.Current().Get() }
-func (s *State) FindCountText() string { return s.fr.fr.CountText() }
-func (s *State) FindInvalid() bool     { return s.fr.fr.Invalid().Get() }
+// highlights land on the matches. They read the host's own match state (and the
+// ACTIVE editor's highlight geometry), so they report on whichever editor —
+// Source or WYSIWYG — the search is targeting.
+func (s *State) FindTotal() int        { return len(s.fr.matches) }
+func (s *State) FindCurrent() int      { return s.fr.current }
+func (s *State) FindCountText() string { return s.fr.countText() }
+func (s *State) FindInvalid() bool     { return s.fr.invalid }
 
 // FindMatchPoints returns a device-pixel point just inside each current match's
-// highlight band (its start cell, via CaretPixel), in the editor's match order.
-func (s *State) FindMatchPoints() [][2]int {
-	hl := s.editor.MatchHighlights()
-	pts := make([][2]int, 0, len(hl))
-	for _, m := range hl {
-		x, y := s.CaretPixel(m.StartLine, m.StartCol)
-		pts = append(pts, [2]int{x, y})
-	}
-	return pts
-}
+// highlight band (its start cell), in the active editor's match order.
+func (s *State) FindMatchPoints() [][2]int { return s.fr.target().matchPoints() }
 
 // LogEntryCount returns how many entries the diagnostics Log has accumulated
 // (proving the history builds up across compiles, newest at the bottom, rather
@@ -802,7 +796,7 @@ func (s *State) layout() {
 	s.layoutToolbar()
 	s.applyLeftSplit()
 	s.wysiwygLayout() // editor-pane Source│WYSIWYG tab strip + RichEditor bounds (wysiwyg.go)
-	s.fr.layout()     // floating find bar anchored over the editor pane (findreplace.go)
+	s.fr.layout()     // find-and-replace modal: scrim + panel over the editor pane (findreplace.go)
 }
 
 // layoutToolbar places the colour-scheme picker and the minimap toggle
@@ -980,10 +974,6 @@ func (s *State) Draw(buf []byte) {
 	// editor pane and its own format popover (wysiwyg.go).
 	s.wysiwygDraw(p)
 
-	// The floating find-and-replace bar floats over the editor pane, above the
-	// code and its highlighted matches (a no-op while hidden).
-	s.fr.draw(p, s.theme)
-
 	// Popover floats above everything.
 	if s.schemePicker.Open().Get() {
 		s.schemePicker.DrawPopover(p, s.theme)
@@ -992,6 +982,10 @@ func (s *State) Draw(buf []byte) {
 	// scene.
 	s.collab.draw(p, s.theme)
 	s.git.draw(p, s.theme)
+
+	// The find-and-replace modal (scrim + panel) is topmost of all, above the
+	// popover and the other launchers (a no-op while hidden).
+	s.fr.draw(p, s.theme)
 	s.dirty = false
 }
 
@@ -1023,7 +1017,15 @@ func (s *State) onDivider(x, y int) bool {
 
 // HandleClick routes a pointer press and captures it for a following drag.
 func (s *State) HandleClick(x, y int) bool {
-	// The Collaborate / Git launchers + panels get first refusal; an open panel is
+	// The find-and-replace modal, when open, is modal: it captures EVERY click (a
+	// panel control, or the scrim outside it, which dismisses). It gets first
+	// refusal so nothing beneath the scrim reacts. handleClick returns false while
+	// the modal is closed, so this is inert then.
+	if s.fr.handleClick(x, y) {
+		s.pressKind = pressFind
+		return true
+	}
+	// The Collaborate / Git launchers + panels get next refusal; an open panel is
 	// modal. Record the capture so the following move/release reach the same panel
 	// (that mouseup is what clears a button's momentary pressed face).
 	if s.collab.handleClick(x, y) {
@@ -1032,13 +1034,6 @@ func (s *State) HandleClick(x, y int) bool {
 	}
 	if s.git.handleClick(x, y) {
 		s.pressKind = pressGit
-		return true
-	}
-	// The floating find bar sits over the editor pane; a click on one of its
-	// controls goes to it before the editor beneath (a click elsewhere in the
-	// pane falls through, so the editor still works while the bar is open).
-	if s.fr.handleClick(x, y) {
-		s.pressKind = pressFind
 		return true
 	}
 	s.pressKind = pressNone

@@ -1,35 +1,33 @@
 // Headless-browser driver for the playground's regex find-and-replace MODAL,
-// targeting the SOURCE editor.
+// targeting the WYSIWYG editor (the RichEditor).
 //
 // It loads the REAL playground app (cmd/playground-wasm) in a real Chrome at
 // devicePixelRatio 2 and drives it exactly as a person would — no back door into
 // Go state, only real keyboard events + the page's gotex* debug read-outs and the
 // canvas pixels:
 //
-//   1. Seed a document with three "foo" occurrences on three lines.
-//   2. Press ⌘F/Ctrl+F -> the find MODAL opens (gotexFindDebug().visible), its
-//      top input bar pre-focused.
+//   1. Seed LaTeX whose body parses into two paragraphs holding three "foo"
+//      occurrences, then switch to the WYSIWYG tab (gotexSetEditorTab(1)); assert
+//      gotexWysiwygDebug().active.
+//   2. Press ⌘F/Ctrl+F -> the find MODAL opens over the RichEditor.
 //   3. Type the regex "foo" into the modal's input bar -> the count reads
-//      "1 of 3" and three highlight points are reported.
+//      "1 of 3" and three highlight points (in the RichEditor) are reported.
 //   4. Prove HIGHLIGHT PIXELS appear on the matches (through the modal's dimming
 //      scrim): the canvas region around each match differs with the query typed
-//      vs cleared (band present vs gone).
-//   5. Press Enter (next) -> current advances to match 1 AND the strong
-//      current-match emphasis moves off match 0 onto match 1 (both regions
-//      change colour).
-//   6. Prove the layout is unbroken: the canvas backing store is the CSS box ×
-//      dpr and the editor pane spans a real width.
-//   7. Press Escape -> the modal closes and the highlights clear.
+//      vs cleared (band present vs gone) — the RichEditor's own match bands.
+//   5. Press Enter (next) -> current advances to match 1.
+//   6. Press Escape -> the modal closes and the RichEditor highlights clear.
 //
-// A passing run proves the whole app path: DOM key event -> wasm keydown ->
-// State.ToggleFindReplace / HandleChar / HandleKeyDown -> the find modal (query
-// SearchEntry) -> FindMatches -> CodeEditor match highlights -> canvas. CommonJS
-// so require() finds puppeteer-core via NODE_PATH. Env: PAGE_URL, CHROME,
-// SCREENSHOT.
+// A passing run proves the active-editor abstraction reaches the RichEditor: DOM
+// key event -> wasm -> the find modal -> FindMatches over BlockTexts ->
+// DocSelectionsFromMatches -> RichEditor match highlights -> canvas. CommonJS so
+// require() finds puppeteer-core via NODE_PATH. Env: PAGE_URL, CHROME, SCREENSHOT.
 const puppeteer = require("puppeteer-core");
 
+// Two body paragraphs — "Alpha foo beta." and "Gamma foo foo delta." — so the
+// RichEditor holds three "foo" occurrences across two blocks.
 const SEED =
-  "\\documentclass{article}\n\\begin{document}\nSection foo alpha.\nAnother foo beta.\nFinal foo gamma.\n\\end{document}\n";
+  "\\documentclass{article}\n\\begin{document}\nAlpha foo beta.\n\nGamma foo foo delta.\n\\end{document}\n";
 
 (async () => {
   const url = process.env.PAGE_URL;
@@ -73,10 +71,7 @@ const SEED =
     }
 
     const findDebug = () => page.evaluate(() => globalThis.gotexFindDebug());
-    const appDebug = () => page.evaluate(() => globalThis.gotexDebug());
-    // Sum every RGBA channel over a small canvas region (device coords) — robust
-    // to a glyph sitting inside the band: the translucent match band tints the
-    // region's background pixels whether or not a glyph overlaps the centre.
+    const wysDebug = () => page.evaluate(() => globalThis.gotexWysiwygDebug());
     const regionSum = (pt) =>
       page.evaluate((p) => {
         const c = document.getElementById("gotex-canvas");
@@ -98,10 +93,17 @@ const SEED =
       );
     };
 
-    // 1. Seed the document (three "foo" on three lines).
+    // 1. Seed the LaTeX and switch to the WYSIWYG tab.
     await page.evaluate((s) => globalThis.gotexSetSource(s), SEED);
+    await page.evaluate(() => globalThis.gotexSetEditorTab(1));
+    await page.waitForFunction(() => globalThis.gotexWysiwygDebug().active, {
+      timeout: 5000,
+      polling: 50,
+    });
+    let w = await wysDebug();
+    check(w.active === true, "WYSIWYG tab active (parseError " + JSON.stringify(w.parseError) + ")");
 
-    // 2. Open the find modal with a REAL Ctrl+F (⌘F peer).
+    // 2. Open the find modal over the RichEditor.
     let d = await findDebug();
     check(d.visible === false, "find modal starts closed");
     await page.keyboard.down("Control");
@@ -111,50 +113,46 @@ const SEED =
       timeout: 5000,
       polling: 50,
     });
-    check(true, "Ctrl+F opened the find modal");
+    check(true, "Ctrl+F opened the find modal over the RichEditor");
 
-    // 3. Type the regex through real keystrokes; assert the count read-out.
+    // 3. Type the regex; assert the count read-out + highlight points.
     await page.keyboard.type("foo", { delay: 20 });
-    await page.waitForFunction(
-      () => globalThis.gotexFindDebug().total === 3,
-      { timeout: 5000, polling: 50 },
-    );
+    await page.waitForFunction(() => globalThis.gotexFindDebug().total === 3, {
+      timeout: 5000,
+      polling: 50,
+    });
     d = await findDebug();
-    check(d.total === 3, "typing the regex found 3 matches (got " + d.total + ")");
+    check(d.total === 3, "typing the regex found 3 matches in the RichEditor (got " + d.total + ")");
     check(d.current === 0, "current match is the first (got " + d.current + ")");
     check(d.countText === "1 of 3", 'count read-out is "1 of 3" (got "' + d.countText + '")');
     check(
       Array.isArray(d.matchPoints) && d.matchPoints.length === 3,
-      "3 highlight points reported (got " + (d.matchPoints && d.matchPoints.length) + ")",
+      "3 RichEditor highlight points reported (got " + (d.matchPoints && d.matchPoints.length) + ")",
     );
     const pts = d.matchPoints;
 
-    // 4. HIGHLIGHT PIXELS: each match region differs with the query typed vs
-    //    cleared (band painted vs gone), proving the highlights land on the code.
+    // 4. HIGHLIGHT PIXELS on the RichEditor: each match region differs with the
+    //    query typed vs cleared (band painted vs gone).
     const litSums = [];
     for (const p of pts) litSums.push(await regionSum(p));
-    // Clear the query with three real Backspaces -> highlights vanish.
     await page.keyboard.press("Backspace");
     await page.keyboard.press("Backspace");
     await page.keyboard.press("Backspace");
-    await page.waitForFunction(
-      () => globalThis.gotexFindDebug().total === 0,
-      { timeout: 5000, polling: 50 },
-    );
+    await page.waitForFunction(() => globalThis.gotexFindDebug().total === 0, {
+      timeout: 5000,
+      polling: 50,
+    });
     let plainDiffered = true;
     for (let i = 0; i < pts.length; i++) {
       const plain = await regionSum(pts[i]);
       if (plain === litSums[i]) plainDiffered = false;
     }
-    check(plainDiffered, "each match region shows highlight pixels (band present only while matched)");
+    check(plainDiffered, "each RichEditor match region shows highlight pixels (band present only while matched)");
 
     // Re-type the regex; back to current = 0 with all highlights.
     await page.keyboard.type("foo", { delay: 20 });
     await settle(0);
-    const c0Before = await regionSum(pts[0]);
-    const c1Before = await regionSum(pts[1]);
 
-    // Screenshot the bar open over the highlighted matches.
     if (screenshot) {
       try {
         await page.screenshot({ path: screenshot });
@@ -164,45 +162,14 @@ const SEED =
       }
     }
 
-    // 5. Enter = next: current advances AND the strong emphasis moves match0->match1.
+    // 5. Enter = next.
     await page.keyboard.press("Enter");
     await settle(1);
     d = await findDebug();
-    check(d.current === 1, "Enter advanced to the next match (current " + d.current + ")");
+    check(d.current === 1, "Enter advanced to the next match in the RichEditor (current " + d.current + ")");
     check(d.countText === "2 of 3", 'count read-out advanced to "2 of 3" (got "' + d.countText + '")');
-    const c0After = await regionSum(pts[0]);
-    const c1After = await regionSum(pts[1]);
-    check(
-      c1After !== c1Before,
-      "the current-match emphasis moved ONTO match 1 (region changed)",
-    );
-    check(
-      c0After !== c0Before,
-      "the current-match emphasis moved OFF match 0 (region changed)",
-    );
 
-    // 6. Layout unbroken: backing store is the CSS box × dpr, editor spans width.
-    const layout = await page.evaluate(() => {
-      const c = document.getElementById("gotex-canvas");
-      const b = c.getBoundingClientRect();
-      return {
-        cw: c.width,
-        ch: c.height,
-        dpr: c.width / b.width,
-        expW: Math.round(b.width * (window.devicePixelRatio || 1)),
-        expH: Math.round(b.height * (window.devicePixelRatio || 1)),
-      };
-    });
-    check(
-      layout.cw === layout.expW && layout.ch === layout.expH,
-      "canvas backing store is the CSS box × dpr (" + layout.cw + "x" + layout.ch + ")",
-    );
-    const ad = await appDebug();
-    check(ad.editorW > 200, "editor pane spans a real width with the modal open (editorW " + ad.editorW + ")");
-    const inBounds = pts.every((p) => p[0] >= 0 && p[1] >= 0 && p[0] < layout.cw && p[1] < layout.ch);
-    check(inBounds, "all match points fall inside the canvas");
-
-    // 7. Escape closes the modal AND clears the highlights (no match points left).
+    // 6. Escape closes the modal AND clears the RichEditor highlights.
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => !globalThis.gotexFindDebug().visible, {
       timeout: 5000,
@@ -212,7 +179,7 @@ const SEED =
     check(d.visible === false, "Escape closed the modal");
     check(
       Array.isArray(d.matchPoints) && d.matchPoints.length === 0,
-      "closing the modal cleared the highlights (0 match points)",
+      "closing the modal cleared the RichEditor highlights (0 match points)",
     );
 
     const ok = fails.length === 0;

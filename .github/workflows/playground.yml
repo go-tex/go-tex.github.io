@@ -73,7 +73,7 @@ jobs:
           GOTEX_BROWSER_NODE_PATH: ${{ runner.temp }}/puppeteer/node_modules
         run: >
           go test -v -count=1
-          -run '^(TestFindReplaceBrowserWiring|TestSidebarLayoutBrowser|TestRenderIsSearchableInABrowser|TestToolbarBrowserWiring|TestWysiwygV02BrowserProof|TestZonesFullHeightBrowser|TestCollabLocalTabConvergence|TestCollabLocalTabSequentialConvergence|TestGitWorkerTwoWasmE2E)$'
+          -run '^(TestFindReplaceBrowserWiring|TestFindReplaceWysiwygBrowserWiring|TestSidebarLayoutBrowser|TestRenderIsSearchableInABrowser|TestToolbarBrowserWiring|TestWysiwygV02BrowserProof|TestZonesFullHeightBrowser|TestCollabLocalTabConvergence|TestCollabLocalTabSequentialConvergence|TestGitWorkerTwoWasmE2E)$'
           .
 
   bricolint:
