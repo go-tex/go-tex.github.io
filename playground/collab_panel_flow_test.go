@@ -75,14 +75,15 @@ func TestCollabRealPanelWidgetHandshake(t *testing.T) {
 	if host.CollabPhase() != int(phaseHostWait) {
 		t.Fatalf("clicking Host left phase=%d, want phaseHostWait=%d", host.CollabPhase(), phaseHostWait)
 	}
-	if host.CollabOffer() != hf.offer {
-		t.Fatalf("clicking Host did not surface the offer: got %q", host.CollabOffer())
+	// The surfaced offer is now an identity envelope wrapping the backend's raw SDP.
+	if _, _, _, inner, err := decodeEnvelope(host.CollabOffer()); err != nil || inner != hf.offer {
+		t.Fatalf("clicking Host did not surface an envelope wrapping the offer: got %q (inner %q, err %v)", host.CollabOffer(), inner, err)
 	}
 
-	// Click Copy invitation → the offer must actually reach the clipboard.
+	// Click Copy invitation → the envelope must actually reach the clipboard.
 	clickWidget(t, host, "copyOffer")
-	if hostClip != hf.offer {
-		t.Fatalf("Copy invitation wrote %q to the clipboard, want the offer %q", hostClip, hf.offer)
+	if hostClip != host.CollabOffer() {
+		t.Fatalf("Copy invitation wrote %q to the clipboard, want the offer envelope %q", hostClip, host.CollabOffer())
 	}
 
 	// --- GUEST tab ------------------------------------------------------------
@@ -103,11 +104,16 @@ func TestCollabRealPanelWidgetHandshake(t *testing.T) {
 	// "Paste from clipboard" fills the VISIBLE field — proof the blob was taken —
 	// and does NOT connect on its own.
 	clickWidget(t, guest, "pasteOffer")
-	if guest.CollabPasteText() != hf.offer {
-		t.Fatalf("Paste from clipboard filled the field with %q, want the host offer %q", guest.CollabPasteText(), hf.offer)
+	if guest.CollabPasteText() != host.CollabOffer() {
+		t.Fatalf("Paste from clipboard filled the field with %q, want the host offer envelope %q", guest.CollabPasteText(), host.CollabOffer())
 	}
 	if gf.gotOffer != "" {
 		t.Fatalf("Paste from clipboard should not connect yet, but backend.Join was called with %q", gf.gotOffer)
+	}
+	// The moment a valid invitation is in the field, the panel previews WHO it is
+	// from — the host's name and short id, decoded from the envelope.
+	if !labelShown(guest, "Invitation from "+collabPeerLabel(host.CollabName(), host.CollabLocalID())) {
+		t.Fatalf("the guest panel does not preview the inviting peer %q", collabPeerLabel(host.CollabName(), host.CollabLocalID()))
 	}
 
 	// The primary Connect button joins using the FIELD text, and the panel must
@@ -122,17 +128,25 @@ func TestCollabRealPanelWidgetHandshake(t *testing.T) {
 	if !guest.CollabConnecting() {
 		t.Fatal("after Connect the guest panel should report the connecting acknowledgement")
 	}
-	if !labelShown(guest, collabConnectingMsg) {
-		t.Fatalf("the guest panel does not show the %q acknowledgement", collabConnectingMsg)
+	// The guest captured the host's identity from the pasted envelope, and the
+	// connecting acknowledgement now NAMES the host it is reaching.
+	if guest.CollabPeerName() != host.CollabName() || guest.CollabPeerID() != host.CollabLocalID() {
+		t.Fatalf("guest captured peer %q/#%q, want the host %q/#%q",
+			guest.CollabPeerName(), guest.CollabPeerID(), host.CollabName(), host.CollabLocalID())
 	}
-	if guest.CollabAnswer() != gf.answer {
-		t.Fatalf("Join did not surface the answer: got %q", guest.CollabAnswer())
+	wantGuestConnecting := "Connecting to " + collabPeerLabel(host.CollabName(), host.CollabLocalID()) + "…"
+	if !labelShown(guest, wantGuestConnecting) {
+		t.Fatalf("the guest panel does not show the peer-named acknowledgement %q", wantGuestConnecting)
+	}
+	// The surfaced answer is an envelope wrapping the backend's raw reply.
+	if _, _, _, inner, err := decodeEnvelope(guest.CollabAnswer()); err != nil || inner != gf.answer {
+		t.Fatalf("Join did not surface an envelope wrapping the answer: got %q (inner %q, err %v)", guest.CollabAnswer(), inner, err)
 	}
 
-	// Click Copy reply → the answer must reach the guest's clipboard.
+	// Click Copy reply → the answer envelope must reach the guest's clipboard.
 	clickWidget(t, guest, "copyAnswer")
-	if guestClip != gf.answer {
-		t.Fatalf("Copy reply wrote %q, want the answer %q", guestClip, gf.answer)
+	if guestClip != guest.CollabAnswer() {
+		t.Fatalf("Copy reply wrote %q, want the answer envelope %q", guestClip, guest.CollabAnswer())
 	}
 
 	// --- HOST accepts the reply ----------------------------------------------
@@ -140,21 +154,31 @@ func TestCollabRealPanelWidgetHandshake(t *testing.T) {
 	// NOT connect by itself; then the Connect button accepts the field text.
 	hostClip = guestClip
 	clickWidget(t, host, "pasteAnswer")
-	if host.CollabPasteText() != gf.answer {
-		t.Fatalf("Paste from clipboard filled the host field with %q, want the guest answer %q", host.CollabPasteText(), gf.answer)
+	if host.CollabPasteText() != guest.CollabAnswer() {
+		t.Fatalf("Paste from clipboard filled the host field with %q, want the guest answer envelope %q", host.CollabPasteText(), guest.CollabAnswer())
+	}
+	// The host previews WHO the reply is from (the guest's name + short id).
+	if !labelShown(host, "Reply from "+collabPeerLabel(guest.CollabName(), guest.CollabLocalID())) {
+		t.Fatalf("the host panel does not preview the replying peer %q", collabPeerLabel(guest.CollabName(), guest.CollabLocalID()))
 	}
 	if hf.gotAnswer != "" {
 		t.Fatalf("Paste from clipboard should not accept yet, but backend.AcceptAnswer got %q", hf.gotAnswer)
 	}
 	clickWidget(t, host, "connectAnswer")
 	if hf.gotAnswer != gf.answer {
-		t.Fatalf("Connect handed backend.AcceptAnswer %q, want the field text (guest answer) %q", hf.gotAnswer, gf.answer)
+		t.Fatalf("Connect handed backend.AcceptAnswer %q, want the field envelope's inner sdp (guest answer) %q", hf.gotAnswer, gf.answer)
 	}
 	if !host.CollabConnecting() {
 		t.Fatal("after Connect the host panel should report the connecting acknowledgement")
 	}
-	if !labelShown(host, collabConnectingMsg) {
-		t.Fatalf("the host panel does not show the %q acknowledgement", collabConnectingMsg)
+	// The host captured the guest's identity and its acknowledgement names the guest.
+	if host.CollabPeerName() != guest.CollabName() || host.CollabPeerID() != guest.CollabLocalID() {
+		t.Fatalf("host captured peer %q/#%q, want the guest %q/#%q",
+			host.CollabPeerName(), host.CollabPeerID(), guest.CollabName(), guest.CollabLocalID())
+	}
+	wantHostConnecting := "Connecting to " + collabPeerLabel(guest.CollabName(), guest.CollabLocalID()) + "…"
+	if !labelShown(host, wantHostConnecting) {
+		t.Fatalf("the host panel does not show the peer-named acknowledgement %q", wantHostConnecting)
 	}
 
 	// The channel opening is reported by the backend, not the click: flip the
