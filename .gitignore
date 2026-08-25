@@ -9,3 +9,8 @@ collab-localtab-proof-B.png
 richeditor-toolbar-proof.png
 git-worker-two-wasm-proof.png
 collab-failure-proof.png
+
+# The playground wasm is a BUILD ARTIFACT: pages.yml builds it into static/
+# before hugo runs. It was committed once, went 35 commits stale, and a CDN
+# fallback served that stale copy to visitors. Never commit it again.
+static/*.wasm
