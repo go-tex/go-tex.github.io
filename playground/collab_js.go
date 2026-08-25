@@ -9,6 +9,7 @@ import (
 	"context"
 	cryptorand "crypto/rand"
 	"encoding/binary"
+	"fmt"
 	"syscall/js"
 	"time"
 
@@ -393,25 +394,48 @@ func writeClipboard(text string) {
 	}
 }
 
-// readClipboard reads the OS clipboard asynchronously and hands the text to cb.
-func readClipboard(cb func(string)) {
+// readClipboard reads the OS clipboard asynchronously and hands the text to
+// onText, or reports a refusal to onErr. navigator.clipboard.readText() is denied
+// in very common cases — Firefox blocks it for web content entirely, and Chrome
+// rejects it for a background/unfocused tab or without a permission grant — so the
+// rejection MUST be handled: without a .catch/onFail the promise settled silently,
+// the callback never fired, and the paste looked like a no-op. Both handlers
+// release their js.Func and fire at most once.
+func readClipboard(onText func(string), onErr func(error)) {
 	clip := clipboardAPI()
 	if !clip.Truthy() {
+		onErr(errNoClipboard)
 		return
 	}
 	promise := clip.Call("readText")
 	if !promise.Truthy() {
+		onErr(errNoClipboard)
 		return
 	}
-	var fn js.Func
-	fn = js.FuncOf(func(_ js.Value, a []js.Value) any {
+	var onOK, onFail js.Func
+	release := func() { onOK.Release(); onFail.Release() }
+	onOK = js.FuncOf(func(_ js.Value, a []js.Value) any {
 		text := ""
 		if len(a) > 0 && a[0].Type() == js.TypeString {
 			text = a[0].String()
 		}
-		fn.Release()
-		cb(text)
+		release()
+		onText(text)
 		return nil
 	})
-	promise.Call("then", fn)
+	onFail = js.FuncOf(func(_ js.Value, a []js.Value) any {
+		msg := "clipboard read rejected"
+		if len(a) > 0 && a[0].Truthy() {
+			msg = a[0].Call("toString").String()
+		}
+		release()
+		onErr(fmt.Errorf("collab: %s", msg))
+		return nil
+	})
+	// then(onOK, onFail) delivers BOTH settlements, so a rejected readText reaches
+	// onFail instead of vanishing.
+	promise.Call("then", onOK, onFail)
 }
+
+// errNoClipboard is the refusal reported when the Clipboard API is absent.
+var errNoClipboard = fmt.Errorf("collab: clipboard unavailable")

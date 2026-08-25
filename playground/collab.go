@@ -93,6 +93,23 @@ const (
 const collabFailedMsg = "Connection failed — no direct path to the peer. " +
 	"If you're on a VPN or behind a strict NAT, add a TURN server in the ICE servers field above and retry."
 
+// collabConnectingMsg is the acknowledgement shown the instant a Connect step is
+// accepted (the guest's answer built, or the host's AcceptAnswer taken) and the
+// WebRTC channel is being opened. It is deliberately distinct from the generic
+// "Working…" (an in-flight handshake RPC) so the user sees their paste was taken
+// and a connection is being attempted, rather than the panel appearing inert
+// while ICE negotiates. It clears when the channel opens ([phaseConnected]), the
+// attempt fails ([phaseFailed]) or the session is torn down.
+const collabConnectingMsg = "Connecting to your peer…"
+
+// collabClipReadErrMsg is shown when the browser refuses navigator.clipboard
+// .readText() — Firefox blocks it for web content outright, and Chrome rejects it
+// for a background/unfocused tab or without a permission grant. Before, that
+// rejection was silent (readText's promise had no catch), so "Paste from
+// clipboard" looked like it did nothing; now the panel points the user at the
+// reliable path — a manual ⌘V/Ctrl+V into the visible field.
+const collabClipReadErrMsg = "Couldn't read the clipboard — paste with ⌘V/Ctrl+V into the field."
+
 // CollabDecoration is one remote participant's caret as it is painted into the
 // local editor — the read-back a headless test asserts on to prove a peer's
 // caret and colour crossed the wire. It mirrors one toolkit.Decoration.
@@ -145,15 +162,17 @@ type collabView struct {
 	repaint func() // host repaint hook (the wasm driver's render); nil in tests
 	clipboardHooks
 
-	open        bool
-	phase       collabPhase
-	busy        bool   // an async handshake step is in flight
-	errMsg      string // last error, shown in the panel
-	offer       string // the host's offer blob, to copy to the peer
-	answer      string // the guest's answer blob, to copy back to the host
-	name        string // this participant's display name
-	color       toolkit.RGBA
-	nameFocused bool // the name field has keyboard focus (typing edits the name)
+	open         bool
+	phase        collabPhase
+	busy         bool   // an async handshake step is in flight
+	connecting   bool   // a connect step was accepted; the peer channel is being opened
+	errMsg       string // last error, shown in the panel
+	offer        string // the host's offer blob, to copy to the peer
+	answer       string // the guest's answer blob, to copy back to the host
+	name         string // this participant's display name
+	color        toolkit.RGBA
+	nameFocused  bool // the name field has keyboard focus (typing edits the name)
+	pasteFocused bool // the visible paste field has keyboard focus (⌘V / typing edits it)
 
 	// iceServers is the STUN/TURN configuration the browser backend hands to every
 	// WebRTC peer. It defaults to public STUN (defaultICEServers) so collaboration
@@ -168,16 +187,27 @@ type collabView struct {
 	iceFocused bool             // the ICE field has keyboard focus
 	icePersist func(csv string) // host hook: persist the config (localStorage); nil in tests
 
+	// pasteText is the editable value of the visible signalling-blob field the user
+	// pastes into — the host's invitation on the guest side (phaseGuestOffer), the
+	// peer's reply on the host side (phaseHostWait). Held as an observable (the app's
+	// MVVM contract) so a ⌘V/Ctrl+V paste, a "Paste from clipboard" fill or typing
+	// all mutate one source of truth the field renders; the primary Connect button
+	// reads it. Its meaning is phase-specific and only one such field is ever shown,
+	// so a single observable/entry is reused across the two phases and cleared on
+	// every transition into them.
+	pasteText *mvvm.Observable[string]
+
 	rng *rand.Rand
 
 	// geometry, recomputed by layout() before every draw and hit-test.
-	launcher toolkit.Rect
-	panel    toolkit.Rect
-	buttons  []collabItem
-	labels   []collabLabel
-	swatches []collabSwatch
-	nameRect toolkit.Rect
-	iceRect  toolkit.Rect
+	launcher  toolkit.Rect
+	panel     toolkit.Rect
+	buttons   []collabItem
+	labels    []collabLabel
+	swatches  []collabSwatch
+	nameRect  toolkit.Rect
+	iceRect   toolkit.Rect
+	pasteRect toolkit.Rect
 
 	// Persistent toolkit widgets the panel is built from — created once and
 	// re-used every frame so they hold their own interactive state (a Button's
@@ -192,6 +222,7 @@ type collabView struct {
 	btns        map[collabRole]*toolkit.Button // one persistent Button per role
 	nameEntry   *toolkit.Entry
 	iceEntry    *toolkit.Entry
+	pasteEntry  *toolkit.Entry   // the visible signalling-blob paste field
 	labelPool   []*toolkit.Label // reused, one per visible text line
 	swatchPool  []*toolkit.Backdrop
 }
@@ -228,6 +259,8 @@ const (
 	roleCopyAnswer
 	rolePasteOffer
 	rolePasteAnswer
+	roleConnectOffer
+	roleConnectAnswer
 	roleShuffle
 	roleCancel
 	roleDisconnect
@@ -268,6 +301,7 @@ func newCollabView(s *State) *collabView {
 	// STUN default out of the box — so the user sees (and can edit) what the peers
 	// will actually use.
 	v.iceText = mvvm.NewObservable(iceConfigString(v.iceServers))
+	v.pasteText = mvvm.NewObservable("")
 	return v
 }
 
@@ -441,6 +475,7 @@ func (v *collabView) onBackendChange() {
 		if v.phase != phaseConnected {
 			v.phase = phaseConnected
 			v.busy = false
+			v.connecting = false
 			v.errMsg = ""
 		}
 	case v.backend.ConnFailed():
@@ -453,6 +488,7 @@ func (v *collabView) onBackendChange() {
 		// The peer left or the channel dropped; fall back to idle.
 		v.phase = phaseIdle
 		v.offer, v.answer = "", ""
+		v.connecting = false
 		v.errMsg = "the peer disconnected"
 	}
 	v.refresh()
@@ -464,6 +500,7 @@ func (v *collabView) onBackendChange() {
 // through onBackendChange; a native test drives it directly.
 func (v *collabView) connectionFailed() {
 	v.busy = false
+	v.connecting = false
 	v.phase = phaseFailed
 	v.offer, v.answer = "", ""
 	// The failed panel renders collabFailedMsg on its own lines; keep errMsg clear
@@ -509,11 +546,11 @@ func (s *State) CollabJoin(offer string, done func(answer string, err error)) {
 		}
 		return
 	}
-	v.busy, v.errMsg = true, ""
+	v.busy, v.errMsg, v.connecting = true, "", true
 	v.backend.Join(v.name, v.color, offer, func(answer string, err error) {
 		v.busy = false
 		if err != nil {
-			v.errMsg = err.Error()
+			v.errMsg, v.connecting = err.Error(), false
 		} else {
 			v.answer, v.phase = answer, phaseGuestWait
 		}
@@ -537,11 +574,11 @@ func (s *State) CollabAcceptAnswer(answer string, done func(err error)) {
 		}
 		return
 	}
-	v.busy, v.errMsg = true, ""
+	v.busy, v.errMsg, v.connecting = true, "", true
 	v.backend.AcceptAnswer(answer, func(err error) {
 		v.busy = false
 		if err != nil {
-			v.errMsg = err.Error()
+			v.errMsg, v.connecting = err.Error(), false
 		}
 		if done != nil {
 			done(err)
@@ -557,7 +594,9 @@ func (s *State) CollabDisconnect() {
 	v.backend.Disconnect()
 	v.phase = phaseIdle
 	v.offer, v.answer, v.errMsg = "", "", ""
-	v.busy = false
+	v.busy, v.connecting = false, false
+	v.pasteText.Set("")
+	v.pasteFocused = false
 	v.refresh()
 }
 
@@ -575,6 +614,16 @@ func (s *State) CollabPeerCount() int { return s.collab.backend.PeerCount() }
 // CollabPhase is the session phase as an int (0 idle … 4 connected, 5 failed),
 // for a headless assertion.
 func (s *State) CollabPhase() int { return int(s.collab.phase) }
+
+// CollabConnecting reports whether a Connect step was accepted and the panel is
+// showing the "Connecting…" acknowledgement while the peer channel opens — the
+// signal that a pasted blob was taken and a connection is being attempted.
+func (s *State) CollabConnecting() bool { return s.collab.connecting }
+
+// CollabPasteText is the current text of the visible signalling-blob paste field
+// (the host's invitation on the guest side, the peer's reply on the host side),
+// for the DOM host and headless introspection.
+func (s *State) CollabPasteText() string { return s.collab.pasteText.Get() }
 
 // CollabFailureMessage is the panel's failure guidance when the connection could
 // not be established ([phaseFailed]) — the TURN-server hint the user needs — and
@@ -625,6 +674,10 @@ func collabRoleName(r collabRole) string {
 		return "pasteOffer"
 	case rolePasteAnswer:
 		return "pasteAnswer"
+	case roleConnectOffer:
+		return "connectOffer"
+	case roleConnectAnswer:
+		return "connectAnswer"
 	case roleShuffle:
 		return "shuffle"
 	case roleCancel:
@@ -655,6 +708,9 @@ func (s *State) CollabButtonRects() map[string][4]int {
 	}
 	if v.iceRect.W > 0 {
 		out["ice"] = rect(v.iceRect)
+	}
+	if v.pasteRect.W > 0 {
+		out["paste"] = rect(v.pasteRect)
 	}
 	for _, b := range v.buttons {
 		if name := collabRoleName(b.role); name != "" {
@@ -705,6 +761,7 @@ func (v *collabView) layout() {
 	v.swatches = v.swatches[:0]
 	v.nameRect = toolkit.Rect{}
 	v.iceRect = toolkit.Rect{}
+	v.pasteRect = toolkit.Rect{}
 	if !v.open {
 		return
 	}
@@ -765,6 +822,13 @@ func (v *collabView) layout() {
 		}
 		cur += bh + gap
 	}
+	// addPasteField reserves the full-width row for the visible signalling-blob
+	// Entry the user pastes into. Only one is shown at a time (guest or host), so it
+	// reuses the single v.pasteRect / v.pasteEntry.
+	addPasteField := func() {
+		v.pasteRect = toolkit.Rect{X: innerX, Y: cur, W: innerW, H: bh}
+		cur += bh + gap
+	}
 
 	switch {
 	case v.busy:
@@ -775,17 +839,32 @@ func (v *collabView) layout() {
 	case v.phase == phaseHostWait:
 		addLabel("1. Send this invitation to your peer:")
 		addButtons(collabItem{role: roleCopyOffer, label: "Copy invitation"})
-		addLabel("2. Paste their reply here to connect:")
-		addButtons(collabItem{role: rolePasteAnswer, label: "Paste reply & connect"})
-		addButtons(collabItem{role: roleCancel, label: "Cancel"})
+		if v.connecting {
+			// The reply was accepted: acknowledge it and show the connection is being
+			// attempted, instead of leaving the paste prompt looking untouched.
+			addLabel(collabConnectingMsg)
+			addButtons(collabItem{role: roleCancel, label: "Cancel"})
+		} else {
+			addLabel("2. Paste their reply here to connect:")
+			addPasteField()
+			addButtons(
+				collabItem{role: roleConnectAnswer, label: "Connect"},
+				collabItem{role: rolePasteAnswer, label: "Paste from clipboard"},
+			)
+			addButtons(collabItem{role: roleCancel, label: "Cancel"})
+		}
 	case v.phase == phaseGuestOffer:
 		addLabel("Paste your host's invitation:")
-		addButtons(collabItem{role: rolePasteOffer, label: "Paste invitation"})
+		addPasteField()
+		addButtons(
+			collabItem{role: roleConnectOffer, label: "Connect"},
+			collabItem{role: rolePasteOffer, label: "Paste from clipboard"},
+		)
 		addButtons(collabItem{role: roleCancel, label: "Cancel"})
 	case v.phase == phaseGuestWait:
 		addLabel("Send this reply back to the host:")
 		addButtons(collabItem{role: roleCopyAnswer, label: "Copy reply"})
-		addLabel("Waiting for the host to connect…")
+		addLabel(collabConnectingMsg)
 		addButtons(collabItem{role: roleCancel, label: "Cancel"})
 	case v.phase == phaseConnected:
 		addLabel(v.connectedSummary())
@@ -852,6 +931,7 @@ func (v *collabView) ensureWidgets() {
 	v.btns = map[collabRole]*toolkit.Button{}
 	v.nameEntry = toolkit.NewEntry("")
 	v.iceEntry = toolkit.NewEntry("")
+	v.pasteEntry = toolkit.NewEntry("")
 }
 
 // btn returns the persistent Button for a role, creating it (wired to dispatch
@@ -924,6 +1004,14 @@ func (v *collabView) draw(p painter.Painter, theme *toolkit.Theme) {
 		v.iceEntry.SetFocused(v.iceFocused)
 		v.iceEntry.Draw(p, theme)
 	}
+	// Signalling-blob paste field: a real Entry the user pastes the invitation /
+	// reply into (⌘V shows it — proof it was taken); the Connect button reads it.
+	if v.pasteRect.W > 0 {
+		v.pasteEntry.SetBounds(v.pasteRect)
+		v.pasteEntry.SetText(v.pasteText.Get())
+		v.pasteEntry.SetFocused(v.pasteFocused)
+		v.pasteEntry.Draw(p, theme)
+	}
 
 	// Static text lines, each a reused Label.
 	for i, l := range v.labels {
@@ -975,10 +1063,20 @@ func (v *collabView) handleClick(x, y int) bool {
 		return false
 	}
 	// Modal: swallow everything, routing a control hit through the widget's HitTest.
+	if v.pasteRect.W > 0 {
+		v.pasteEntry.SetBounds(v.pasteRect)
+		if v.pasteEntry.HitTest(x, y) {
+			v.blurICE()
+			v.nameFocused = false
+			v.pasteFocused = true
+			v.refresh()
+			return true
+		}
+	}
 	if v.iceRect.W > 0 {
 		v.iceEntry.SetBounds(v.iceRect)
 		if v.iceEntry.HitTest(x, y) {
-			v.nameFocused = false
+			v.nameFocused, v.pasteFocused = false, false
 			v.iceFocused = true
 			v.refresh()
 			return true
@@ -988,13 +1086,14 @@ func (v *collabView) handleClick(x, y int) bool {
 		v.nameEntry.SetBounds(v.nameRect)
 		if v.nameEntry.HitTest(x, y) {
 			v.blurICE() // commit the ICE field if focus is leaving it
+			v.pasteFocused = false
 			v.nameFocused = true
 			v.refresh()
 			return true
 		}
 	}
 	v.blurICE()
-	v.nameFocused = false
+	v.nameFocused, v.pasteFocused = false, false
 	for _, it := range v.buttons {
 		b := v.btn(it.role)
 		b.SetBounds(it.rect)
@@ -1041,13 +1140,27 @@ func (v *collabView) dispatch(role collabRole) {
 	case roleClose:
 		v.open = false
 	case roleHost:
+		// The host will need a field to paste the peer's reply into (phaseHostWait);
+		// start it empty and focused so a ⌘V lands there immediately.
+		v.pasteText.Set("")
+		v.focusPaste()
 		v.s.CollabHost(nil)
 	case roleJoin:
 		v.phase = phaseGuestOffer
-	case rolePasteOffer:
-		v.readClipboard(func(text string) { v.s.CollabJoin(text, nil) })
-	case rolePasteAnswer:
-		v.readClipboard(func(text string) { v.s.CollabAcceptAnswer(text, nil) })
+		v.pasteText.Set("")
+		v.focusPaste()
+	case roleConnectOffer:
+		// Primary guest action: join using the visible field, NOT the clipboard.
+		v.pasteFocused = false
+		v.s.CollabJoin(v.pasteText.Get(), nil)
+	case roleConnectAnswer:
+		// Primary host action: accept the reply from the visible field.
+		v.pasteFocused = false
+		v.s.CollabAcceptAnswer(v.pasteText.Get(), nil)
+	case rolePasteOffer, rolePasteAnswer:
+		// Convenience: fill the visible field from the OS clipboard (the primary
+		// Connect button then reads the field). Errors surface via readClipboard.
+		v.fillPasteFromClipboard()
 	case roleCopyOffer:
 		v.writeClipboard(v.offer)
 	case roleCopyAnswer:
@@ -1065,6 +1178,13 @@ func (v *collabView) dispatch(role collabRole) {
 func (v *collabView) handleChar(code string) bool {
 	if !v.open {
 		return false
+	}
+	if v.pasteFocused {
+		if r := []rune(code); len(r) == 1 {
+			v.pasteText.Set(v.pasteText.Get() + code)
+			v.refresh()
+		}
+		return true
 	}
 	if v.iceFocused {
 		if r := []rune(code); len(r) == 1 {
@@ -1091,12 +1211,26 @@ func (v *collabView) handleKey(code string) bool {
 	}
 	if code == "Escape" {
 		switch {
+		case v.pasteFocused:
+			v.pasteFocused = false
 		case v.iceFocused:
 			v.blurICE()
 		case v.nameFocused:
 			v.nameFocused = false
 		default:
 			v.open = false
+		}
+		v.refresh()
+		return true
+	}
+	if v.pasteFocused {
+		switch code {
+		case "Backspace":
+			if r := []rune(v.pasteText.Get()); len(r) > 0 {
+				v.pasteText.Set(string(r[:len(r)-1]))
+			}
+		case "Enter", "Return":
+			v.pasteFocused = false
 		}
 		v.refresh()
 		return true
@@ -1128,12 +1262,65 @@ func (v *collabView) handleKey(code string) bool {
 	return true
 }
 
-// readClipboard / writeClipboard reach the OS clipboard through the host hooks
-// the wasm driver installs; a native build has no clipboard, so both are no-ops.
-func (v *collabView) readClipboard(cb func(string)) {
-	if v.clipRead != nil {
-		v.clipRead(cb)
+// focusPaste gives the visible paste field keyboard focus and takes it away from
+// the name / ICE fields, so a following ⌘V or keystroke lands in the paste field.
+func (v *collabView) focusPaste() {
+	v.pasteFocused = true
+	v.nameFocused = false
+	v.iceFocused = false
+}
+
+// fillPasteFromClipboard is the "Paste from clipboard" convenience: it reads the
+// OS clipboard and drops the text into the visible field (focusing it), rather
+// than connecting straight from the clipboard. If the browser refuses the read
+// (readClipboard's rejection path), the field is left untouched and the panel
+// shows [collabClipReadErrMsg] pointing the user at a manual ⌘V.
+func (v *collabView) fillPasteFromClipboard() {
+	v.readClipboard(func(text string) {
+		v.pasteText.Set(strings.TrimSpace(text))
+		v.focusPaste()
+		v.refresh()
+	})
+}
+
+// handlePaste routes an OS paste (⌘V/Ctrl+V, delivered by the host) into whichever
+// panel field holds focus, so the pasted blob is visible immediately — the proof
+// it was taken. Returns whether it consumed the paste.
+func (v *collabView) handlePaste(text string) bool {
+	if !v.open {
+		return false
 	}
+	switch {
+	case v.pasteFocused:
+		v.pasteText.Set(v.pasteText.Get() + text)
+	case v.iceFocused:
+		v.iceText.Set(v.iceText.Get() + text)
+	case v.nameFocused:
+		v.name += text
+	default:
+		return false
+	}
+	v.refresh()
+	return true
+}
+
+// readClipboard reaches the OS clipboard through the host hook the wasm driver
+// installs. onText receives the text on success; a rejected read (Firefox blocks
+// readText for web content, Chrome rejects a background/unfocused tab or a missing
+// permission grant) routes to [clipReadFailed] so the blockage is never silent. A
+// native build has no clipboard, so this is a no-op there.
+func (v *collabView) readClipboard(onText func(string)) {
+	if v.clipRead == nil {
+		return
+	}
+	v.clipRead(onText, func(error) { v.clipReadFailed() })
+}
+
+// clipReadFailed surfaces a clear message when the browser refused a clipboard
+// read, steering the user to the reliable manual ⌘V into the visible field.
+func (v *collabView) clipReadFailed() {
+	v.errMsg = collabClipReadErrMsg
+	v.refresh()
 }
 
 func (v *collabView) writeClipboard(text string) {
@@ -1143,9 +1330,10 @@ func (v *collabView) writeClipboard(text string) {
 }
 
 // clipRead / clipWrite are the host clipboard hooks (installed by the wasm
-// driver). Kept as fields so the panel stays free of syscall/js.
+// driver). Kept as fields so the panel stays free of syscall/js. clipRead reports
+// the text through onText or a refusal through onErr (a rejected readText promise).
 type clipboardHooks struct {
-	clipRead  func(cb func(string))
+	clipRead  func(onText func(string), onErr func(error))
 	clipWrite func(text string)
 }
 

@@ -41,12 +41,25 @@ func TestCollabRealPanelWidgetHandshake(t *testing.T) {
 		s.HandleRelease(cx, cy)
 	}
 
+	// labelShown lays the panel out and reports whether a static text line with the
+	// exact text is currently displayed — how the test asserts an acknowledgement or
+	// prompt is actually on screen, not merely that a flag flipped.
+	labelShown := func(s *State, want string) bool {
+		s.collab.layout()
+		for _, l := range s.collab.labels {
+			if l.text == want {
+				return true
+			}
+		}
+		return false
+	}
+
 	// --- HOST tab -------------------------------------------------------------
 	host, hf, _ := withFake(t)
 	hf.offer = "HOST-OFFER-BLOB"
 	var hostClip string
 	host.collab.clipWrite = func(text string) { hostClip = text }
-	host.collab.clipRead = func(cb func(string)) { cb(hostClip) }
+	host.collab.clipRead = func(onText func(string), _ func(error)) { onText(hostClip) }
 
 	// Open the panel by clicking the launcher pill (a real Button).
 	clickWidget(t, host, "launcher")
@@ -77,8 +90,9 @@ func TestCollabRealPanelWidgetHandshake(t *testing.T) {
 	gf.answer = "GUEST-ANSWER-BLOB"
 	var guestClip string
 	guest.collab.clipWrite = func(text string) { guestClip = text }
-	// The guest's Paste button reads whatever the host put on the shared clipboard.
-	guest.collab.clipRead = func(cb func(string)) { cb(hostClip) }
+	// The guest's "Paste from clipboard" reads whatever the host put on the shared
+	// clipboard, dropping it into the visible field.
+	guest.collab.clipRead = func(onText func(string), _ func(error)) { onText(hostClip) }
 
 	clickWidget(t, guest, "launcher")
 	clickWidget(t, guest, "join")
@@ -86,14 +100,30 @@ func TestCollabRealPanelWidgetHandshake(t *testing.T) {
 		t.Fatalf("clicking Join left phase=%d, want phaseGuestOffer=%d", guest.CollabPhase(), phaseGuestOffer)
 	}
 
-	// Click Paste invitation → backend.Join must be called WITH the host's offer,
-	// and the answer + phase must land.
+	// "Paste from clipboard" fills the VISIBLE field — proof the blob was taken —
+	// and does NOT connect on its own.
 	clickWidget(t, guest, "pasteOffer")
+	if guest.CollabPasteText() != hf.offer {
+		t.Fatalf("Paste from clipboard filled the field with %q, want the host offer %q", guest.CollabPasteText(), hf.offer)
+	}
+	if gf.gotOffer != "" {
+		t.Fatalf("Paste from clipboard should not connect yet, but backend.Join was called with %q", gf.gotOffer)
+	}
+
+	// The primary Connect button joins using the FIELD text, and the panel must
+	// acknowledge the attempt (phase advances + the "Connecting…" line shows).
+	clickWidget(t, guest, "connectOffer")
 	if gf.gotOffer != hf.offer {
-		t.Fatalf("Paste invitation handed backend.Join %q, want the host offer %q", gf.gotOffer, hf.offer)
+		t.Fatalf("Connect handed backend.Join %q, want the field text (host offer) %q", gf.gotOffer, hf.offer)
 	}
 	if guest.CollabPhase() != int(phaseGuestWait) {
-		t.Fatalf("after pasting the invitation phase=%d, want phaseGuestWait=%d", guest.CollabPhase(), phaseGuestWait)
+		t.Fatalf("after Connect phase=%d, want phaseGuestWait=%d", guest.CollabPhase(), phaseGuestWait)
+	}
+	if !guest.CollabConnecting() {
+		t.Fatal("after Connect the guest panel should report the connecting acknowledgement")
+	}
+	if !labelShown(guest, collabConnectingMsg) {
+		t.Fatalf("the guest panel does not show the %q acknowledgement", collabConnectingMsg)
 	}
 	if guest.CollabAnswer() != gf.answer {
 		t.Fatalf("Join did not surface the answer: got %q", guest.CollabAnswer())
@@ -106,11 +136,25 @@ func TestCollabRealPanelWidgetHandshake(t *testing.T) {
 	}
 
 	// --- HOST accepts the reply ----------------------------------------------
-	// The host pastes the guest's answer (now on the shared clipboard).
+	// The host fills its field from the clipboard (the guest's answer), which must
+	// NOT connect by itself; then the Connect button accepts the field text.
 	hostClip = guestClip
 	clickWidget(t, host, "pasteAnswer")
+	if host.CollabPasteText() != gf.answer {
+		t.Fatalf("Paste from clipboard filled the host field with %q, want the guest answer %q", host.CollabPasteText(), gf.answer)
+	}
+	if hf.gotAnswer != "" {
+		t.Fatalf("Paste from clipboard should not accept yet, but backend.AcceptAnswer got %q", hf.gotAnswer)
+	}
+	clickWidget(t, host, "connectAnswer")
 	if hf.gotAnswer != gf.answer {
-		t.Fatalf("Paste reply handed backend.AcceptAnswer %q, want the guest answer %q", hf.gotAnswer, gf.answer)
+		t.Fatalf("Connect handed backend.AcceptAnswer %q, want the field text (guest answer) %q", hf.gotAnswer, gf.answer)
+	}
+	if !host.CollabConnecting() {
+		t.Fatal("after Connect the host panel should report the connecting acknowledgement")
+	}
+	if !labelShown(host, collabConnectingMsg) {
+		t.Fatalf("the host panel does not show the %q acknowledgement", collabConnectingMsg)
 	}
 
 	// The channel opening is reported by the backend, not the click: flip the

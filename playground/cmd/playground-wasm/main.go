@@ -533,10 +533,12 @@ func main() {
 		return map[string]any{
 			"phase":       state.CollabPhase(),
 			"connected":   state.CollabConnected(),
+			"connecting":  state.CollabConnecting(),
 			"peers":       state.CollabPeerCount(),
 			"open":        state.CollabActive(),
 			"offer":       state.CollabOffer(),
 			"answer":      state.CollabAnswer(),
+			"pasteText":   state.CollabPasteText(),
 			"name":        state.CollabName(),
 			"color":       state.CollabColorHex(),
 			"iceServers":  ice,
