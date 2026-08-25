@@ -228,7 +228,11 @@ type State struct {
 	// triggers a render scroll. syncing guards the linking against feedback: it is
 	// raised while a render-click drives the caret, so the caret-move that results
 	// does NOT re-scroll the render underneath the click.
-	lineMaps      []pageLineMap
+	lineMaps []pageLineMap
+	// textLayers is the per-rendered-page searchable text (an <svg> of invisible
+	// <text> runs, parallel to the PagedView's pages). The canvas shows the
+	// rasterised page; this is what the browser can find, read aloud and copy.
+	textLayers    []string
 	lastCaretLine int
 	syncing       bool
 
@@ -773,8 +777,9 @@ func (s *State) Compile() {
 	s.pages = res.pages
 	s.drawnPages = res.drawnPages
 	s.diag = res.diag
-	s.lineMaps = res.lineMaps // per-page source-line bands for click↔caret linking
-	s.logCompile(res)         // append a timestamped block to the accumulating Log
+	s.lineMaps = res.lineMaps     // per-page source-line bands for click↔caret linking
+	s.textLayers = res.textLayers // per-page searchable text, placed over the canvas by the host
+	s.logCompile(res)             // append a timestamped block to the accumulating Log
 
 	s.renderView.SetPages(res.bitmaps) // nil bitmaps clear the viewer
 	s.updateStatus()
