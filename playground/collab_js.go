@@ -9,6 +9,7 @@ import (
 	"context"
 	cryptorand "crypto/rand"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"syscall/js"
 	"time"
@@ -295,24 +296,32 @@ func (b *webrtcBackend) Join(name string, color toolkit.RGBA, offer string, done
 func (b *webrtcBackend) LocalConnect(name string, color toolkit.RGBA, done func(error)) {
 	go func() {
 		b.session()
-		role, err := collab.HostOrJoin(b.ctx, collabLocalRoom, collab.DefaultElectionWindow)
+		// OpenBroadcastSession elects AND goes live on one bus: an elected host is
+		// already answering hellos before we build its Server below, so a second tab
+		// clicking while this one is still wiring up is welcomed and joins rather than
+		// electing itself a rival host. That closed serve-gap is the fix for the
+		// same-browser "both Connected but no sync" split-brain — see
+		// [collab.OpenBroadcastSession]. The old HostOrJoin-then-reopen-to-serve shape
+		// left exactly that window open.
+		bs, err := collab.OpenBroadcastSession(b.ctx, collabLocalRoom, collab.DefaultElectionWindow)
 		if err != nil {
 			b.reportLocalErr(done, err)
 			return
 		}
-		if role == collab.RoleHost {
-			b.localHost(name, color, done)
+		if bs.Role() == collab.RoleHost {
+			b.localHost(bs, name, color, done)
 		} else {
-			b.localJoin(name, color, done)
+			b.localJoin(bs, name, color, done)
 		}
 	}()
 }
 
 // localHost holds the document for the same-browser room: it runs a Server, joins
 // it over an in-process Pipe so the host's own editor is a participant, seeds the
-// shared text with the current source, then serves the other tabs over the bus
+// shared text with the current source, then attaches that Server to the answerer
+// bs has been running since the election and serves the other tabs over the bus
 // until the session is torn down (ctx cancelled by Disconnect).
-func (b *webrtcBackend) localHost(name string, color toolkit.RGBA, done func(error)) {
+func (b *webrtcBackend) localHost(bs *collab.BroadcastSession, name string, color toolkit.RGBA, done func(error)) {
 	src := b.s.Source()
 	b.server = collab.NewServer(collab.Config{Store: collab.NewMemoryStore()})
 	client, server := collab.Pipe()
@@ -321,10 +330,12 @@ func (b *webrtcBackend) localHost(name string, color toolkit.RGBA, done func(err
 	hostClient, err := collab.Join(b.ctx, client,
 		collab.ClientConfig{Document: docName, Site: randSite()})
 	if err != nil {
+		bs.Close()
 		b.reportLocalErr(done, err)
 		return
 	}
 	if err := b.bind(hostClient, name, color); err != nil {
+		bs.Close()
 		b.reportLocalErr(done, err)
 		return
 	}
@@ -336,20 +347,32 @@ func (b *webrtcBackend) localHost(name string, color toolkit.RGBA, done func(err
 		done(nil)
 	}
 	b.setConnected(true)
-	_ = b.server.ServeBroadcastChannel(b.ctx, collabLocalRoom) // blocks until torn down
+	// Attach the Server to the already-answering bus and serve; every tab welcomed
+	// during setup gets its session now, and any that join later get theirs at once.
+	err = bs.Serve(b.server) // blocks until torn down
 	b.setConnected(false)
+	if errors.Is(err, collab.ErrHostSuperseded) && b.cancel != nil {
+		// Another tab with priority took the room — a race the gap-free election
+		// makes vanishingly unlikely, kept as a backstop. Abandon this duplicate host
+		// so the room keeps exactly one document; cancelling tears the half-built host
+		// down and the user can reconnect, which now joins the survivor.
+		b.cancel()
+	}
 }
 
-// localJoin joins the tab that is holding the document for the same-browser room,
-// over the shared bus, and binds the editor to the shared document.
-func (b *webrtcBackend) localJoin(name string, color toolkit.RGBA, done func(error)) {
-	client, err := collab.Join(b.ctx, collab.JoinBroadcastChannel(collabLocalRoom),
+// localJoin joins the tab that is holding the document for the same-browser room
+// over the connection bs already dialled during the election, and binds the
+// editor to the shared document.
+func (b *webrtcBackend) localJoin(bs *collab.BroadcastSession, name string, color toolkit.RGBA, done func(error)) {
+	client, err := collab.Join(b.ctx, bs.Transport(),
 		collab.ClientConfig{Document: docName, Site: randSite()})
 	if err != nil {
+		bs.Close()
 		b.reportLocalErr(done, err)
 		return
 	}
 	if err := b.bind(client, name, color); err != nil {
+		bs.Close()
 		b.reportLocalErr(done, err)
 		return
 	}
