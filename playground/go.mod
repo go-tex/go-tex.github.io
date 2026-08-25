@@ -16,7 +16,7 @@ require (
 	github.com/go-tex/engine v0.168.0
 	github.com/go-widgets/mvvm v0.7.0
 	github.com/go-widgets/painter v0.11.0
-	github.com/go-widgets/toolkit v0.250.0
+	github.com/go-widgets/toolkit v0.251.0
 	github.com/go-widgets/toolkit/rougelex v0.2.0
 )
 
