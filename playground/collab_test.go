@@ -90,15 +90,26 @@ func TestCollabHostSuccessAndError(t *testing.T) {
 	var gotOffer string
 	var gotErr error
 	s.CollabHost(func(offer string, err error) { gotOffer, gotErr = offer, err })
-	if gotErr != nil || gotOffer != "OFFER-BLOB" {
-		t.Fatalf("host done = (%q, %v), want the offer", gotOffer, gotErr)
+	if gotErr != nil {
+		t.Fatalf("host done err = %v", gotErr)
+	}
+	// The offer handed back is an identity envelope wrapping the backend's raw SDP,
+	// carrying this host's id/name/colour so the guest's panel can name who invited.
+	id, name, color, inner, derr := decodeEnvelope(gotOffer)
+	if derr != nil || inner != "OFFER-BLOB" {
+		t.Fatalf("host offer envelope = (inner %q, err %v), want inner OFFER-BLOB", inner, derr)
+	}
+	if id != s.CollabLocalID() || name != s.CollabName() || color != s.CollabColorHex() {
+		t.Fatalf("host envelope identity = %q/%q/%q, want %q/%q/%q",
+			id, name, color, s.CollabLocalID(), s.CollabName(), s.CollabColorHex())
 	}
 	if s.CollabPhase() != int(phaseHostWait) {
 		t.Fatalf("phase after Host = %d, want hostWait", s.CollabPhase())
 	}
-	if s.CollabOffer() != "OFFER-BLOB" {
-		t.Fatalf("CollabOffer = %q", s.CollabOffer())
+	if s.CollabOffer() != gotOffer {
+		t.Fatalf("CollabOffer = %q, want the envelope handed to done %q", s.CollabOffer(), gotOffer)
 	}
+	// The backend itself still received the RAW name (unchanged signature).
 	if f.name != s.CollabName() {
 		t.Fatalf("backend got name %q, want %q", f.name, s.CollabName())
 	}
@@ -119,12 +130,24 @@ func TestCollabJoinSuccessEmptyAndError(t *testing.T) {
 	s, f, _ := withFake(t)
 	f.answer = "ANSWER-BLOB"
 
+	// The guest pastes the host's envelope (with surrounding whitespace); Join decodes
+	// it — capturing the host's identity — and hands only the INNER sdp to the backend.
+	hostOffer := encodeEnvelope("H0ST", "Host Name", "#123456", "HOST-OFFER")
 	var gotAnswer string
-	s.CollabJoin("  HOST-OFFER  ", func(answer string, err error) { gotAnswer = answer })
-	if gotAnswer != "ANSWER-BLOB" || f.gotOffer != "HOST-OFFER" {
-		t.Fatalf("join: answer=%q gotOffer=%q (offer should be trimmed)", gotAnswer, f.gotOffer)
+	s.CollabJoin("  "+hostOffer+"  ", func(answer string, err error) { gotAnswer = answer })
+	if f.gotOffer != "HOST-OFFER" {
+		t.Fatalf("join fed backend %q, want the inner sdp HOST-OFFER (envelope unwrapped, trimmed)", f.gotOffer)
 	}
-	if s.CollabPhase() != int(phaseGuestWait) || s.CollabAnswer() != "ANSWER-BLOB" {
+	if s.CollabPeerID() != "H0ST" || s.CollabPeerName() != "Host Name" || s.CollabPeerColorHex() != "#123456" {
+		t.Fatalf("join captured peer %q/%q/%q, want H0ST/Host Name/#123456",
+			s.CollabPeerID(), s.CollabPeerName(), s.CollabPeerColorHex())
+	}
+	// The answer handed back is this guest's own envelope wrapping the backend's SDP.
+	_, _, _, inner, derr := decodeEnvelope(gotAnswer)
+	if derr != nil || inner != "ANSWER-BLOB" {
+		t.Fatalf("join answer envelope = (inner %q, err %v), want inner ANSWER-BLOB", inner, derr)
+	}
+	if s.CollabPhase() != int(phaseGuestWait) || s.CollabAnswer() != gotAnswer {
 		t.Fatalf("phase=%d answer=%q after Join", s.CollabPhase(), s.CollabAnswer())
 	}
 
@@ -136,21 +159,40 @@ func TestCollabJoinSuccessEmptyAndError(t *testing.T) {
 		t.Fatalf("empty join: err=%v errMsg=%q", emptyErr, s2.collab.errMsg)
 	}
 
-	// Backend error.
+	// A malformed / old (non-envelope) blob is refused with the clear message, before
+	// the backend is touched.
 	s3, f3, _ := withFake(t)
-	f3.joinErr = errors.New("bad offer")
-	s3.CollabJoin("x", nil)
-	if s3.collab.errMsg == "" {
+	var badErr error
+	s3.CollabJoin("not-a-valid-envelope", func(_ string, err error) { badErr = err })
+	if !errors.Is(badErr, errBadEnvelope) || s3.collab.errMsg != collabBadEnvelopeMsg {
+		t.Fatalf("malformed join: err=%v errMsg=%q, want errBadEnvelope / %q", badErr, s3.collab.errMsg, collabBadEnvelopeMsg)
+	}
+	if f3.gotOffer != "" || s3.collab.connecting {
+		t.Fatalf("malformed join touched the backend (gotOffer=%q connecting=%v)", f3.gotOffer, s3.collab.connecting)
+	}
+
+	// Backend error on a well-formed envelope is surfaced.
+	s4, f4, _ := withFake(t)
+	f4.joinErr = errors.New("bad offer")
+	s4.CollabJoin(encodeEnvelope("id", "n", "#000000", "x"), nil)
+	if s4.collab.errMsg == "" {
 		t.Fatal("join backend error not surfaced")
 	}
 }
 
 func TestCollabAcceptAnswerSuccessEmptyAndError(t *testing.T) {
 	s, f, _ := withFake(t)
+	// The host pastes the guest's envelope (with whitespace); AcceptAnswer decodes it —
+	// capturing the guest's identity — and hands only the INNER sdp to the backend.
+	guestReply := encodeEnvelope("GU3S", "Guest Name", "#abcdef", "ANS")
 	var accepted bool
-	s.CollabAcceptAnswer("  ANS  ", func(err error) { accepted = err == nil })
+	s.CollabAcceptAnswer("  "+guestReply+"  ", func(err error) { accepted = err == nil })
 	if !accepted || f.gotAnswer != "ANS" {
-		t.Fatalf("accept: ok=%v gotAnswer=%q (should be trimmed)", accepted, f.gotAnswer)
+		t.Fatalf("accept: ok=%v gotAnswer=%q, want the inner sdp ANS (envelope unwrapped, trimmed)", accepted, f.gotAnswer)
+	}
+	if s.CollabPeerID() != "GU3S" || s.CollabPeerName() != "Guest Name" || s.CollabPeerColorHex() != "#abcdef" {
+		t.Fatalf("accept captured peer %q/%q/%q, want GU3S/Guest Name/#abcdef",
+			s.CollabPeerID(), s.CollabPeerName(), s.CollabPeerColorHex())
 	}
 
 	s2, _, _ := withFake(t)
@@ -160,10 +202,22 @@ func TestCollabAcceptAnswerSuccessEmptyAndError(t *testing.T) {
 		t.Fatalf("empty accept err = %v", emptyErr)
 	}
 
+	// A malformed / old (non-envelope) reply is refused with the clear message.
 	s3, f3, _ := withFake(t)
-	f3.acceptErr = errors.New("stale")
-	s3.CollabAcceptAnswer("y", nil)
-	if s3.collab.errMsg == "" {
+	var badErr error
+	s3.CollabAcceptAnswer("garbage-not-an-envelope", func(err error) { badErr = err })
+	if !errors.Is(badErr, errBadEnvelope) || s3.collab.errMsg != collabBadEnvelopeMsg {
+		t.Fatalf("malformed accept: err=%v errMsg=%q, want errBadEnvelope / %q", badErr, s3.collab.errMsg, collabBadEnvelopeMsg)
+	}
+	if f3.gotAnswer != "" || s3.collab.connecting {
+		t.Fatalf("malformed accept touched the backend (gotAnswer=%q connecting=%v)", f3.gotAnswer, s3.collab.connecting)
+	}
+
+	// Backend error on a well-formed envelope is surfaced.
+	s4, f4, _ := withFake(t)
+	f4.acceptErr = errors.New("stale")
+	s4.CollabAcceptAnswer(encodeEnvelope("id", "n", "#000000", "y"), nil)
+	if s4.collab.errMsg == "" {
 		t.Fatal("accept backend error not surfaced")
 	}
 }
@@ -474,9 +528,12 @@ func TestCollabDispatchRoles(t *testing.T) {
 	v := s.collab
 	f.offer, f.answer = "O", "A"
 
+	// The clipboard carries an identity envelope (what a real peer copies); its inner
+	// sdp is "PASTED", so the Connect handlers still feed the backend "PASTED".
+	pasteEnv := encodeEnvelope("PID0", "Pasted Peer", "#334455", "PASTED")
 	var written string
 	v.clipWrite = func(text string) { written = text }
-	v.clipRead = func(onText func(string), _ func(error)) { onText("PASTED") }
+	v.clipRead = func(onText func(string), _ func(error)) { onText(pasteEnv) }
 
 	v.open = true
 	v.dispatch(roleClose)
@@ -508,26 +565,26 @@ func TestCollabDispatchRoles(t *testing.T) {
 	// "Paste from clipboard" fills the visible field (it no longer connects
 	// straight from the clipboard); the primary Connect button reads the field.
 	v.dispatch(rolePasteOffer)
-	if v.pasteText.Get() != "PASTED" {
-		t.Fatalf("rolePasteOffer filled the field with %q, want PASTED", v.pasteText.Get())
+	if v.pasteText.Get() != pasteEnv {
+		t.Fatalf("rolePasteOffer filled the field with %q, want the pasted envelope", v.pasteText.Get())
 	}
 	if !v.pasteFocused {
 		t.Fatal("rolePasteOffer should focus the paste field")
 	}
 	v.dispatch(roleConnectOffer)
 	if f.gotOffer != "PASTED" {
-		t.Fatalf("roleConnectOffer fed %q to Join, want the field text PASTED", f.gotOffer)
+		t.Fatalf("roleConnectOffer fed %q to Join, want the field envelope's inner sdp PASTED", f.gotOffer)
 	}
-	v.pasteText.Set("REPLY")
+	v.pasteText.Set(encodeEnvelope("RID0", "Reply Peer", "#665544", "REPLY"))
 	v.dispatch(roleConnectAnswer)
 	if f.gotAnswer != "REPLY" {
-		t.Fatalf("roleConnectAnswer fed %q to AcceptAnswer, want the field text REPLY", f.gotAnswer)
+		t.Fatalf("roleConnectAnswer fed %q to AcceptAnswer, want the field envelope's inner sdp REPLY", f.gotAnswer)
 	}
 	// rolePasteAnswer also just fills the field from the clipboard.
 	v.pasteText.Set("")
 	v.dispatch(rolePasteAnswer)
-	if v.pasteText.Get() != "PASTED" {
-		t.Fatalf("rolePasteAnswer filled the field with %q, want PASTED", v.pasteText.Get())
+	if v.pasteText.Get() != pasteEnv {
+		t.Fatalf("rolePasteAnswer filled the field with %q, want the pasted envelope", v.pasteText.Get())
 	}
 
 	name0 := v.name

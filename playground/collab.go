@@ -4,6 +4,8 @@
 package playground
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -197,6 +199,23 @@ type collabView struct {
 	// every transition into them.
 	pasteText *mvvm.Observable[string]
 
+	// id is this participant's stable short identity: a handful of base32 characters
+	// minted once from rng at construction (see [collabView.randomID]) and shown
+	// beside the name in the identity row (You: <name> #A3F9). Unlike the cosmetic
+	// name/colour — which roleShuffle re-randomises — the id is fixed for the whole
+	// page load, so a peer can always tell WHICH client an invitation/reply came from.
+	id string
+
+	// The pasted peer's identity, decoded from the signalling envelope the user
+	// pastes (see [decodeEnvelope]). peerKnown is set once a valid envelope is
+	// consumed by CollabJoin / CollabAcceptAnswer, so the panel can name who it is
+	// connecting to; it is cleared on teardown. peerColor is the peer's caret hue,
+	// shown as a small swatch beside its name.
+	peerID    string
+	peerName  string
+	peerColor toolkit.RGBA
+	peerKnown bool
+
 	rng *rand.Rand
 
 	// geometry, recomputed by layout() before every draw and hit-test.
@@ -297,6 +316,9 @@ func newCollabView(s *State) *collabView {
 	}
 	v.name = v.randomName()
 	v.color = v.randomColor()
+	// The id is drawn AFTER the name/colour so those two rng draws keep the exact
+	// stream position seeded tests depend on; it is fixed for the page's lifetime.
+	v.id = v.randomID()
 	// The ICE field is pre-filled with the effective configuration — the public
 	// STUN default out of the box — so the user sees (and can edit) what the peers
 	// will actually use.
@@ -458,6 +480,132 @@ func (v *collabView) randomName() string {
 
 func (v *collabView) randomColor() toolkit.RGBA { return caretColors[v.rng.Intn(len(caretColors))] }
 
+// idAlphabet is the character set randomID draws from: Crockford base32 (no I, L,
+// O, U), so a short id stays unambiguous when a user reads it off the panel and
+// compares it to a peer's.
+const idAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+// idLength is how many characters a client id has. Four base32 characters give ~1M
+// distinct ids — plenty to tell two collaborators in a call apart at a glance.
+const idLength = 4
+
+// randomID mints this view's stable short identity from rng. It is deterministic
+// under a fixed seed (so seeded tests are reproducible) and drawn once, at
+// construction; roleShuffle never touches it.
+func (v *collabView) randomID() string {
+	b := make([]byte, idLength)
+	for i := range b {
+		b[i] = idAlphabet[v.rng.Intn(len(idAlphabet))]
+	}
+	return string(b)
+}
+
+// --- the peer-identity signalling envelope -----------------------------------
+
+// collabEnvelope wraps a raw WebRTC signalling blob with the sender's identity, so
+// that when a client pastes the other side's invitation/reply the panel can show
+// WHO it came from before connecting. It is the on-the-wire shape of a "Copy
+// invitation" / "Copy reply" blob (base64 of this JSON); the inner SDP the backend
+// consumes is carried unchanged in SDP.
+type collabEnvelope struct {
+	V     int    `json:"v"`     // envelope version (currently 1)
+	ID    string `json:"id"`    // the sender's short client id
+	Name  string `json:"name"`  // the sender's display name
+	Color string `json:"color"` // the sender's caret colour as "#rrggbb"
+	SDP   string `json:"sdp"`   // the raw signalling blob the backend produced/consumes
+}
+
+// envelopeVersion is the only collabEnvelope.V decodeEnvelope accepts; a different
+// (or absent) version is treated as an unrecognised blob.
+const envelopeVersion = 1
+
+// encodeEnvelope wraps inner (a raw signalling blob) together with the sender's
+// identity into the base64-JSON envelope that "Copy invitation"/"Copy reply" put on
+// the clipboard. Marshalling a struct of strings/ints cannot fail, so the error is
+// intentionally discarded.
+func encodeEnvelope(id, name, colorHex, inner string) string {
+	buf, _ := json.Marshal(collabEnvelope{V: envelopeVersion, ID: id, Name: name, Color: colorHex, SDP: inner})
+	return base64.StdEncoding.EncodeToString(buf)
+}
+
+// decodeEnvelope is the inverse of [encodeEnvelope]: it tolerates surrounding
+// whitespace, then returns the sender's {id, name, colour} and the inner signalling
+// blob. A blob that is not base64, not this JSON, the wrong version, or missing its
+// inner SDP — an old pre-envelope blob, or garbage — yields [errBadEnvelope] so the
+// panel can tell the user it is not a valid invitation.
+func decodeEnvelope(s string) (id, name, colorHex, inner string, err error) {
+	buf, derr := base64.StdEncoding.DecodeString(strings.TrimSpace(s))
+	if derr != nil {
+		return "", "", "", "", errBadEnvelope
+	}
+	var e collabEnvelope
+	if jerr := json.Unmarshal(buf, &e); jerr != nil {
+		return "", "", "", "", errBadEnvelope
+	}
+	if e.V != envelopeVersion || e.SDP == "" {
+		return "", "", "", "", errBadEnvelope
+	}
+	return e.ID, e.Name, e.Color, e.SDP, nil
+}
+
+// errBadEnvelope is returned when a pasted blob is not a recognisable identity
+// envelope (old format, corrupted, or not a signalling blob at all).
+var errBadEnvelope = fmt.Errorf("collab: unrecognised invitation blob")
+
+// collabBadEnvelopeMsg is the user-facing panel message for a pasted blob that is
+// not a valid envelope — the malformed-paste lane, shown through errMsg.
+const collabBadEnvelopeMsg = "That doesn't look like a valid invitation."
+
+// collabPeerLabel formats a peer's identity for the panel: "<name> #<id>", with an
+// "(anonymous)" fallback for a blank name and the bare name when no id is carried.
+func collabPeerLabel(name, id string) string {
+	if name == "" {
+		name = "(anonymous)"
+	}
+	if id == "" {
+		return name
+	}
+	return name + " #" + id
+}
+
+// setPeer records the decoded peer identity so the panel can name who it is
+// connecting to. A blank/malformed colour falls back to the zero swatch.
+func (v *collabView) setPeer(id, name, colorHex string) {
+	v.peerID, v.peerName = id, name
+	c, ok := parseHex(colorHex)
+	if !ok {
+		c = toolkit.RGBA{}
+	}
+	v.peerColor = c
+	v.peerKnown = true
+}
+
+// clearPeer forgets the decoded peer identity on teardown.
+func (v *collabView) clearPeer() {
+	v.peerID, v.peerName, v.peerColor, v.peerKnown = "", "", toolkit.RGBA{}, false
+}
+
+// pastedPeer decodes the current paste-field text if it is a valid envelope,
+// returning the sender's id/name/colour so the panel can preview WHO an
+// invitation/reply is from the instant it is pasted, before Connect. ok is false
+// for an empty field or a non-envelope blob (no preview line, no error tone).
+func (v *collabView) pastedPeer() (id, name string, color toolkit.RGBA, ok bool) {
+	pid, pname, colorHex, _, derr := decodeEnvelope(v.pasteText.Get())
+	if derr != nil {
+		return "", "", toolkit.RGBA{}, false
+	}
+	c, _ := parseHex(colorHex)
+	return pid, pname, c, true
+}
+
+// connectingLine is the peer-named "Connecting…" acknowledgement
+// (Connecting to <name> #<id>…). It is used only once the peer's envelope has been
+// decoded; the generic pre-peer fallback is [collabConnectingMsg], chosen by
+// addConnectingRow.
+func (v *collabView) connectingLine() string {
+	return "Connecting to " + collabPeerLabel(v.peerName, v.peerID) + "…"
+}
+
 // refresh repaints if a host hook is installed.
 func (v *collabView) refresh() {
 	v.s.dirty = true
@@ -513,8 +661,11 @@ func (v *collabView) connectionFailed() {
 
 // CollabHost starts a hosting session: it seeds the shared document with the
 // current editor source, binds the editor to it and makes the offer blob to hand
-// to the peer. done (optional) receives the offer or the error; the panel passes
-// nil and reads v.offer, the headless proof passes a chained handler.
+// to the peer. The raw SDP the backend produces is wrapped in an identity envelope
+// (see [encodeEnvelope]) so the peer's panel can name who invited it; that envelope
+// is what v.offer holds and "Copy invitation" puts on the clipboard. done
+// (optional) receives the envelope or the error; the panel passes nil and reads
+// v.offer, the headless proof passes a chained handler that relays it to the peer.
 func (s *State) CollabHost(done func(offer string, err error)) {
 	v := s.collab
 	v.busy, v.errMsg = true, ""
@@ -523,18 +674,23 @@ func (s *State) CollabHost(done func(offer string, err error)) {
 		if err != nil {
 			v.errMsg = err.Error()
 		} else {
-			v.offer, v.phase = offer, phaseHostWait
+			v.offer, v.phase = encodeEnvelope(v.id, v.name, hexColor(v.color), offer), phaseHostWait
 		}
 		if done != nil {
-			done(offer, err)
+			done(v.offer, err)
 		}
 		v.refresh()
 	})
 }
 
-// CollabJoin joins a hosting peer from its pasted offer: it binds the editor to
-// the shared document and makes the answer blob to hand back to the host. The
-// live connection follows once the host accepts (reported via the change hook).
+// CollabJoin joins a hosting peer from its pasted invitation: it decodes the host's
+// identity envelope (capturing WHO invited it, for the panel), binds the editor to
+// the shared document and makes the answer blob to hand back. The raw SDP inside the
+// envelope is what the backend receives; the answer it produces is itself wrapped in
+// this client's envelope before it lands in v.answer. The live connection follows
+// once the host accepts (reported via the change hook). An empty field or a blob
+// that is not a valid envelope (an old-format or garbage paste) is refused before
+// the backend is touched, with a clear message in the errMsg lane.
 func (s *State) CollabJoin(offer string, done func(answer string, err error)) {
 	v := s.collab
 	offer = strings.TrimSpace(offer)
@@ -546,23 +702,37 @@ func (s *State) CollabJoin(offer string, done func(answer string, err error)) {
 		}
 		return
 	}
+	peerID, peerName, peerColor, inner, err := decodeEnvelope(offer)
+	if err != nil {
+		v.errMsg, v.connecting = collabBadEnvelopeMsg, false
+		v.refresh()
+		if done != nil {
+			done("", err)
+		}
+		return
+	}
+	v.setPeer(peerID, peerName, peerColor)
 	v.busy, v.errMsg, v.connecting = true, "", true
-	v.backend.Join(v.name, v.color, offer, func(answer string, err error) {
+	v.backend.Join(v.name, v.color, inner, func(answer string, err error) {
 		v.busy = false
 		if err != nil {
 			v.errMsg, v.connecting = err.Error(), false
 		} else {
-			v.answer, v.phase = answer, phaseGuestWait
+			v.answer, v.phase = encodeEnvelope(v.id, v.name, hexColor(v.color), answer), phaseGuestWait
 		}
 		if done != nil {
-			done(answer, err)
+			done(v.answer, err)
 		}
 		v.refresh()
 	})
 }
 
-// CollabAcceptAnswer completes the host's handshake with the guest's pasted
-// answer; the live connection follows (reported via the change hook).
+// CollabAcceptAnswer completes the host's handshake with the guest's pasted reply:
+// it decodes the guest's identity envelope (capturing WHO is joining, for the
+// panel), and hands the raw SDP inside it to the backend. The live connection
+// follows (reported via the change hook). An empty field or a blob that is not a
+// valid envelope is refused before the backend is touched, with a clear message in
+// the errMsg lane.
 func (s *State) CollabAcceptAnswer(answer string, done func(err error)) {
 	v := s.collab
 	answer = strings.TrimSpace(answer)
@@ -574,8 +744,18 @@ func (s *State) CollabAcceptAnswer(answer string, done func(err error)) {
 		}
 		return
 	}
+	peerID, peerName, peerColor, inner, err := decodeEnvelope(answer)
+	if err != nil {
+		v.errMsg, v.connecting = collabBadEnvelopeMsg, false
+		v.refresh()
+		if done != nil {
+			done(err)
+		}
+		return
+	}
+	v.setPeer(peerID, peerName, peerColor)
 	v.busy, v.errMsg, v.connecting = true, "", true
-	v.backend.AcceptAnswer(answer, func(err error) {
+	v.backend.AcceptAnswer(inner, func(err error) {
 		v.busy = false
 		if err != nil {
 			v.errMsg, v.connecting = err.Error(), false
@@ -597,6 +777,7 @@ func (s *State) CollabDisconnect() {
 	v.busy, v.connecting = false, false
 	v.pasteText.Set("")
 	v.pasteFocused = false
+	v.clearPeer()
 	v.refresh()
 }
 
@@ -650,6 +831,22 @@ func (s *State) SetCollabName(n string) { s.collab.name = n; s.collab.refresh() 
 
 // CollabColorHex is this participant's caret colour as "#rrggbb".
 func (s *State) CollabColorHex() string { return hexColor(s.collab.color) }
+
+// CollabLocalID is this participant's stable short client id (shown in the identity
+// row next to the name), for the DOM host and headless introspection.
+func (s *State) CollabLocalID() string { return s.collab.id }
+
+// CollabPeerID / CollabPeerName / CollabPeerColorHex expose the identity decoded
+// from the peer's pasted envelope once a valid invitation/reply has been consumed —
+// who this client is connecting to. They are empty before a peer is known.
+func (s *State) CollabPeerID() string   { return s.collab.peerID }
+func (s *State) CollabPeerName() string { return s.collab.peerName }
+func (s *State) CollabPeerColorHex() string {
+	if !s.collab.peerKnown {
+		return ""
+	}
+	return hexColor(s.collab.peerColor)
+}
 
 // CollabOffer / CollabAnswer expose the current signalling blobs (for a DOM host
 // that shows them in a real textarea, or a test).
@@ -783,15 +980,20 @@ func (v *collabView) layout() {
 	v.buttons = append(v.buttons, collabItem{role: roleClose, rect: toolkit.Rect{X: x + pw - pad - bh, Y: cur, W: bh, H: bh}, label: "X"})
 	cur += bh + gap
 
-	// Identity row: "You:" + name field + colour swatch + Shuffle.
+	// Identity row: "You:" + name field + stable id + colour swatch + Shuffle. The
+	// id (e.g. #A3F9) sits between the name and the swatch, fixed for the page load,
+	// so it reads "You: <name> #A3F9" — Shuffle re-rolls the name/colour, never the id.
 	shuffleW := toolkit.Scaled(72)
 	swatch := toolkit.Scaled(18)
 	youW := toolkit.Scaled(34)
+	idW := toolkit.Scaled(52)
 	v.labels = append(v.labels, collabLabel{rect: toolkit.Rect{X: innerX, Y: cur, W: youW, H: bh}, text: "You:"})
 	nameX := innerX + youW
-	nameW := innerW - youW - swatch - gap - shuffleW - 2*gap
+	nameW := innerW - youW - idW - gap - swatch - gap - shuffleW - 2*gap
 	v.nameRect = toolkit.Rect{X: nameX, Y: cur, W: nameW, H: bh}
-	v.swatches = append(v.swatches, collabSwatch{rect: toolkit.Rect{X: nameX + nameW + gap, Y: cur + (bh-swatch)/2, W: swatch, H: swatch}, color: v.color})
+	idX := nameX + nameW + gap
+	v.labels = append(v.labels, collabLabel{rect: toolkit.Rect{X: idX, Y: cur, W: idW, H: bh}, text: "#" + v.id})
+	v.swatches = append(v.swatches, collabSwatch{rect: toolkit.Rect{X: idX + idW + gap, Y: cur + (bh-swatch)/2, W: swatch, H: swatch}, color: v.color})
 	v.buttons = append(v.buttons, collabItem{role: roleShuffle, rect: toolkit.Rect{X: x + pw - pad - shuffleW, Y: cur, W: shuffleW, H: bh}, label: "Shuffle"})
 	cur += bh + gap + gap
 
@@ -829,6 +1031,25 @@ func (v *collabView) layout() {
 		v.pasteRect = toolkit.Rect{X: innerX, Y: cur, W: innerW, H: bh}
 		cur += bh + gap
 	}
+	// addPeerRow shows one line naming a peer, with the peer's caret colour as a small
+	// chip to its left — used to preview who a pasted invitation/reply is from and to
+	// name who a Connect is reaching. It mirrors the connected-phase peer rows.
+	addPeerRow := func(text string, c toolkit.RGBA) {
+		chip := toolkit.Scaled(12)
+		v.swatches = append(v.swatches, collabSwatch{rect: toolkit.Rect{X: innerX, Y: cur + (line-chip)/2, W: chip, H: chip}, color: c})
+		v.labels = append(v.labels, collabLabel{rect: toolkit.Rect{X: innerX + toolkit.Scaled(18), Y: cur, W: innerW - toolkit.Scaled(18), H: line}, text: text})
+		cur += line
+	}
+	// addConnectingRow shows the "Connecting…" acknowledgement, naming the decoded
+	// peer (with its colour chip) once one is known and falling back to the generic
+	// line otherwise.
+	addConnectingRow := func() {
+		if v.peerKnown {
+			addPeerRow(v.connectingLine(), v.peerColor)
+			return
+		}
+		addLabel(collabConnectingMsg)
+	}
 
 	switch {
 	case v.busy:
@@ -841,12 +1062,16 @@ func (v *collabView) layout() {
 		addButtons(collabItem{role: roleCopyOffer, label: "Copy invitation"})
 		if v.connecting {
 			// The reply was accepted: acknowledge it and show the connection is being
-			// attempted, instead of leaving the paste prompt looking untouched.
-			addLabel(collabConnectingMsg)
+			// attempted (naming the peer), instead of leaving the paste prompt untouched.
+			addConnectingRow()
 			addButtons(collabItem{role: roleCancel, label: "Cancel"})
 		} else {
 			addLabel("2. Paste their reply here to connect:")
 			addPasteField()
+			// The instant a valid reply is in the field, name who it is from.
+			if id, name, c, ok := v.pastedPeer(); ok {
+				addPeerRow("Reply from "+collabPeerLabel(name, id), c)
+			}
 			addButtons(
 				collabItem{role: roleConnectAnswer, label: "Connect"},
 				collabItem{role: rolePasteAnswer, label: "Paste from clipboard"},
@@ -856,6 +1081,10 @@ func (v *collabView) layout() {
 	case v.phase == phaseGuestOffer:
 		addLabel("Paste your host's invitation:")
 		addPasteField()
+		// The instant a valid invitation is in the field, name who it is from.
+		if id, name, c, ok := v.pastedPeer(); ok {
+			addPeerRow("Invitation from "+collabPeerLabel(name, id), c)
+		}
 		addButtons(
 			collabItem{role: roleConnectOffer, label: "Connect"},
 			collabItem{role: rolePasteOffer, label: "Paste from clipboard"},
@@ -864,7 +1093,7 @@ func (v *collabView) layout() {
 	case v.phase == phaseGuestWait:
 		addLabel("Send this reply back to the host:")
 		addButtons(collabItem{role: roleCopyAnswer, label: "Copy reply"})
-		addLabel(collabConnectingMsg)
+		addConnectingRow()
 		addButtons(collabItem{role: roleCancel, label: "Cancel"})
 	case v.phase == phaseConnected:
 		addLabel(v.connectedSummary())
