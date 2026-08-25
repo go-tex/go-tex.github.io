@@ -26,6 +26,10 @@ type fakeBackend struct {
 	gotOffer  string // the offer passed to Join
 	gotAnswer string // the answer passed to AcceptAnswer
 
+	localErr    error // returned by LocalConnect's done
+	localCalled bool  // LocalConnect was invoked
+	localName   string
+
 	connected bool
 	failed    bool
 	peers     int
@@ -47,6 +51,11 @@ func (f *fakeBackend) Join(name string, color toolkit.RGBA, offer string, done f
 func (f *fakeBackend) AcceptAnswer(answer string, done func(error)) {
 	f.gotAnswer = answer
 	done(f.acceptErr)
+}
+
+func (f *fakeBackend) LocalConnect(name string, color toolkit.RGBA, done func(error)) {
+	f.localCalled, f.localName, f.color = true, name, color
+	done(f.localErr)
 }
 
 func (f *fakeBackend) Disconnect()          { f.disconnected = true }
@@ -639,7 +648,8 @@ func TestCollabDrawEveryPhase(t *testing.T) {
 		{"guestOffer", func() { v.phase = phaseGuestOffer }},
 		{"guestWait", func() { v.phase, v.answer = phaseGuestWait, "ANSWER" }},
 		{"connected", func() { v.phase = phaseConnected }},
-		{"failed", func() { v.phase, v.errMsg = phaseFailed, "" }},
+		{"localConnecting", func() { v.phase, v.connecting = phaseLocalConnecting, true }},
+		{"failed", func() { v.phase, v.connecting, v.errMsg = phaseFailed, false, "" }},
 		{"error", func() { v.phase, v.errMsg = phaseIdle, "boom" }},
 		{"name-focused", func() { v.phase, v.errMsg, v.nameFocused = phaseIdle, "", true }},
 		{"ice-focused", func() { v.phase, v.errMsg, v.nameFocused, v.iceFocused = phaseIdle, "", false, true }},
@@ -680,12 +690,13 @@ func TestNopBackend(t *testing.T) {
 	b.SetOnChange(func() {})
 	b.Disconnect()
 
-	var hostErr, joinErr, acceptErr error
+	var hostErr, joinErr, acceptErr, localErr error
 	b.Host("n", toolkit.RGBA{}, func(_ string, e error) { hostErr = e })
 	b.Join("n", toolkit.RGBA{}, "o", func(_ string, e error) { joinErr = e })
 	b.AcceptAnswer("a", func(e error) { acceptErr = e })
-	if !errors.Is(hostErr, errNoBrowser) || !errors.Is(joinErr, errNoBrowser) || !errors.Is(acceptErr, errNoBrowser) {
-		t.Fatalf("nop backend errors: host=%v join=%v accept=%v", hostErr, joinErr, acceptErr)
+	b.LocalConnect("n", toolkit.RGBA{}, func(e error) { localErr = e })
+	if !errors.Is(hostErr, errNoBrowser) || !errors.Is(joinErr, errNoBrowser) || !errors.Is(acceptErr, errNoBrowser) || !errors.Is(localErr, errNoBrowser) {
+		t.Fatalf("nop backend errors: host=%v join=%v accept=%v local=%v", hostErr, joinErr, acceptErr, localErr)
 	}
 }
 
@@ -784,10 +795,11 @@ func TestCollabButtonRects(t *testing.T) {
 	if _, ok := r["host"]; ok {
 		t.Fatal("panel buttons should not be exposed while closed")
 	}
-	// Open + idle: Host and Join buttons and the name field appear.
+	// Open + idle: the instant local button, Host and Join buttons and the name
+	// field appear.
 	s.SetCollabOpen(true)
 	r = s.CollabButtonRects()
-	for _, name := range []string{"launcher", "name", "host", "join", "close", "shuffle"} {
+	for _, name := range []string{"launcher", "name", "localConnect", "host", "join", "close", "shuffle"} {
 		rc, ok := r[name]
 		if !ok {
 			t.Fatalf("expected %q rect while open+idle; have %v", name, keysOf(r))
@@ -811,6 +823,7 @@ func TestCollabButtonRects(t *testing.T) {
 		roleShuffle:       "shuffle",
 		roleCancel:        "cancel",
 		roleDisconnect:    "disconnect",
+		roleLocalConnect:  "localConnect",
 		roleNone:          "",
 		roleNameField:     "",
 	}

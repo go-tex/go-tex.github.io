@@ -204,3 +204,108 @@ func TestCollabRealPanelWidgetHandshake(t *testing.T) {
 		t.Fatalf("after Disconnect phase=%d, want phaseIdle=%d", host.CollabPhase(), phaseIdle)
 	}
 }
+
+// TestCollabLocalConnectWidgetFlow drives the zero-config "In this browser
+// (instant)" mode the way a user does — clicking the REAL launcher then the
+// primary local button at their laid-out rects — and proves the click reaches
+// [collabBackend.LocalConnect], the panel acknowledges with the
+// phaseLocalConnecting "Connecting in this browser…" line, and the live session
+// reported through the change hook (exactly as the backend fires it) advances the
+// panel to phaseConnected with the peer summary. It uses the fakeBackend, so it is
+// deterministic and browser-free; the live BroadcastChannel transport is proven by
+// the two-tab headless test (TestCollabLocalTabConvergence).
+func TestCollabLocalConnectWidgetFlow(t *testing.T) {
+	clickWidget := func(t *testing.T, s *State, name string) {
+		t.Helper()
+		r, ok := s.CollabButtonRects()[name]
+		if !ok {
+			t.Fatalf("no Collaborate control %q is visible", name)
+		}
+		cx, cy := r[0]+r[2]/2, r[1]+r[3]/2
+		if !s.HandleClick(cx, cy) {
+			t.Fatalf("HandleClick at %q (%d,%d) was not consumed", name, cx, cy)
+		}
+		s.HandleRelease(cx, cy)
+	}
+	labelShown := func(s *State, want string) bool {
+		s.collab.layout()
+		for _, l := range s.collab.labels {
+			if l.text == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	s, f, _ := withFake(t)
+
+	// Open the panel and click the primary "In this browser (instant)" button.
+	clickWidget(t, s, "launcher")
+	clickWidget(t, s, "localConnect")
+
+	if !f.localCalled {
+		t.Fatal("clicking the local button did not call backend.LocalConnect")
+	}
+	if f.localName != s.CollabName() {
+		t.Fatalf("LocalConnect got name %q, want %q", f.localName, s.CollabName())
+	}
+	if s.CollabPhase() != int(phaseLocalConnecting) {
+		t.Fatalf("after the local click phase=%d, want phaseLocalConnecting=%d", s.CollabPhase(), phaseLocalConnecting)
+	}
+	if !s.CollabConnecting() {
+		t.Fatal("the local mode should report the connecting acknowledgement")
+	}
+	if !labelShown(s, collabLocalConnectingMsg) {
+		t.Fatalf("the panel does not show %q while connecting in this browser", collabLocalConnectingMsg)
+	}
+
+	// The live session is reported by the backend (the change hook), not the click:
+	// flip the fake to connected with one peer and fire onChange, exactly as the
+	// BroadcastChannel backend does when the other tab joins.
+	f.connected = true
+	f.peers = 1
+	f.onChange()
+	if s.CollabPhase() != int(phaseConnected) {
+		t.Fatalf("after the session came up phase=%d, want phaseConnected=%d", s.CollabPhase(), phaseConnected)
+	}
+	if s.CollabConnecting() {
+		t.Fatal("connecting acknowledgement should clear once connected")
+	}
+	if !labelShown(s, "Connected — 1 peer editing with you:") {
+		t.Fatal("the connected panel does not show the peer summary")
+	}
+
+	// Disconnect through the real widget, ending the session cleanly.
+	clickWidget(t, s, "disconnect")
+	if !f.disconnected {
+		t.Fatal("clicking Disconnect did not tear the local session down")
+	}
+	if s.CollabPhase() != int(phaseIdle) {
+		t.Fatalf("after Disconnect phase=%d, want phaseIdle=%d", s.CollabPhase(), phaseIdle)
+	}
+}
+
+// TestCollabLocalConnectSetupError covers the seam's failure lane: when the
+// backend reports a setup error (no BroadcastChannel in this environment), the
+// panel clears the connecting acknowledgement, surfaces the message and falls
+// back to idle rather than hanging on the acknowledgement forever.
+func TestCollabLocalConnectSetupError(t *testing.T) {
+	s, f, _ := withFake(t)
+	f.localErr = errNoBrowser
+
+	var gotErr error
+	s.CollabLocalConnect(func(err error) { gotErr = err })
+
+	if gotErr == nil {
+		t.Fatal("CollabLocalConnect done did not receive the setup error")
+	}
+	if s.CollabPhase() != int(phaseIdle) {
+		t.Fatalf("after a setup error phase=%d, want phaseIdle=%d", s.CollabPhase(), phaseIdle)
+	}
+	if s.CollabConnecting() {
+		t.Fatal("a setup error must clear the connecting acknowledgement")
+	}
+	if s.collab.errMsg == "" {
+		t.Fatal("a setup error should surface a message in the errMsg lane")
+	}
+}
