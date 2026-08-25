@@ -128,10 +128,24 @@ func (b *workerGitBackend) apply(reply gitrpc.Reply) {
 			Behind:    reply.Status.Behind,
 			Clean:     reply.Status.Clean,
 			DirtyFile: reply.Status.DirtyFile,
+			Changes:   changesFrom(reply.Status.Changes),
 		}
 		b.statusOK = true
 	}
 	b.log = commitsFrom(reply.Log)
+}
+
+// changesFrom converts the RPC per-file dirty entries to the app's gitFileChange
+// the sidebar badges rows from.
+func changesFrom(in []gitrpc.Change) []gitFileChange {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]gitFileChange, 0, len(in))
+	for _, c := range in {
+		out = append(out, gitFileChange{Path: c.Path, Status: c.Status})
+	}
+	return out
 }
 
 // commitsFrom converts the RPC log lines to the panel's GitCommitInfo.
@@ -179,6 +193,25 @@ func (b *workerGitBackend) Pull(done func(error)) {
 func (b *workerGitBackend) Commit(path, content, message string, done func(error)) {
 	go func() {
 		reply := b.t.Call(gitrpc.Request{Op: gitrpc.OpCommit, Args: gitrpc.Args{Path: path, Content: content, Message: message}})
+		if !reply.OK {
+			done(codeToError(reply.Code, reply.Error))
+			return
+		}
+		b.mu.Lock()
+		b.contents[path] = content
+		b.mu.Unlock()
+		b.apply(reply)
+		done(nil)
+	}()
+}
+
+// Stage writes content to path in the worker's working tree and stages it (git
+// add) without committing, then folds the fresh status/log into the cache. The
+// new content is cached too (like Commit), so the sidebar's active-file dirty
+// overlay clears and the file's "staged" badge shows through.
+func (b *workerGitBackend) Stage(path, content string, done func(error)) {
+	go func() {
+		reply := b.t.Call(gitrpc.Request{Op: gitrpc.OpStage, Args: gitrpc.Args{Path: path, Content: content}})
 		if !reply.OK {
 			done(codeToError(reply.Code, reply.Error))
 			return

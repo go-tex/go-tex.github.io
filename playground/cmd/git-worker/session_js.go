@@ -59,6 +59,8 @@ func (s *browsergitSession) Commit(message string) error {
 	return err
 }
 
+func (s *browsergitSession) Stage() error { return s.repo.Stage() }
+
 func (s *browsergitSession) Pull() error { return s.repo.Pull(context.Background()) }
 
 func (s *browsergitSession) Push() error { return s.repo.Push(context.Background()) }
@@ -68,12 +70,17 @@ func (s *browsergitSession) Status() (gitrpc.Status, error) {
 	if err != nil {
 		return gitrpc.Status{}, err
 	}
+	changes := make([]gitrpc.Change, 0, len(st.Changes))
+	for _, c := range st.Changes {
+		changes = append(changes, gitrpc.Change{Path: c.Path, Status: c.Status})
+	}
 	return gitrpc.Status{
 		Branch:    st.Branch,
 		Ahead:     st.Ahead,
 		Behind:    st.Behind,
 		Clean:     st.Clean,
 		DirtyFile: len(st.Changes),
+		Changes:   changes,
 	}, nil
 }
 
