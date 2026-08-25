@@ -23,12 +23,15 @@ type fakeGitBackend struct {
 	cloneErr  error
 	pullErr   error
 	commitErr error
+	stageErr  error
 	pushErr   error
 
 	gotCfg           gitConfig
 	gotCommitPath    string
 	gotCommitContent string
 	gotCommitMsg     string
+	gotStagePath     string
+	gotStageContent  string
 	cloneCalls       int
 
 	hold    bool
@@ -68,6 +71,22 @@ func (f *fakeGitBackend) Commit(path, content, message string, done func(error))
 		return
 	}
 	done(f.commitErr)
+}
+
+func (f *fakeGitBackend) Stage(path, content string, done func(error)) {
+	f.gotStagePath, f.gotStageContent = path, content
+	if f.stageErr == nil {
+		// A real stage flips the file to "staged" and caches the content, so the
+		// active-file dirty overlay clears; mirror that in the fake.
+		f.fileData[path] = content
+		f.status = gitStatus{Branch: f.status.Branch, Changes: []gitFileChange{{Path: path, Status: "staged"}}}
+		f.statusOK = true
+	}
+	if f.hold {
+		f.release = func() { done(f.stageErr) }
+		return
+	}
+	done(f.stageErr)
 }
 
 func (f *fakeGitBackend) Push(done func(error)) {
@@ -505,12 +524,13 @@ func TestNopGitBackend(t *testing.T) {
 	if _, err := b.ReadFile("x"); !errors.Is(err, errNoBrowserGit) {
 		t.Fatalf("nop read err = %v", err)
 	}
-	var ce, pe, cme, pue error
+	var ce, pe, cme, pue, se error
 	b.Clone(gitConfig{}, func(_ []string, e error) { ce = e })
 	b.Pull(func(e error) { pue = e })
 	b.Commit("p", "c", "m", func(e error) { cme = e })
+	b.Stage("p", "c", func(e error) { se = e })
 	b.Push(func(e error) { pe = e })
-	for _, e := range []error{ce, pe, cme, pue} {
+	for _, e := range []error{ce, pe, cme, pue, se} {
 		if !errors.Is(e, errNoBrowserGit) {
 			t.Fatalf("nop op err = %v, want errNoBrowserGit", e)
 		}

@@ -39,6 +39,8 @@ type gitSession interface {
 	WriteFile(p, content string) error
 	// Commit stages every change and commits with the configured identity.
 	Commit(message string) error
+	// Stage stages every change (git add) without committing.
+	Stage() error
 	// Pull fast-forwards the working tree against origin.
 	Pull() error
 	// Push pushes the tracked branch to origin.
@@ -87,6 +89,8 @@ func (h *handler) dispatch(req gitrpc.Request) gitrpc.Reply {
 		return h.status(req)
 	case gitrpc.OpCommit:
 		return h.commit(req)
+	case gitrpc.OpStage:
+		return h.stage(req)
 	case gitrpc.OpPull:
 		return h.pull(req)
 	case gitrpc.OpPush:
@@ -187,6 +191,23 @@ func (h *handler) commit(req gitrpc.Request) gitrpc.Reply {
 	return h.mutatingReply(req.ID, false)
 }
 
+// stage writes the file then stages it (git add) without committing, so the
+// fused status reply reports the file as staged. It mirrors commit's write step
+// but stops short of the commit.
+func (h *handler) stage(req gitrpc.Request) gitrpc.Reply {
+	if r, ok := h.requireRepo(req.ID); !ok {
+		return r
+	}
+	a := req.Args
+	if err := h.s.WriteFile(a.Path, a.Content); err != nil {
+		return h.fail(req.ID, err)
+	}
+	if err := h.s.Stage(); err != nil {
+		return h.fail(req.ID, err)
+	}
+	return h.mutatingReply(req.ID, false)
+}
+
 func (h *handler) pull(req gitrpc.Request) gitrpc.Reply {
 	if r, ok := h.requireRepo(req.ID); !ok {
 		return r
@@ -253,7 +274,7 @@ func (h *handler) mutatingReply(id int, withFiles bool) gitrpc.Reply {
 
 	contents := map[string]string{}
 	for _, f := range files {
-		if !isTeX(f) {
+		if !isTextSource(f) {
 			continue
 		}
 		data, err := h.s.ReadFile(f)
@@ -268,6 +289,18 @@ func (h *handler) mutatingReply(id int, withFiles bool) gitrpc.Reply {
 
 // isTeX reports whether f is a .tex file (case-insensitive extension).
 func isTeX(f string) bool { return strings.EqualFold(path.Ext(f), ".tex") }
+
+// textSourceExts are the working-tree extensions whose contents the clone/pull
+// reply pre-caches, so the workspace sidebar can open any of them into the editor
+// without a second round-trip: the LaTeX source family plus plain text/markdown.
+var textSourceExts = map[string]bool{
+	".tex": true, ".sty": true, ".cls": true, ".bib": true, ".bst": true,
+	".def": true, ".ltx": true, ".tikz": true, ".txt": true, ".md": true,
+}
+
+// isTextSource reports whether f is a text file the sidebar can open into the
+// editor (case-insensitive extension), so its contents ride along in the reply.
+func isTextSource(f string) bool { return textSourceExts[strings.ToLower(path.Ext(f))] }
 
 // codeForErr maps a browsergit error onto a stable [gitrpc] code. Everything the
 // browsergit client can return is classified into one of its sentinels, so the

@@ -162,6 +162,56 @@ func TestWorkerBackendCommitPushPull(t *testing.T) {
 	}
 }
 
+func TestWorkerBackendStage(t *testing.T) {
+	tr := &fakeTransport{replies: map[string]gitrpc.Reply{
+		gitrpc.OpClone: {OK: true, Files: []string{"main.tex"}, Contents: map[string]string{"main.tex": "seed"}, Status: &gitrpc.Status{Branch: "main", Clean: true}},
+		gitrpc.OpStage: {OK: true, Status: &gitrpc.Status{Branch: "main", DirtyFile: 1, Changes: []gitrpc.Change{{Path: "main.tex", Status: "staged"}}}},
+	}}
+	b := newWorkerGitBackend(tr)
+	if _, err := cloneSync(b, gitConfig{URL: "u"}); err != nil {
+		t.Fatalf("clone: %v", err)
+	}
+	if err := errSync(func(done func(error)) { b.Stage("main.tex", "staged body", done) }); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	// Stage forwarded the write and cached the content (no commit message).
+	if a, _ := tr.lastArgs(gitrpc.OpStage); a.Path != "main.tex" || a.Content != "staged body" || a.Message != "" {
+		t.Fatalf("stage args = %+v", a)
+	}
+	if data, _ := b.ReadFile("main.tex"); string(data) != "staged body" {
+		t.Fatalf("stage did not update the cache: %q", data)
+	}
+	// The per-file changes threaded through into the cached status.
+	st, ok := b.Status()
+	if !ok || len(st.Changes) != 1 || st.Changes[0].Path != "main.tex" || st.Changes[0].Status != "staged" {
+		t.Fatalf("stage status.Changes = %+v ok=%v", st.Changes, ok)
+	}
+}
+
+func TestWorkerBackendStageError(t *testing.T) {
+	tr := &fakeTransport{replies: map[string]gitrpc.Reply{
+		gitrpc.OpClone: {OK: true, Files: []string{"main.tex"}, Status: &gitrpc.Status{Branch: "main"}},
+		gitrpc.OpStage: {OK: false, Code: gitrpc.CodeTransport, Error: "boom"},
+	}}
+	b := newWorkerGitBackend(tr)
+	if _, err := cloneSync(b, gitConfig{URL: "u"}); err != nil {
+		t.Fatalf("clone: %v", err)
+	}
+	if err := errSync(func(done func(error)) { b.Stage("main.tex", "x", done) }); !errors.Is(err, errGitTransport) {
+		t.Fatalf("stage err = %v", err)
+	}
+}
+
+func TestChangesFrom(t *testing.T) {
+	if changesFrom(nil) != nil {
+		t.Fatal("changesFrom(nil) should be nil")
+	}
+	got := changesFrom([]gitrpc.Change{{Path: "p", Status: "modified"}})
+	if len(got) != 1 || got[0].Path != "p" || got[0].Status != "modified" {
+		t.Fatalf("changesFrom = %+v", got)
+	}
+}
+
 func TestWorkerBackendMutatingErrors(t *testing.T) {
 	tr := &fakeTransport{replies: map[string]gitrpc.Reply{
 		gitrpc.OpClone:  {OK: true, Files: []string{"main.tex"}, Contents: map[string]string{"main.tex": "x"}, Status: &gitrpc.Status{Branch: "main"}},

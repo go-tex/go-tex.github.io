@@ -422,6 +422,29 @@ func main() {
 		}
 	}))
 
+	// gotexSidebar toggles + reports the Git workspace sidebar for the layout
+	// proof: called with a boolean it opens/closes the column and repaints; it
+	// returns the column's device rect + width, the editor pane's device width and
+	// the canvas backing size, so a headless harness can prove the sidebar renders
+	// on the left AND the editor+render body still fills the rest (the #46
+	// full-width regression guard).
+	js.Global().Set("gotexSidebar", js.FuncOf(func(_ js.Value, a []js.Value) any {
+		if len(a) > 0 && a[0].Type() == js.TypeBoolean {
+			state.SetSidebarOpen(a[0].Bool())
+			render()
+		}
+		r := state.SidebarRect()
+		w, h := state.Size()
+		return map[string]any{
+			"open":    state.SidebarOpen(),
+			"rect":    []any{r[0], r[1], r[2], r[3]},
+			"width":   state.SidebarWidth(),
+			"editorW": state.EditorWidth(),
+			"canvasW": w,
+			"canvasH": h,
+		}
+	}))
+
 	// gotexSource returns the current editor buffer, so a headless harness can
 	// assert clipboard paste/cut changed the text.
 	js.Global().Set("gotexSource", js.FuncOf(func(js.Value, []js.Value) any {

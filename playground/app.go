@@ -112,9 +112,10 @@ const (
 	pressDivider
 	pressEditor
 	pressMinimap
-	pressRight  // the render ScrollView or the Log view (paned.Second)
-	pressCollab // the modal Collaborate panel captured the press
-	pressGit    // the modal Remote-Git panel captured the press
+	pressRight   // the render ScrollView or the Log view (paned.Second)
+	pressCollab  // the modal Collaborate panel captured the press
+	pressGit     // the modal Remote-Git panel captured the press
+	pressSidebar // the workspace sidebar (left column) captured the press
 )
 
 // SetupText installs the toolkit's anti-aliased text and metric scale for a
@@ -174,6 +175,13 @@ type State struct {
 	// clone/commit/push). Self-contained in git.go / git_js.go, the same shape as
 	// collab; the hooks below (init, draw, click, char, key) are all app.go needs.
 	git *gitView
+
+	// sidebar is the Git workspace sidebar: a toggleable left column with the file
+	// tree, git command buttons and a commit timeline (sidebar.go). sidebarBtn is
+	// its toolbar toggle. When open, layout() reserves the column's width on the
+	// left and the editor+render body fills the rest.
+	sidebar    *sidebar
+	sidebarBtn *toolkit.Button
 
 	// clip is the toolkit-wide clipboard the editor's copy/cut/paste go through;
 	// installed process-wide in NewState. Its onWrite hook lets the wasm host push
@@ -340,6 +348,14 @@ func NewState(w, h int, dark bool) *State {
 	s.status = toolkit.NewStatusbar([]string{"Ln 1, Col 1", "UTF-8", "0 pages", "", s.buildInfo})
 	s.collab = newCollabView(s) // Collaborate affordance (see collab.go)
 	s.git = newGitView(s)       // Remote-git affordance (see git.go)
+	s.sidebar = newSidebar(s)   // Git workspace sidebar, left column (see sidebar.go)
+	// The toolbar toggle for the workspace sidebar. Closed by default so the
+	// canvas keeps its full width until the user opens it.
+	s.sidebarBtn = toolkit.NewButton("Workspace", func() {
+		s.sidebar.toggle()
+		s.layout()
+		s.dirty = true
+	})
 
 	// The two chrome bands moved in from the host HTML (see zones.go). siteRoot is
 	// seeded to the canonical default before the first layout (bottomZone.measure
@@ -718,7 +734,12 @@ func (s *State) layout() {
 		bodyH = 0
 	}
 	top := s.bodyTop() // topZoneH + toolbarH: where the body begins
-	s.paned.SetBounds(toolkit.Rect{X: 0, Y: top, W: s.w, H: bodyH})
+	// The workspace sidebar (when open) is a left column spanning the body band;
+	// the editor+render body shrinks to the right of it. The status bar and the
+	// two chrome bands stay full width.
+	sbW := s.sidebar.width()
+	s.sidebar.setBounds(toolkit.Rect{X: 0, Y: top, W: sbW, H: bodyH})
+	s.paned.SetBounds(toolkit.Rect{X: sbW, Y: top, W: s.w - sbW, H: bodyH})
 	s.status.SetBounds(toolkit.Rect{X: 0, Y: top + bodyH, W: s.w, H: s.statusH})
 	s.topZone.setBounds(toolkit.Rect{X: 0, Y: 0, W: s.w, H: s.topZoneH})
 	s.bottomZone.place(toolkit.Rect{X: 0, Y: top + bodyH + s.statusH, W: s.w, H: s.bottomZoneH})
@@ -741,6 +762,9 @@ func (s *State) layoutToolbar() {
 	x += pw + gap
 	bw := toolkit.Scaled(84)
 	s.minimapBtn.SetBounds(toolkit.Rect{X: x, Y: yy, W: bw, H: h})
+	x += bw + gap
+	sbw := toolkit.Scaled(sidebarBtnW)
+	s.sidebarBtn.SetBounds(toolkit.Rect{X: x, Y: yy, W: sbw, H: h})
 }
 
 // applyLeftSplit reserves the top strip of the left pane for the editor's
@@ -866,6 +890,11 @@ func (s *State) Draw(buf []byte) {
 	s.toolbarRule.Draw(p, s.theme)
 	s.schemePicker.Draw(p, s.theme)
 	s.minimapBtn.Draw(p, s.theme)
+	s.sidebarBtn.Selected().Set(s.sidebar.open)
+	s.sidebarBtn.Draw(p, s.theme)
+
+	// The workspace sidebar (left column of the body band), when open.
+	s.sidebar.draw(p, s.theme)
 
 	// Body: editor + right pane (tabs over render|log) + handle, then the
 	// minimap overlay.
@@ -962,7 +991,7 @@ func (s *State) HandleClick(x, y int) bool {
 
 	// Toolbar controls (the row between the topZone band and the body).
 	if y >= s.topZoneH && y < s.bodyTop() {
-		for _, w := range []toolkit.Widget{s.schemePicker, s.minimapBtn} {
+		for _, w := range []toolkit.Widget{s.schemePicker, s.minimapBtn, s.sidebarBtn} {
 			r := w.Bounds()
 			if r.Contains(x, y) {
 				w.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - r.X, Y: y - r.Y})
@@ -972,6 +1001,15 @@ func (s *State) HandleClick(x, y int) bool {
 			}
 		}
 		return false
+	}
+
+	// Workspace sidebar (the left column of the body band, when open). It is a
+	// distinct region that never overlaps the editor/render body, so it is tested
+	// before the divider + body widgets.
+	if s.sidebar.handleClick(x, y) {
+		s.pressKind = pressSidebar
+		s.dirty = true
+		return true
 	}
 
 	// Divider (resize grip).
@@ -1092,6 +1130,11 @@ func (s *State) HandleRelease(x, y int) bool {
 		s.pressKind = pressNone
 		return true
 	}
+	if s.pressKind == pressSidebar {
+		s.sidebar.handleRelease(x, y)
+		s.pressKind = pressNone
+		return true
+	}
 	if s.wysiwygRelease(x, y) { // end a WYSIWYG RichEditor drag (wysiwyg.go)
 		return true
 	}
@@ -1120,6 +1163,11 @@ func (s *State) HandleRelease(x, y int) bool {
 // minimap scroll vertically only.
 func (s *State) HandleScroll(x, y, dx, dy int) bool {
 	if s.wysiwygScroll(x, y, dy) { // WYSIWYG RichEditor wheel scroll (wysiwyg.go)
+		return true
+	}
+	// The workspace sidebar's file tree + timeline scroll under the pointer.
+	if s.sidebar.handleScroll(x, y, dy) {
+		s.dirty = true
 		return true
 	}
 	rr := s.rightPane.Bounds()

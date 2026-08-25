@@ -71,14 +71,24 @@ type gitConfig struct {
 	Email  string
 }
 
+// gitFileChange is one dirty working-tree entry the workspace sidebar badges a
+// file row from: its slash-relative path and a classify() status label
+// ("untracked" | "modified" | "deleted" | "staged").
+type gitFileChange struct {
+	Path   string
+	Status string
+}
+
 // gitStatus is the display snapshot of the open repo's branch + divergence, the
-// subset of [browsergit.Status] the panel shows.
+// subset of [browsergit.Status] the panel shows. Changes is the per-file dirty
+// list the sidebar reads; DirtyFile is its count (kept for the compact line).
 type gitStatus struct {
 	Branch    string
 	Ahead     int
 	Behind    int
 	Clean     bool
 	DirtyFile int
+	Changes   []gitFileChange
 }
 
 // GitCommitInfo is one log line surfaced to the host (and the headless proof):
@@ -108,6 +118,9 @@ type gitBackend interface {
 	// Commit writes content to path in the working tree, then commits with
 	// message and the configured identity; done reports the error.
 	Commit(path, content, message string, done func(err error))
+	// Stage writes content to path in the working tree, then stages it (git
+	// add) WITHOUT committing; done reports the error.
+	Stage(path, content string, done func(err error))
 	// Push pushes the open branch to origin; done reports the error.
 	Push(done func(err error))
 	// ReadFile returns a working-tree file (sync; the tree is in memory).
@@ -415,6 +428,45 @@ func (s *State) GitCommit(done func(err error)) {
 	})
 }
 
+// GitStage writes the editor's current source back to the loaded path and stages
+// it (git add) WITHOUT committing, so the file's sidebar badge flips to "staged".
+// It mirrors GitCommit's guards; the sidebar's Stage button drives it.
+func (s *State) GitStage(done func(err error)) {
+	v := s.git
+	if v.busy.Get() {
+		return
+	}
+	if !v.backend.HasRepo() {
+		v.fail(errNoGitRepo, done)
+		return
+	}
+	if v.loaded.Get() == "" {
+		v.fail(errNoGitFile, done)
+		return
+	}
+	v.busy.Set(true)
+	v.errMsg.Set("")
+	v.notice.Set("")
+	v.refresh()
+	path := v.loaded.Get()
+	content := s.Source()
+	v.backend.Stage(path, content, func(err error) {
+		v.busy.Set(false)
+		if err != nil {
+			v.errMsg.Set(gitErrorMessage(err))
+		} else {
+			// The worker's Stage wrote the buffer to the tree and cached it, so the
+			// sidebar's active-file dirty overlay clears and the "staged" badge shows.
+			v.refreshStatus()
+			v.notice.Set("Staged " + path + ".")
+		}
+		if done != nil {
+			done(err)
+		}
+		v.refresh()
+	})
+}
+
 // GitPush pushes the open branch to origin.
 func (s *State) GitPush(done func(err error)) {
 	v := s.git
@@ -469,6 +521,21 @@ func (v *gitView) loadFile(p string) {
 	v.loaded.Set(p)
 	v.s.SetSource(string(data))
 	v.notice.Set("Loaded " + p + ".")
+}
+
+// GitOpenFile opens working-tree path into the source editor (the sidebar's
+// file-row click drives it). It reuses the panel's loadFile — reading the cached
+// content the last clone/pull filled — so any pre-cached text file (.tex/.sty/
+// .bib/…), not just the primary .tex, opens. A no-op while a network op is in
+// flight or before a clone; reports whether it opened the file.
+func (s *State) GitOpenFile(path string) bool {
+	v := s.git
+	if v.busy.Get() || !v.backend.HasRepo() || path == "" {
+		return false
+	}
+	v.loadFile(path)
+	v.refresh()
+	return v.loaded.Get() == path
 }
 
 // refreshStatus snapshots the backend's branch/divergence for the status area.
@@ -1009,6 +1076,7 @@ type nopGitBackend struct{}
 func (nopGitBackend) Clone(_ gitConfig, done func([]string, error)) { done(nil, errNoBrowserGit) }
 func (nopGitBackend) Pull(done func(error))                         { done(errNoBrowserGit) }
 func (nopGitBackend) Commit(_, _, _ string, done func(error))       { done(errNoBrowserGit) }
+func (nopGitBackend) Stage(_, _ string, done func(error))           { done(errNoBrowserGit) }
 func (nopGitBackend) Push(done func(error))                         { done(errNoBrowserGit) }
 func (nopGitBackend) ReadFile(string) ([]byte, error)               { return nil, errNoBrowserGit }
 func (nopGitBackend) Status() (gitStatus, bool)                     { return gitStatus{}, false }
