@@ -100,6 +100,8 @@ func TestZonesFullHeightBrowser(t *testing.T) {
 		"a bottomZone link targets https://github.com/go-tex/brand",
 		"topZone ready dot painted",
 		"bottomZone link text painted for https://github.com/go-tex/engine",
+		"hovering a bottomZone link draws its underline",
+		"moving off the link clears its underline",
 		"clicking the go-tex/engine link navigated to it",
 		"RESULT ",
 		`"ok":true`,

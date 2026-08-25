@@ -142,6 +142,57 @@ const puppeteer = require("puppeteer-core");
       check(painted, "bottomZone link text painted for " + l.url);
     }
 
+    // 3b. Hover feedback: a real pointer-move onto a link's device rect must draw
+    //     the underline, and moving off it must clear it. Rendering is
+    //     deterministic, so the underline is the ONLY thing that changes the link
+    //     rect's pixels between resting and hovered — a position-wise pixel diff of
+    //     the rect isolates it, with no fragile background reference.
+    const engineLink = z.links.find((l) => /go-tex\/engine/.test(l.url)) || z.links[0];
+    const pixelDiff = (a, b) => {
+      let n = 0;
+      for (let i = 0; i + 3 < a.length && i + 3 < b.length; i += 4) {
+        if (a[i] !== b[i] || a[i + 1] !== b[i + 1] || a[i + 2] !== b[i + 2] || a[i + 3] !== b[i + 3]) n++;
+      }
+      return n;
+    };
+    // Device rect -> CSS-pixel centre, the space page.mouse.move works in.
+    const centreCSS = (rect) =>
+      page.evaluate((rr) => {
+        const c = document.getElementById("gotex-canvas");
+        const b = c.getBoundingClientRect();
+        const dpr = c.width / b.width;
+        return { x: b.left + (rr[0] + rr[2] / 2) / dpr, y: b.top + (rr[1] + rr[3] / 2) / dpr };
+      }, rect);
+
+    // Probe the link rect plus a few rows below it: the underline sits just under
+    // the glyph baseline, which at HiDPI can fall on the rect's bottom edge.
+    const probe = [engineLink.rect[0], engineLink.rect[1], engineLink.rect[2], engineLink.rect[3] + 8];
+    const restImg = await readImage(probe);
+    const overPt = await centreCSS(engineLink.rect);
+    await page.mouse.move(overPt.x, overPt.y);
+    await new Promise((r) => setTimeout(r, 150));
+    const hoverImg = await readImage(probe);
+    const hoverDelta = pixelDiff(restImg, hoverImg);
+    check(
+      hoverDelta > 0,
+      "hovering a bottomZone link draws its underline (" + hoverDelta + " px changed vs resting)",
+    );
+
+    // Move the pointer far from the footer (canvas top-left) to clear the hover;
+    // the rect must return pixel-for-pixel to its resting state.
+    const away = await page.evaluate(() => {
+      const c = document.getElementById("gotex-canvas");
+      const b = c.getBoundingClientRect();
+      return { x: b.left + 5, y: b.top + 5 };
+    });
+    await page.mouse.move(away.x, away.y);
+    await new Promise((r) => setTimeout(r, 150));
+    const offImg = await readImage(probe);
+    check(
+      pixelDiff(offImg, restImg) === 0 && pixelDiff(offImg, hoverImg) > 0,
+      "moving off the link clears its underline (back to resting, " + pixelDiff(offImg, hoverImg) + " px differ from hovered)",
+    );
+
     if (screenshot) {
       try {
         await page.screenshot({ path: screenshot });

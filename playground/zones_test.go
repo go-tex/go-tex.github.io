@@ -231,6 +231,92 @@ func TestZoneIntrospectionAccessors(t *testing.T) {
 	}
 }
 
+// TestBottomZoneHoverUnderline proves the footer link hover feedback end-to-end
+// on the real laid-out band: a pointer-move onto a link rect raises that link's
+// accent underline (and marks the scene dirty), a move off it clears the
+// underline, and the click path is unchanged. The underline is asserted from the
+// drawn pixels, not just the hovered flag.
+func TestBottomZoneHoverUnderline(t *testing.T) {
+	s := newTestState(t, false)
+
+	if s.BottomZoneHoveredLink() != -1 {
+		t.Fatalf("no link should be hovered initially, got %d", s.BottomZoneHoveredLink())
+	}
+
+	ln := s.bottomZone.links[0]
+	gh := toolkit.GlyphHeight()
+	// The Link centres its text (VMiddle) and draws the underline one line under
+	// the glyph box, so it lands at this row inside the link's rect.
+	urow := ln.rect.Y + (ln.rect.H-gh)/2 + gh
+
+	underlineDrawn := func() bool {
+		buf := make([]byte, testW*testH*4)
+		s.Draw(buf)
+		for x := ln.rect.X; x < ln.rect.X+ln.rect.W; x++ {
+			if samplePixel(buf, x, urow) == s.theme.Accent {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Resting: accent glyphs but no underline row.
+	if underlineDrawn() {
+		t.Fatal("a resting link must not draw an underline")
+	}
+
+	// Move onto the link centre → hovered → underline appears + dirty.
+	cx := ln.rect.X + ln.rect.W/2
+	cy := ln.rect.Y + ln.rect.H/2
+	s.ClearDirty()
+	s.HandleMove(cx, cy)
+	if !s.Dirty() {
+		t.Fatal("moving onto a link should mark the scene dirty")
+	}
+	if s.BottomZoneHoveredLink() != 0 {
+		t.Fatalf("link 0 should be hovered, got %d", s.BottomZoneHoveredLink())
+	}
+	if !underlineDrawn() {
+		t.Fatal("a hovered link must draw its accent underline")
+	}
+
+	// The click path is unchanged: a click at the hovered link still navigates.
+	var got string
+	s.SetNavigate(func(url string) { got = url })
+	if !s.HandleClick(cx, cy) || got != ln.url {
+		t.Fatalf("hovered link click: consumed=%v got=%q want %q", true, got, ln.url)
+	}
+
+	// Move off every link (into the band's top-left padding) → hover clears.
+	bz := s.bottomZone.bounds
+	s.ClearDirty()
+	s.HandleMove(bz.X, bz.Y)
+	if !s.Dirty() {
+		t.Fatal("moving off the hovered link should mark the scene dirty")
+	}
+	if s.BottomZoneHoveredLink() != -1 {
+		t.Fatalf("no link should be hovered after moving into padding, got %d", s.BottomZoneHoveredLink())
+	}
+	if underlineDrawn() {
+		t.Fatal("the underline must clear once the pointer leaves the link")
+	}
+
+	// A move with no hover change reports no change (the changed==false path).
+	if s.bottomZone.handleMove(bz.X, bz.Y) {
+		t.Fatal("a move that changes no hover state must report no change")
+	}
+}
+
+// TestBottomZoneHandleMoveBeforeLayout covers the guard in handleMove for a band
+// whose link-widget pool has not been grown yet (links present, no widgets): the
+// move is a safe no-op reporting no change.
+func TestBottomZoneHandleMoveBeforeLayout(t *testing.T) {
+	z := &bottomZone{links: []zoneLink{{rect: toolkit.Rect{W: 10, H: 10}}}}
+	if z.handleMove(1, 1) {
+		t.Fatal("handleMove with no link widgets yet must report no change")
+	}
+}
+
 // TestWrapTokensWordWiderThanMax proves a token wider than the line budget still
 // gets its own line unbroken, and that ordinary tokens pack greedily.
 func TestWrapTokensWordWiderThanMax(t *testing.T) {

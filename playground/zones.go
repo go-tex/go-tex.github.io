@@ -124,11 +124,13 @@ type placedToken struct {
 	tok  zoneToken
 }
 
-// zoneLink is a laid-out link — the rect a click is tested against and the url to
-// navigate to.
+// zoneLink is a laid-out link — the rect a click is tested against, the url to
+// navigate to and the visible caption (so the reusable toolkit.Link that paints
+// it can be positioned and labelled at layout time, before the next paint).
 type zoneLink struct {
 	rect toolkit.Rect
 	url  string
+	text string
 }
 
 // bottomZone is the footer band at the very bottom of the canvas: the moved
@@ -151,6 +153,12 @@ type bottomZone struct {
 	// labelPool is one reused Label per drawn token (grown on demand), so a token
 	// keeps a stable widget across frames rather than allocating per paint.
 	labelPool []*toolkit.Label
+
+	// linkWidgets is one reused toolkit.Link per laid-out link (parallel to
+	// links), grown + positioned in place(). Each carries its own hovered state
+	// so it draws the accent underline while the pointer is over it; handleMove
+	// forwards pointer-move to them and draw() paints them.
+	linkWidgets []*toolkit.Link
 }
 
 // newBottomZone builds the band's persistent ground widgets.
@@ -276,8 +284,24 @@ func (z *bottomZone) place(r toolkit.Rect) {
 		abs.rect.Y += r.Y
 		z.placed = append(z.placed, abs)
 		if pt.tok.url != "" {
-			z.links = append(z.links, zoneLink{rect: abs.rect, url: pt.tok.url})
+			z.links = append(z.links, zoneLink{rect: abs.rect, url: pt.tok.url, text: pt.tok.text})
 		}
+	}
+
+	// Grow + position one reusable toolkit.Link per link, preserving hover state
+	// across frames (the pool is reused, not rebuilt). Positioned here — not only
+	// in draw — so a pointer-move that arrives before the next paint still
+	// hit-tests against the right bounds. The click path stays in handleClick, so
+	// these widgets carry no OnClick; they render the accent ink + hover underline
+	// and track hover only.
+	for len(z.linkWidgets) < len(z.links) {
+		z.linkWidgets = append(z.linkWidgets, &toolkit.Link{})
+	}
+	for i, ln := range z.links {
+		w := z.linkWidgets[i]
+		w.Text().Set(ln.text)
+		w.SetBounds(ln.rect)
+		w.VAlign = toolkit.VMiddle
 	}
 }
 
@@ -299,18 +323,44 @@ func (z *bottomZone) draw(p painter.Painter, theme *toolkit.Theme) {
 	for len(z.labelPool) < len(z.placed) {
 		z.labelPool = append(z.labelPool, &toolkit.Label{})
 	}
+	// Link tokens are painted by their reusable toolkit.Link (accent ink, plus an
+	// underline while hovered — positioned in place()); plain prose keeps its
+	// Label. li walks the links in placed order, parallel to z.links / linkWidgets.
+	li := 0
 	for i, pt := range z.placed {
+		if pt.tok.url != "" {
+			z.linkWidgets[li].Draw(p, theme)
+			li++
+			continue
+		}
 		lb := z.labelPool[i]
 		lb.Text().Set(pt.tok.text)
 		lb.SetBounds(pt.rect)
 		lb.VAlign = toolkit.VMiddle
-		if pt.tok.url != "" {
-			lb.Ink = theme.Accent
-		} else {
-			lb.Ink = theme.OnSurface
-		}
+		lb.Ink = theme.OnSurface
 		lb.Draw(p, theme)
 	}
+}
+
+// handleMove forwards a pointer-move (surface coordinates) to every link widget
+// so the one under the pointer raises its hover underline and the others clear
+// theirs. It reports whether any link's hover state changed — the caller repaints
+// (and treats the move as consumed) only on a change, and otherwise keeps routing
+// the move to whatever else needs it (a drag in progress).
+func (z *bottomZone) handleMove(x, y int) bool {
+	changed := false
+	for i, ln := range z.links {
+		if i >= len(z.linkWidgets) {
+			break
+		}
+		w := z.linkWidgets[i]
+		was := w.Hovered()
+		w.OnEvent(toolkit.Event{Kind: toolkit.EventMouseMove, X: x - ln.rect.X, Y: y - ln.rect.Y})
+		if w.Hovered() != was {
+			changed = true
+		}
+	}
+	return changed
 }
 
 // handleClick navigates when a click lands inside one of the link rects, and
@@ -363,6 +413,19 @@ func (s *State) BottomZoneLinkRects() [][4]int {
 		out[i] = [4]int{ln.rect.X, ln.rect.Y, ln.rect.W, ln.rect.H}
 	}
 	return out
+}
+
+// BottomZoneHoveredLink is the index (into BottomZoneLinkURLs / BottomZoneLinkRects)
+// of the footer link currently showing its hover underline, or -1 when none is
+// hovered. The render proof reads it to assert a pointer-move over a link rect
+// raised exactly that link's underline.
+func (s *State) BottomZoneHoveredLink() int {
+	for i := range s.bottomZone.links {
+		if i < len(s.bottomZone.linkWidgets) && s.bottomZone.linkWidgets[i].Hovered() {
+			return i
+		}
+	}
+	return -1
 }
 
 // ReadyDotRGB is the topZone ready indicator's colour as [r,g,b], so the render
