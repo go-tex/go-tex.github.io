@@ -82,12 +82,17 @@ const buildInfoSegment = 4
 // i.e. a native `go test`, a `go run`, or a wasm build that skipped the deploy
 // -X flags. It keeps the segment honest ("this is an un-stamped/dev binary")
 // rather than blank or falsely current.
-const defaultBuildInfo = "dev · unknown"
+//
+// The separator is parentheses, not a middot: the toolkit's 5×7 bitmap font is
+// ASCII-only (byte-indexed font5x7), so a "·" renders as a blank gap. Parens
+// read cleanly against the hyphenated timestamp with characters the font has.
+const defaultBuildInfo = "dev (unknown)"
 
-// formatBuildInfo renders the compact status-bar stamp "<version> · <buildTime>"
-// (e.g. "4d63d59 · 2026-08-25 13:20 UTC"). An empty field falls back to its dev
+// formatBuildInfo renders the compact status-bar stamp "<version> (<buildTime>)"
+// (e.g. "4d63d59 (2026-08-25 13:20 UTC)"). An empty field falls back to its dev
 // placeholder so a half-injected build (SHA but no time, or vice-versa) still
-// reads sensibly instead of showing a dangling separator.
+// reads sensibly. The separator is parentheses rather than a middot because the
+// toolkit's ASCII-only 5×7 bitmap font renders a "·" as blank (see defaultBuildInfo).
 func formatBuildInfo(version, buildTime string) string {
 	if version == "" {
 		version = "dev"
@@ -95,7 +100,7 @@ func formatBuildInfo(version, buildTime string) string {
 	if buildTime == "" {
 		buildTime = "unknown"
 	}
-	return version + " · " + buildTime
+	return version + " (" + buildTime + ")"
 }
 
 // pressKind records what the current pointer press captured, so a following

@@ -3,9 +3,11 @@ module github.com/go-tex/go-tex.github.io/playground
 go 1.26.4
 
 require (
+	github.com/andybalholm/brotli v1.2.2
 	github.com/go-crdt/collab v0.25.0
 	github.com/go-crdt/crdt v0.31.0
 	github.com/go-gfx/gfx v0.7.0
+	github.com/go-gfx/qr v0.1.0
 	github.com/go-git/go-billy/v5 v5.9.0
 	github.com/go-git/go-git/v5 v5.19.2
 	github.com/go-opentype/fonts v0.8.0
@@ -22,7 +24,6 @@ require (
 	dario.cat/mergo v1.0.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
-	github.com/andybalholm/brotli v1.2.2 // indirect
 	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/cyphar/filepath-securejoin v0.6.1 // indirect

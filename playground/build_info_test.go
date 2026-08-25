@@ -9,7 +9,7 @@ import (
 )
 
 // TestBuildInfoDefault proves an un-stamped (native/dev) build renders the honest
-// "dev · unknown" placeholder in the last status-bar segment, and that a compile
+// "dev (unknown)" placeholder in the last status-bar segment, and that a compile
 // (which rewrites segments 0..3 through updateStatus) leaves the stamp untouched.
 func TestBuildInfoDefault(t *testing.T) {
 	s := newTestState(t, false)
@@ -47,7 +47,7 @@ func TestSetBuildInfoInjected(t *testing.T) {
 	const sha, ts = "4d63d59", "2026-08-25 13:20 UTC"
 	s.SetBuildInfo(sha, ts)
 
-	want := sha + " · " + ts
+	want := sha + " (" + ts + ")"
 	if got := s.status.Segments[buildInfoSegment]; got != want {
 		t.Fatalf("injected build-info segment = %q, want %q", got, want)
 	}
@@ -75,9 +75,9 @@ func TestFormatBuildInfo(t *testing.T) {
 	cases := []struct {
 		version, buildTime, want string
 	}{
-		{"4d63d59", "2026-08-25 13:20 UTC", "4d63d59 · 2026-08-25 13:20 UTC"},
-		{"", "2026-08-25 13:20 UTC", "dev · 2026-08-25 13:20 UTC"},
-		{"4d63d59", "", "4d63d59 · unknown"},
+		{"4d63d59", "2026-08-25 13:20 UTC", "4d63d59 (2026-08-25 13:20 UTC)"},
+		{"", "2026-08-25 13:20 UTC", "dev (2026-08-25 13:20 UTC)"},
+		{"4d63d59", "", "4d63d59 (unknown)"},
 		{"", "", defaultBuildInfo},
 	}
 	for _, c := range cases {
