@@ -224,6 +224,27 @@ func (b *workerGitBackend) Stage(path, content string, done func(error)) {
 	}()
 }
 
+// WriteFiles writes each path→content to the worker's working tree (OpWriteFile,
+// no commit/stage) and caches each written content, so the sidebar's per-file
+// dirty overlay clears the moment the flush lands. It is the multi-file write-back
+// a stage/commit runs first; the first write error aborts and is reported. An
+// empty set writes nothing and reports success.
+func (b *workerGitBackend) WriteFiles(files map[string]string, done func(error)) {
+	go func() {
+		for p, c := range files {
+			reply := b.t.Call(gitrpc.Request{Op: gitrpc.OpWriteFile, Args: gitrpc.Args{Path: p, Content: c}})
+			if !reply.OK {
+				done(codeToError(reply.Code, reply.Error))
+				return
+			}
+			b.mu.Lock()
+			b.contents[p] = c
+			b.mu.Unlock()
+		}
+		done(nil)
+	}()
+}
+
 // Push pushes the open branch and refreshes the status/log cache.
 func (b *workerGitBackend) Push(done func(error)) {
 	go func() {

@@ -608,6 +608,21 @@ func (s *State) SetSource(text string) {
 	s.dirty = true
 }
 
+// SetSourceCursor replaces the editor buffer AND restores a saved caret + scroll
+// position, without firing OnEdit. It is how switching back to a file re-opens
+// its independent edit buffer (git.go's openFile) so the unsaved edits AND the
+// place the user left off both come back. Like SetSource it recompiles.
+func (s *State) SetSourceCursor(text string, line, col, scroll int) {
+	s.loadingSource = true
+	s.editor.SetText(text) // parks the caret at (0,0); restore it below
+	s.editor.CursorLine().Set(line)
+	s.editor.CursorCol().Set(col)
+	s.editor.ScrollLine().Set(scroll)
+	s.loadingSource = false
+	s.Compile()
+	s.dirty = true
+}
+
 // ToggleFindReplace shows or hides the regex find-and-replace modal over the
 // active editor and relays out. It is the host hook the wasm driver wires to the
 // ⌘F/Ctrl+F keydown (the toolbar Find button drives the same fr.toggle). It
@@ -850,7 +865,7 @@ func (s *State) applyLeftSplit() {
 // render pane's PagedView, updates the diagnostics Log and the status bar. A
 // hard error (or an empty document) yields no bitmaps, which clears the viewer.
 func (s *State) Compile() {
-	res := compileLaTeX(s.editor.Text().Get(), s.theme)
+	res := compileLaTeX(s.git.compileSource(), s.theme)
 	s.errText = res.errText
 	s.pages = res.pages
 	s.drawnPages = res.drawnPages

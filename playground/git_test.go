@@ -24,6 +24,7 @@ type fakeGitBackend struct {
 	pullErr   error
 	commitErr error
 	stageErr  error
+	writeErr  error
 	pushErr   error
 
 	gotCfg           gitConfig
@@ -32,6 +33,8 @@ type fakeGitBackend struct {
 	gotCommitMsg     string
 	gotStagePath     string
 	gotStageContent  string
+	gotWrites        map[string]string // last WriteFiles payload (accumulated)
+	writeCalls       int
 	cloneCalls       int
 
 	hold    bool
@@ -87,6 +90,32 @@ func (f *fakeGitBackend) Stage(path, content string, done func(error)) {
 		return
 	}
 	done(f.stageErr)
+}
+
+// WriteFiles records + applies the flushed buffers to the in-memory tree (so a
+// following ReadFile sees them and the per-file dirty overlay clears), mirroring
+// the worker backend. A writeErr aborts without applying, like a worker failure.
+func (f *fakeGitBackend) WriteFiles(files map[string]string, done func(error)) {
+	f.writeCalls++
+	fire := func() {
+		if f.writeErr != nil {
+			done(f.writeErr)
+			return
+		}
+		if f.gotWrites == nil {
+			f.gotWrites = map[string]string{}
+		}
+		for p, c := range files {
+			f.gotWrites[p] = c
+			f.fileData[p] = c
+		}
+		done(nil)
+	}
+	if f.hold {
+		f.release = fire
+		return
+	}
+	fire()
 }
 
 func (f *fakeGitBackend) Push(done func(error)) {
@@ -524,13 +553,14 @@ func TestNopGitBackend(t *testing.T) {
 	if _, err := b.ReadFile("x"); !errors.Is(err, errNoBrowserGit) {
 		t.Fatalf("nop read err = %v", err)
 	}
-	var ce, pe, cme, pue, se error
+	var ce, pe, cme, pue, se, we error
 	b.Clone(gitConfig{}, func(_ []string, e error) { ce = e })
 	b.Pull(func(e error) { pue = e })
 	b.Commit("p", "c", "m", func(e error) { cme = e })
 	b.Stage("p", "c", func(e error) { se = e })
+	b.WriteFiles(map[string]string{"p": "c"}, func(e error) { we = e })
 	b.Push(func(e error) { pe = e })
-	for _, e := range []error{ce, pe, cme, pue, se} {
+	for _, e := range []error{ce, pe, cme, pue, se, we} {
 		if !errors.Is(e, errNoBrowserGit) {
 			t.Fatalf("nop op err = %v, want errNoBrowserGit", e)
 		}

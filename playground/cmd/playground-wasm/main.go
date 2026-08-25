@@ -456,6 +456,46 @@ func main() {
 		}
 	}))
 
+	// gotexSidebarOpenFile(path) opens a working-tree file through the SAME path a
+	// sidebar file-row click drives (State.GitOpenFile), so a headless proof can
+	// switch files and exercise the independent per-file edit buffers. Returns the
+	// now-active path.
+	js.Global().Set("gotexSidebarOpenFile", js.FuncOf(func(_ js.Value, a []js.Value) any {
+		if len(a) > 0 && a[0].Type() == js.TypeString {
+			state.GitOpenFile(a[0].String())
+			render()
+		}
+		return state.GitLoadedPath()
+	}))
+
+	// gotexSidebarDebug() exposes the multi-buffer model for headless verification:
+	// the active path, the primary .tex the render compiles, the flattened file
+	// rows WITH their status badges (so the harness reads each file's dirtiness
+	// straight off the tree), the paths that currently have an edit buffer, and the
+	// live editor source.
+	js.Global().Set("gotexSidebarDebug", js.FuncOf(func(js.Value, []js.Value) any {
+		rows := state.SidebarFileRows()
+		outRows := make([]any, len(rows))
+		for i, r := range rows {
+			outRows[i] = r
+		}
+		paths := state.GitBufferPaths()
+		outPaths := make([]any, len(paths))
+		dirty := map[string]any{}
+		for i, p := range paths {
+			outPaths[i] = p
+			dirty[p] = state.GitBufferDirty(p)
+		}
+		return map[string]any{
+			"loadedPath":  state.GitLoadedPath(),
+			"primaryPath": state.GitPrimaryPath(),
+			"rows":        outRows,
+			"bufferPaths": outPaths,
+			"dirty":       dirty,
+			"source":      state.Source(),
+		}
+	}))
+
 	// gotexSource returns the current editor buffer, so a headless harness can
 	// assert clipboard paste/cut changed the text.
 	js.Global().Set("gotexSource", js.FuncOf(func(js.Value, []js.Value) any {
