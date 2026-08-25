@@ -113,6 +113,7 @@ func makeLineMap(lines map[int][2]int) pageLineMap {
 type compileResult struct {
 	bitmaps    []*image.RGBA      // one natural-size RGBA per drawable page
 	lineMaps   []pageLineMap      // source-line Y-bands per drawn page, parallel to bitmaps
+	textLayers []string           // per drawn page, the searchable <text> lifted out of the SVG
 	pages      int                // engine (logical) page count
 	drawnPages int                // pages actually rasterized
 	errText    string             // "" on success; a human message on a hard compile error
@@ -149,6 +150,7 @@ func compileLaTeX(src string, theme *toolkit.Theme) compileResult {
 
 	var bitmaps []*image.RGBA
 	var lineMaps []pageLineMap
+	var textLayers []string
 	for _, svg := range pages {
 		res, perr := gfxsvg.Rasterize(svg, ropt)
 		if perr != nil || res == nil || res.Image == nil || res.Image.W <= 0 || res.Image.H <= 0 {
@@ -166,6 +168,9 @@ func compileLaTeX(src string, theme *toolkit.Theme) compileResult {
 		// bounds and kept parallel to the bitmap so the click↔caret linking can map
 		// this page's natural pixels to source lines and back.
 		lineMaps = append(lineMaps, makeLineMap(linesFromGroups(res.Groups)))
+		// The same page as DOM-placeable text: the bitmap says how the page
+		// looks, this says what it says.
+		textLayers = append(textLayers, textOverlaySVG(svg))
 	}
 	if len(bitmaps) == 0 {
 		// A compile that produced no drawable page (e.g. an empty document):
@@ -180,6 +185,7 @@ func compileLaTeX(src string, theme *toolkit.Theme) compileResult {
 	return compileResult{
 		bitmaps:    bitmaps,
 		lineMaps:   lineMaps,
+		textLayers: textLayers,
 		pages:      len(pages),
 		drawnPages: len(bitmaps),
 		diag:       diag,

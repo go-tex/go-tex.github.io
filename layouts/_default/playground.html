@@ -25,6 +25,13 @@
 .stage{position:relative;background:var(--card);border:1px solid var(--line);border-radius:16px;
   box-shadow:0 10px 30px var(--shadow);overflow:hidden;height:76vh;min-height:460px}
 #gotex-canvas{display:block;width:100%;height:100%;background:var(--bg);opacity:0;transition:opacity .25s}
+/* What the rendered pages SAY. The canvas shows the rasterised page; the app
+   places the same page's characters over it as real DOM, so the browser can
+   find them, read them aloud and copy them. The overlay positions ITSELF (see
+   cmd/playground-wasm/textlayer.go) — the only thing needed here is that its
+   parent .stage is positioned, which it is, and that an <svg> inside it does
+   not inherit an inline-element baseline gap. */
+#gotex-textlayer svg{display:block}
 .stage.ready #gotex-canvas{opacity:1}
 /* HTML loading placeholder: a two-pane skeleton with a real progress bar driven
    by the streamed wasm download; hidden once the app signals it is ready. */
