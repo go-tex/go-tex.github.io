@@ -180,6 +180,21 @@ type State struct {
 	// copies to the real OS clipboard (navigator.clipboard).
 	clip *appClipboard
 
+	// topZone / bottomZone are the two chrome bands that used to be HTML around the
+	// canvas (the ".pg-bar" status line and the ".pg-note" + "<footer>"), now part
+	// of the toolkit scene so the app fills the whole viewport below the host page's
+	// blue header. See zones.go. layout() reserves their heights, shrinking the
+	// editor+render body between them.
+	topZone    *topZone
+	bottomZone *bottomZone
+
+	// navigate is the host hook a bottomZone link click drives (the wasm driver
+	// wires it to window.location.href = url); nil on a native build, so a link
+	// click is a no-op there. siteRoot is the "Back to go-tex" target, defaulting
+	// to defaultSiteRoot and overridden by the js layer with location.origin + "/".
+	navigate func(url string)
+	siteRoot string
+
 	showMinimap bool
 
 	// last compile output.
@@ -189,7 +204,11 @@ type State struct {
 	diag       engine.Diagnostics
 
 	// chrome heights (device pixels), recomputed each layout at the active scale.
-	toolbarH, statusH int
+	// topZoneH / bottomZoneH are the two moved-in HTML bands' reserved heights (the
+	// bottom one grows with its wrapped prose); the toolbar + body + status sit
+	// between them.
+	toolbarH, statusH     int
+	topZoneH, bottomZoneH int
 
 	// pointer drag capture.
 	pressKind int
@@ -322,6 +341,13 @@ func NewState(w, h int, dark bool) *State {
 	s.collab = newCollabView(s) // Collaborate affordance (see collab.go)
 	s.git = newGitView(s)       // Remote-git affordance (see git.go)
 
+	// The two chrome bands moved in from the host HTML (see zones.go). siteRoot is
+	// seeded to the canonical default before the first layout (bottomZone.measure
+	// reads it); the js layer overrides it with the live origin at startup.
+	s.siteRoot = defaultSiteRoot
+	s.topZone = newTopZone(s)
+	s.bottomZone = newBottomZone(s)
+
 	// Route the toolkit-wide clipboard through this State so the editor's
 	// copy/cut/paste reach the host (and, on wasm, the OS clipboard).
 	s.clip = &appClipboard{}
@@ -360,6 +386,38 @@ func (c *appClipboard) SetClipboardText(s string) {
 // SetClipboardWriter installs the host hook that mirrors every copy/cut to the OS
 // clipboard (the wasm driver wires it to navigator.clipboard.writeText).
 func (s *State) SetClipboardWriter(w func(string)) { s.clip.onWrite = w }
+
+// SetNavigate installs the host navigation hook a bottomZone link click drives.
+// The wasm driver wires it to window.location.href = url; a native build leaves
+// it nil, so a link click is a no-op there (the whole affordance stays testable
+// off a browser).
+func (s *State) SetNavigate(f func(url string)) { s.navigate = f }
+
+// SetSiteRoot sets the "Back to go-tex" link's target — the deployment's own site
+// root. The js layer passes location.origin + "/" at startup so the link points
+// at the exact site the app is served from; an empty string is ignored, keeping
+// the built-in default ([defaultSiteRoot]).
+func (s *State) SetSiteRoot(base string) {
+	if base != "" {
+		s.siteRoot = base
+		s.layout() // the Back link's rect + target are recomputed for the new root
+		s.dirty = true
+	}
+}
+
+// doNavigate drives the host navigation hook for a link click (no-op on a native
+// build, where navigate is nil) and marks the scene dirty.
+func (s *State) doNavigate(url string) {
+	if s.navigate != nil {
+		s.navigate(url)
+	}
+	s.dirty = true
+}
+
+// bodyTop is the surface Y where the editor+render body begins: below the topZone
+// band and the toolbar. Every overlay that anchors to the body (the Collaborate /
+// Git panels + scrims) reads it so it follows the topZone shift.
+func (s *State) bodyTop() int { return s.topZoneH + s.toolbarH }
 
 // SetTimeProvider installs the host clock the compile Log stamps its entries
 // with. The wasm driver wires it to the browser's
@@ -650,12 +708,20 @@ func (s *State) TakePendingCompile() bool {
 func (s *State) layout() {
 	s.toolbarH = toolkit.Scaled(30)
 	s.statusH = toolkit.Scaled(20)
-	bodyH := s.h - s.toolbarH - s.statusH
+	// The two moved-in HTML bands bracket the whole app: topZone above the toolbar,
+	// bottomZone below the status bar. The topZone is a fixed line; the bottomZone
+	// grows with its wrapped prose (measure returns its height at the current width).
+	s.topZoneH = s.topZone.height()
+	s.bottomZoneH = s.bottomZone.measure(s.w)
+	bodyH := s.h - s.topZoneH - s.toolbarH - s.statusH - s.bottomZoneH
 	if bodyH < 0 {
 		bodyH = 0
 	}
-	s.paned.SetBounds(toolkit.Rect{X: 0, Y: s.toolbarH, W: s.w, H: bodyH})
-	s.status.SetBounds(toolkit.Rect{X: 0, Y: s.toolbarH + bodyH, W: s.w, H: s.statusH})
+	top := s.bodyTop() // topZoneH + toolbarH: where the body begins
+	s.paned.SetBounds(toolkit.Rect{X: 0, Y: top, W: s.w, H: bodyH})
+	s.status.SetBounds(toolkit.Rect{X: 0, Y: top + bodyH, W: s.w, H: s.statusH})
+	s.topZone.setBounds(toolkit.Rect{X: 0, Y: 0, W: s.w, H: s.topZoneH})
+	s.bottomZone.place(toolkit.Rect{X: 0, Y: top + bodyH + s.statusH, W: s.w, H: s.bottomZoneH})
 	s.layoutToolbar()
 	s.applyLeftSplit()
 	s.wysiwygLayout() // editor-pane Source│WYSIWYG tab strip + RichEditor bounds (wysiwyg.go)
@@ -668,7 +734,7 @@ func (s *State) layoutToolbar() {
 	pad := toolkit.Scaled(6)
 	gap := toolkit.Scaled(8)
 	h := s.toolbarH - 2*toolkit.Scaled(4)
-	yy := toolkit.Scaled(4)
+	yy := s.topZoneH + toolkit.Scaled(4) // the toolbar row now sits below the topZone band
 	x := pad
 	pw := toolkit.Scaled(150)
 	s.schemePicker.SetBounds(toolkit.Rect{X: x, Y: yy, W: pw, H: h})
@@ -785,13 +851,18 @@ func (s *State) Draw(buf []byte) {
 	fillRGBA(buf, s.theme.Background)
 	p := painter.NewPixelPainter(buf, s.w, s.h)
 
+	// The topZone status band sits above the toolbar (moved in from the host HTML).
+	s.topZone.draw(p, s.theme)
+
 	// Toolbar ground + bottom hairline, each a Backdrop rather than a hand-filled
-	// rect.
+	// rect. The row sits below the topZone band, so its ground starts at bodyTop's
+	// toolbar origin (topZoneH).
+	tbY := s.topZoneH
 	s.toolbarBg.Fill = s.theme.Surface
-	s.toolbarBg.SetBounds(toolkit.Rect{X: 0, Y: 0, W: s.w, H: s.toolbarH})
+	s.toolbarBg.SetBounds(toolkit.Rect{X: 0, Y: tbY, W: s.w, H: s.toolbarH})
 	s.toolbarBg.Draw(p, s.theme)
 	s.toolbarRule.Fill = s.theme.Border
-	s.toolbarRule.SetBounds(toolkit.Rect{X: 0, Y: s.toolbarH - toolkit.Scaled(1), W: s.w, H: toolkit.Scaled(1)})
+	s.toolbarRule.SetBounds(toolkit.Rect{X: 0, Y: tbY + s.toolbarH - toolkit.Scaled(1), W: s.w, H: toolkit.Scaled(1)})
 	s.toolbarRule.Draw(p, s.theme)
 	s.schemePicker.Draw(p, s.theme)
 	s.minimapBtn.Draw(p, s.theme)
@@ -809,6 +880,10 @@ func (s *State) Draw(buf []byte) {
 		s.drawError(p)
 	}
 	s.status.Draw(p, s.theme)
+
+	// The bottomZone footer band sits below the status bar (moved in from the host
+	// HTML): the description prose + footer line, with clickable links.
+	s.bottomZone.draw(p, s.theme)
 
 	// WYSIWYG toolbar controls + (while active) the RichEditor overlay over the
 	// editor pane and its own format popover (wysiwyg.go).
@@ -866,6 +941,13 @@ func (s *State) HandleClick(x, y int) bool {
 	}
 	s.pressKind = pressNone
 
+	// A click on a bottomZone link navigates (the footer band is below the status
+	// bar, disjoint from every body widget, so this is checked up front).
+	if s.bottomZone.handleClick(x, y) {
+		s.dirty = true
+		return true
+	}
+
 	// An open colour-scheme popover intercepts the next click.
 	if s.schemePicker.Open().Get() {
 		s.schemePicker.PopoverClick(x, y)
@@ -878,8 +960,8 @@ func (s *State) HandleClick(x, y int) bool {
 		return true
 	}
 
-	// Toolbar controls.
-	if y < s.toolbarH {
+	// Toolbar controls (the row between the topZone band and the body).
+	if y >= s.topZoneH && y < s.bodyTop() {
 		for _, w := range []toolkit.Widget{s.schemePicker, s.minimapBtn} {
 			r := w.Bounds()
 			if r.Contains(x, y) {

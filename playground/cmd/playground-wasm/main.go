@@ -103,6 +103,18 @@ func main() {
 		}
 	})
 
+	// Navigation for the bottomZone links (moved in from the host HTML's ".pg-note"
+	// + footer): a link click sets window.location.href. The "Back to go-tex" link
+	// targets the deployment's own site root (origin + "/"), derived from location.
+	state.SetNavigate(func(url string) {
+		if loc := js.Global().Get("location"); loc.Truthy() {
+			loc.Set("href", url)
+		}
+	})
+	if loc := js.Global().Get("location"); loc.Truthy() {
+		state.SetSiteRoot(loc.Get("origin").String() + "/")
+	}
+
 	// Persist the editor buffer to localStorage (key "gotex-pg-src", shared with
 	// the legacy textarea playground) so an edited document survives a reload.
 	const storeKey = "gotex-pg-src"
@@ -383,6 +395,31 @@ func main() {
 			out[name] = []any{r[0], r[1], r[2], r[3]}
 		}
 		return out
+	}))
+
+	// gotexZones exposes the two moved-in HTML bands' geometry for the render proof:
+	// the topZone status line + its device rect + the ready-dot hue, the bottomZone
+	// rect, and every bottomZone link's url + device rect. The proof reads back the
+	// canvas pixels at these rects to prove the bands paint, and clicks a link rect
+	// through the real pointer path to prove navigation.
+	js.Global().Set("gotexZones", js.FuncOf(func(js.Value, []js.Value) any {
+		urls := state.BottomZoneLinkURLs()
+		rects := state.BottomZoneLinkRects()
+		links := make([]any, len(urls))
+		for i := range urls {
+			r := rects[i]
+			links[i] = map[string]any{"url": urls[i], "rect": []any{r[0], r[1], r[2], r[3]}}
+		}
+		tr := state.TopZoneRect()
+		br := state.BottomZoneRect()
+		dot := state.ReadyDotRGB()
+		return map[string]any{
+			"topStatus":  state.TopZoneStatusText(),
+			"topRect":    []any{tr[0], tr[1], tr[2], tr[3]},
+			"bottomRect": []any{br[0], br[1], br[2], br[3]},
+			"readyDot":   []any{dot[0], dot[1], dot[2]},
+			"links":      links,
+		}
 	}))
 
 	// gotexSource returns the current editor buffer, so a headless harness can
