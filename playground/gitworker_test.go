@@ -202,6 +202,42 @@ func TestWorkerBackendStageError(t *testing.T) {
 	}
 }
 
+// TestWorkerBackendWriteFiles covers the multi-file write-back: an empty set is a
+// no-op success, a real set writes + caches each file (so ReadFile serves the new
+// content without a round-trip), and a write failure aborts and is mapped to a
+// sentinel.
+func TestWorkerBackendWriteFiles(t *testing.T) {
+	tr := &fakeTransport{replies: map[string]gitrpc.Reply{
+		gitrpc.OpClone:     {OK: true, Files: []string{"a.tex"}, Contents: map[string]string{"a.tex": "seed"}, Status: &gitrpc.Status{Branch: "main"}},
+		gitrpc.OpWriteFile: {OK: true},
+	}}
+	b := newWorkerGitBackend(tr)
+	if _, err := cloneSync(b, gitConfig{URL: "u"}); err != nil {
+		t.Fatalf("clone: %v", err)
+	}
+	// Empty set writes nothing and reports success.
+	if err := errSync(func(done func(error)) { b.WriteFiles(nil, done) }); err != nil {
+		t.Fatalf("empty WriteFiles err = %v", err)
+	}
+	// A real set writes each file and caches it.
+	files := map[string]string{"a.tex": "A body", "b.sty": "B body"}
+	if err := errSync(func(done func(error)) { b.WriteFiles(files, done) }); err != nil {
+		t.Fatalf("WriteFiles err = %v", err)
+	}
+	for p, c := range files {
+		if data, _ := b.ReadFile(p); string(data) != c {
+			t.Fatalf("WriteFiles did not cache %s: %q", p, data)
+		}
+	}
+	// A write failure aborts and maps onto a sentinel.
+	tr.mu.Lock()
+	tr.replies[gitrpc.OpWriteFile] = gitrpc.Reply{OK: false, Code: gitrpc.CodeTransport, Error: "boom"}
+	tr.mu.Unlock()
+	if err := errSync(func(done func(error)) { b.WriteFiles(map[string]string{"c.tex": "x"}, done) }); !errors.Is(err, errGitTransport) {
+		t.Fatalf("WriteFiles error = %v", err)
+	}
+}
+
 func TestChangesFrom(t *testing.T) {
 	if changesFrom(nil) != nil {
 		t.Fatal("changesFrom(nil) should be nil")

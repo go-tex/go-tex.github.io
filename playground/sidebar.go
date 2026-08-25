@@ -26,19 +26,19 @@ import (
 // tagless and browser-free: the git plumbing it drives lives behind the gitBackend
 // seam (git.go / gitworker.go), so the whole sidebar is covered by native tests.
 //
-// # File-open + dirty model (v1)
+// # File-open + dirty model (v2: independent per-file edit buffers)
 //
-// The editor holds ONE document at a time. Clicking a file row opens it via
-// State.GitOpenFile (reusing the panel's cached-content load path), replacing the
-// editor buffer — so the ACTIVE file is the editable one; the others are shown
-// with their committed git status until opened. A row's badge is the file's git
-// status (browsergit classify: modified/staged/deleted/untracked), except the
-// active file also reflects LIVE editor dirtiness (buffer != committed content)
-// as "modified", so an unsaved edit shows immediately without a round-trip.
-//
-// Deferred (noted for a later pass): independent per-file edit buffers / a
-// multi-tab editor so several files can be dirty at once; today only the active
-// file carries live dirtiness, and opening another file replaces the buffer.
+// Clicking a file row opens it via State.GitOpenFile, which keeps an independent
+// edit buffer per path (git.go): opening another file no longer discards the
+// current file's unsaved edits, and SEVERAL files can be dirty at once. The single
+// editor is bound to the ACTIVE file's buffer; switching files stashes the live
+// edits and restores the target's buffer (text + caret + scroll). A row's badge
+// combines the file's git status (browsergit classify: modified/staged/deleted/
+// untracked) with its in-memory buffer dirtiness: a buffer that differs from the
+// committed/indexed content badges "modified" (amber M) — for EVERY file, not just
+// the active one — so a file edited then navigated away from stays dirty in the
+// tree. Stage/Commit flush every dirty buffer to the working tree first (git.go's
+// flushDirty), so browsergit's git-add-A captures them all.
 
 // Sidebar geometry constants (logical px; scaled at layout time).
 const (
@@ -185,26 +185,19 @@ func (b *sidebar) toggle() {
 	b.s.git.refresh()
 }
 
-// activeDirty reports whether the loaded file's editor buffer differs from its
-// committed working-tree content (the cached copy the last clone/pull filled). A
-// read miss (uncached file) reports not-dirty — there is nothing to compare.
+// activeDirty reports whether the active file's edit buffer differs from its
+// committed working-tree content — the loaded-file case of the per-file dirtiness
+// (git.go's bufferDirty). A read miss (uncached file) reports not-dirty.
 func (b *sidebar) activeDirty() bool {
-	p := b.s.git.loaded.Get()
-	if p == "" {
-		return false
-	}
-	data, err := b.s.git.backend.ReadFile(p)
-	if err != nil {
-		return false
-	}
-	return string(data) != b.s.Source()
+	return b.s.git.bufferDirty(b.s.git.loaded.Get())
 }
 
-// fileBadge returns the badge glyph + ink for a working-tree path: the active
-// file's live editor dirtiness (as "modified") takes precedence, otherwise the
-// file's git status from the last snapshot, otherwise clean (blank).
+// fileBadge returns the badge glyph + ink for a working-tree path: its in-memory
+// edit-buffer dirtiness (as "modified") takes precedence — for ANY file with a
+// buffer, so a file edited then navigated away from still badges amber M —
+// otherwise the file's git status from the last snapshot, otherwise clean (blank).
 func (b *sidebar) fileBadge(path string) (string, toolkit.RGBA) {
-	if path == b.s.git.loaded.Get() && b.activeDirty() {
+	if b.s.git.bufferDirty(path) {
 		return badgeFor("modified")
 	}
 	for _, c := range b.s.git.status.Changes {
@@ -217,8 +210,9 @@ func (b *sidebar) fileBadge(path string) (string, toolkit.RGBA) {
 
 // signature is a cheap digest of everything the tree + timeline render from, so
 // a rebuild happens only on a real change (preserving scroll + selection between
-// frames). It folds the file list, every dirty entry, the active path + its live
-// dirtiness, and the commit hashes.
+// frames). It folds the file list, every git dirty entry, the active path, the
+// per-file edit-buffer dirtiness of EVERY buffer (so a file that becomes or stops
+// being dirty — active or not — triggers a rebuild), and the commit hashes.
 func (b *sidebar) signature() string {
 	var sb strings.Builder
 	sb.WriteString(strings.Join(b.s.git.files, "\x1f"))
@@ -231,8 +225,13 @@ func (b *sidebar) signature() string {
 	}
 	sb.WriteByte('\x1e')
 	sb.WriteString(b.s.git.loaded.Get())
-	if b.activeDirty() {
-		sb.WriteString("*")
+	sb.WriteByte('\x1e')
+	for _, p := range b.s.GitBufferPaths() {
+		sb.WriteString(p)
+		if b.s.git.bufferDirty(p) {
+			sb.WriteByte('*')
+		}
+		sb.WriteByte(',')
 	}
 	sb.WriteByte('\x1e')
 	for _, c := range b.s.git.log {

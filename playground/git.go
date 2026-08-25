@@ -33,11 +33,14 @@ import (
 //
 //   - Clone → the backend shallow-clones the repo into memory and hands back the
 //     working-tree file list; the primary .tex is loaded into the SOURCE editor
-//     via [State.SetSource]. Editing is then ordinary.
-//   - Commit → the backend writes the editor's current source back to the loaded
-//     path and commits it with the configured identity.
+//     via [State.SetSource]. Editing is then ordinary. Opening other files keeps
+//     an independent edit buffer per path (see [fileBuffer] / openFile), so
+//     several files can carry unsaved edits at once.
+//   - Commit/Stage → the app first flushes EVERY dirty edit buffer to the working
+//     tree (flushDirty → [gitBackend.WriteFiles]), then commits/stages, so
+//     browsergit's git-add-A captures edits to files other than the active one.
 //   - Push → the backend pushes the branch to the origin.
-//   - Pull → the backend fast-forwards, then the loaded file is reloaded.
+//   - Pull → the backend fast-forwards, then the active file's buffer is reloaded.
 //
 // # BaseURL config forms (documented in the panel's help text)
 //
@@ -77,6 +80,19 @@ type gitConfig struct {
 type gitFileChange struct {
 	Path   string
 	Status string
+}
+
+// fileBuffer is one file's independent, in-memory edit buffer: its unsaved text
+// plus the caret + scroll position to restore when the file is re-opened. The
+// active file's live edits live in the editor and are captured into its buffer
+// only when navigating away (stashActive); an inactive file's buffer holds its
+// last edited text verbatim. A file is DIRTY when its buffer text differs from
+// the committed/indexed content the git backend cache holds (bufferDirty).
+type fileBuffer struct {
+	text       string
+	cursorLine int
+	cursorCol  int
+	scrollLine int
 }
 
 // gitStatus is the display snapshot of the open repo's branch + divergence, the
@@ -121,6 +137,11 @@ type gitBackend interface {
 	// Stage writes content to path in the working tree, then stages it (git
 	// add) WITHOUT committing; done reports the error.
 	Stage(path, content string, done func(err error))
+	// WriteFiles writes each path→content to the working tree WITHOUT committing
+	// or staging (the multi-file write-back that flushes every dirty edit buffer
+	// before a stage/commit so browsergit's git-add-A sees them all); done reports
+	// the first error, or nil once every file is written.
+	WriteFiles(files map[string]string, done func(err error))
 	// Push pushes the open branch to origin; done reports the error.
 	Push(done func(err error))
 	// ReadFile returns a working-tree file (sync; the tree is in memory).
@@ -172,7 +193,22 @@ type gitView struct {
 	busy   *mvvm.Observable[bool]
 	errMsg *mvvm.Observable[string]
 	notice *mvvm.Observable[string]
-	loaded *mvvm.Observable[string] // the working-tree path shown in the editor
+	loaded *mvvm.Observable[string] // the ACTIVE working-tree path bound to the editor
+
+	// Independent per-file edit buffers. Opening a file no longer discards the
+	// previous file's unsaved edits: every opened path keeps its own [fileBuffer]
+	// (text + caret + scroll) here, so several files can be dirty at once. The
+	// ACTIVE file (loaded) is the one bound to the live editor — its buffer is a
+	// stash refreshed on the way out (stashActive) rather than on every keystroke,
+	// so the live editor stays the single source of truth for the active file and
+	// bufferContent reads it directly. Cleared on a fresh clone (a new repo).
+	buffers map[string]*fileBuffer
+	// primaryPath is the .tex the render pane compiles (item 4): the primary .tex
+	// chosen on clone, or the last one picked in the panel's file picker. Its LIVE
+	// buffer compiles, so the render tracks its edits even while another file (a
+	// .sty/.bib) is the one being edited in the editor. Empty with no repo → the
+	// editor's own buffer (the sample document) compiles.
+	primaryPath string
 
 	// derived display snapshots, refreshed on each successful op (not per frame).
 	files    []string // the whole working-tree file list
@@ -255,6 +291,7 @@ func newGitView(s *State) *gitView {
 		errMsg:  mvvm.NewObservable(""),
 		notice:  mvvm.NewObservable(""),
 		loaded:  mvvm.NewObservable(""),
+		buffers: map[string]*fileBuffer{},
 	}
 }
 
@@ -344,10 +381,14 @@ func (s *State) GitClone(done func(err error)) {
 			v.errMsg.Set(gitErrorMessage(err))
 		} else {
 			v.setFiles(files)
+			// A fresh clone is a new repository: drop every prior edit buffer so no
+			// stale dirtiness leaks across repos.
+			v.buffers = map[string]*fileBuffer{}
+			v.primaryPath = primaryTeX(files)
 			v.log = v.backend.Log(gitLogLimit)
 			v.refreshStatus()
-			if p := primaryTeX(files); p != "" {
-				v.loadFile(p)
+			if v.primaryPath != "" {
+				v.loadFresh(v.primaryPath)
 			} else {
 				v.loaded.Set("")
 				v.notice.Set("Cloned — no .tex file to open.")
@@ -382,7 +423,9 @@ func (s *State) GitPull(done func(err error)) {
 			v.log = v.backend.Log(gitLogLimit)
 			v.refreshStatus()
 			if p := v.loaded.Get(); p != "" {
-				v.loadFile(p)
+				// Fast-forward brought new committed content; reload the active file's
+				// buffer from it (other files' buffers keep their unsaved edits).
+				v.loadFresh(p)
 			}
 			v.notice.Set("Pulled.")
 		}
@@ -393,8 +436,12 @@ func (s *State) GitPull(done func(err error)) {
 	})
 }
 
-// GitCommit writes the editor's current source back to the loaded path and
-// commits it.
+// GitCommit flushes EVERY dirty edit buffer to the working tree, then commits.
+// browsergit's Commit stages every change (git add -A) before committing, so the
+// flush is what makes a commit capture edits to files other than the active one;
+// the active file's own write is still carried by the backend Commit call. After
+// a successful commit the flushed files' buffers match the committed content, so
+// their dirty flags clear.
 func (s *State) GitCommit(done func(err error)) {
 	v := s.git
 	if v.busy.Get() {
@@ -412,25 +459,34 @@ func (s *State) GitCommit(done func(err error)) {
 	v.errMsg.Set("")
 	v.notice.Set("")
 	v.refresh()
-	v.backend.Commit(v.loaded.Get(), s.Source(), v.msg.Get(), func(err error) {
-		v.busy.Set(false)
+	path := v.loaded.Get()
+	content := s.Source()
+	v.flushDirty(func(err error) {
 		if err != nil {
-			v.errMsg.Set(gitErrorMessage(err))
-		} else {
-			v.log = v.backend.Log(gitLogLimit)
-			v.refreshStatus()
-			v.notice.Set("Committed " + v.loaded.Get() + ".")
+			v.finishOp(err, done)
+			return
 		}
-		if done != nil {
-			done(err)
-		}
-		v.refresh()
+		v.backend.Commit(path, content, v.msg.Get(), func(err error) {
+			v.busy.Set(false)
+			if err != nil {
+				v.errMsg.Set(gitErrorMessage(err))
+			} else {
+				v.log = v.backend.Log(gitLogLimit)
+				v.refreshStatus()
+				v.notice.Set("Committed " + path + ".")
+			}
+			if done != nil {
+				done(err)
+			}
+			v.refresh()
+		})
 	})
 }
 
-// GitStage writes the editor's current source back to the loaded path and stages
-// it (git add) WITHOUT committing, so the file's sidebar badge flips to "staged".
-// It mirrors GitCommit's guards; the sidebar's Stage button drives it.
+// GitStage flushes EVERY dirty edit buffer to the working tree, then stages them
+// (git add) WITHOUT committing, so each edited file's sidebar badge flips to
+// "staged". It mirrors GitCommit's guards + flush; the sidebar's Stage button
+// drives it.
 func (s *State) GitStage(done func(err error)) {
 	v := s.git
 	if v.busy.Get() {
@@ -450,21 +506,67 @@ func (s *State) GitStage(done func(err error)) {
 	v.refresh()
 	path := v.loaded.Get()
 	content := s.Source()
-	v.backend.Stage(path, content, func(err error) {
-		v.busy.Set(false)
+	v.flushDirty(func(err error) {
 		if err != nil {
-			v.errMsg.Set(gitErrorMessage(err))
-		} else {
-			// The worker's Stage wrote the buffer to the tree and cached it, so the
-			// sidebar's active-file dirty overlay clears and the "staged" badge shows.
-			v.refreshStatus()
-			v.notice.Set("Staged " + path + ".")
+			v.finishOp(err, done)
+			return
 		}
-		if done != nil {
-			done(err)
-		}
-		v.refresh()
+		v.backend.Stage(path, content, func(err error) {
+			v.busy.Set(false)
+			if err != nil {
+				v.errMsg.Set(gitErrorMessage(err))
+			} else {
+				// Stage wrote the buffers to the tree and cached them, so the sidebar's
+				// per-file dirty overlays clear and the "staged" badges show.
+				v.refreshStatus()
+				v.notice.Set("Staged " + path + ".")
+			}
+			if done != nil {
+				done(err)
+			}
+			v.refresh()
+		})
 	})
+}
+
+// finishOp ends a git op that failed before its main step (a flush error):
+// clears busy, surfaces the error and reports it.
+func (v *gitView) finishOp(err error, done func(error)) {
+	v.busy.Set(false)
+	v.errMsg.Set(gitErrorMessage(err))
+	if done != nil {
+		done(err)
+	}
+	v.refresh()
+}
+
+// flushDirty writes every dirty edit buffer (the active file's live editor text
+// included) back to the working tree so a following stage/commit sees them, then
+// calls done. It captures the active file's live edits into its buffer first
+// (stashActive). With nothing dirty it short-circuits to success without a backend
+// round-trip.
+func (v *gitView) flushDirty(done func(error)) {
+	v.stashActive()
+	dirty := v.dirtyBuffers()
+	if len(dirty) == 0 {
+		done(nil)
+		return
+	}
+	v.backend.WriteFiles(dirty, done)
+}
+
+// dirtyBuffers is the path→content map of every buffer whose content differs
+// from the committed/indexed content (the set flushDirty writes back).
+func (v *gitView) dirtyBuffers() map[string]string {
+	out := map[string]string{}
+	for p := range v.buffers {
+		if v.bufferDirty(p) {
+			if c, ok := v.bufferContent(p); ok {
+				out[p] = c
+			}
+		}
+	}
+	return out
 }
 
 // GitPush pushes the open branch to origin.
@@ -511,29 +613,111 @@ func (v *gitView) setFiles(files []string) {
 	v.texFiles = texFiles(files)
 }
 
-// loadFile reads path from the working tree and puts it in the source editor.
-func (v *gitView) loadFile(p string) {
+// loadFresh reads path from the working tree, makes it the ACTIVE file and
+// (re)seeds its edit buffer from the freshly-read content — DISCARDING any prior
+// buffer for it. It is the "load a committed file" path: clone (the primary .tex)
+// and pull (reload the active file with the new committed content) use it. A read
+// miss surfaces on the panel and leaves the active file unchanged.
+func (v *gitView) loadFresh(p string) {
 	data, err := v.backend.ReadFile(p)
 	if err != nil {
 		v.errMsg.Set(gitErrorMessage(err))
 		return
 	}
 	v.loaded.Set(p)
+	v.buffers[p] = &fileBuffer{text: string(data)}
 	v.s.SetSource(string(data))
 	v.notice.Set("Loaded " + p + ".")
 }
 
+// stashActive captures the active file's LIVE editor state (text + caret +
+// scroll) into its edit buffer, so switching away preserves the unsaved edits. A
+// no-op with no active file.
+func (v *gitView) stashActive() {
+	p := v.loaded.Get()
+	if p == "" {
+		return
+	}
+	buf := v.buffers[p]
+	if buf == nil {
+		buf = &fileBuffer{}
+		v.buffers[p] = buf
+	}
+	buf.text = v.s.Source()
+	buf.cursorLine = v.s.editor.CursorLine().Get()
+	buf.cursorCol = v.s.editor.CursorCol().Get()
+	buf.scrollLine = v.s.editor.ScrollLine().Get()
+}
+
+// openFile switches the editor to path, PRESERVING every buffer's unsaved edits.
+// The active file's live edits are stashed first; then, if path already has an
+// edit buffer, it is restored verbatim (text + caret + scroll); otherwise the
+// committed content is read, a buffer is created for it and the caret parks at the
+// top. Opening the already-active file is a no-op. A read miss surfaces on the
+// panel and leaves the active file unchanged.
+func (v *gitView) openFile(p string) {
+	if p == "" || p == v.loaded.Get() {
+		return
+	}
+	v.stashActive()
+	if buf, ok := v.buffers[p]; ok {
+		v.loaded.Set(p)
+		v.s.SetSourceCursor(buf.text, buf.cursorLine, buf.cursorCol, buf.scrollLine)
+		v.notice.Set("Opened " + p + ".")
+		return
+	}
+	data, err := v.backend.ReadFile(p)
+	if err != nil {
+		v.errMsg.Set(gitErrorMessage(err))
+		return
+	}
+	v.buffers[p] = &fileBuffer{text: string(data)}
+	v.loaded.Set(p)
+	v.s.SetSource(string(data))
+	v.notice.Set("Loaded " + p + ".")
+}
+
+// bufferContent returns the current in-memory content of path — the LIVE editor
+// for the active file, else the file's stashed edit buffer — and whether a buffer
+// exists for it at all.
+func (v *gitView) bufferContent(p string) (string, bool) {
+	if p != "" && p == v.loaded.Get() {
+		return v.s.Source(), true
+	}
+	if buf, ok := v.buffers[p]; ok {
+		return buf.text, true
+	}
+	return "", false
+}
+
+// bufferDirty reports whether path's edit buffer differs from its committed /
+// indexed content (the git backend cache the last clone/pull/commit/stage/flush
+// filled). A path with no buffer, or an uncached file (nothing to compare), reads
+// not-dirty.
+func (v *gitView) bufferDirty(p string) bool {
+	content, ok := v.bufferContent(p)
+	if !ok {
+		return false
+	}
+	data, err := v.backend.ReadFile(p)
+	if err != nil {
+		return false
+	}
+	return string(data) != content
+}
+
 // GitOpenFile opens working-tree path into the source editor (the sidebar's
-// file-row click drives it). It reuses the panel's loadFile — reading the cached
-// content the last clone/pull filled — so any pre-cached text file (.tex/.sty/
-// .bib/…), not just the primary .tex, opens. A no-op while a network op is in
-// flight or before a clone; reports whether it opened the file.
+// file-row click drives it), preserving the previously-open file's unsaved edits
+// in its own buffer. It reads the cached content the last clone/pull filled — so
+// any pre-cached text file (.tex/.sty/.bib/…), not just the primary .tex, opens.
+// A no-op while a network op is in flight or before a clone; reports whether the
+// file is the one now active.
 func (s *State) GitOpenFile(path string) bool {
 	v := s.git
 	if v.busy.Get() || !v.backend.HasRepo() || path == "" {
 		return false
 	}
-	v.loadFile(path)
+	v.openFile(path)
 	v.refresh()
 	return v.loaded.Get() == path
 }
@@ -628,6 +812,24 @@ func (s *State) GitNotice() string { return s.git.notice.Get() }
 
 // GitLoadedPath is the working-tree path currently shown in the editor ("" none).
 func (s *State) GitLoadedPath() string { return s.git.loaded.Get() }
+
+// GitPrimaryPath is the .tex the render pane compiles ("" with no repo / no .tex).
+func (s *State) GitPrimaryPath() string { return s.git.primaryPath }
+
+// GitBufferDirty reports whether path's edit buffer differs from its committed /
+// indexed content — the per-file dirtiness the sidebar badges each row from.
+func (s *State) GitBufferDirty(path string) bool { return s.git.bufferDirty(path) }
+
+// GitBufferPaths returns, sorted, every path that currently has an edit buffer
+// (host / proof introspection for the multi-buffer model).
+func (s *State) GitBufferPaths() []string {
+	out := make([]string, 0, len(s.git.buffers))
+	for p := range s.git.buffers {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
 
 // GitTeXFiles are the .tex paths the picker offers.
 func (s *State) GitTeXFiles() []string { return s.git.texFiles }
@@ -1000,10 +1202,27 @@ func (v *gitView) dispatch(role gitRole, arg int) {
 		v.s.GitPush(nil)
 	case gitRolePickFile:
 		if arg >= 0 && arg < len(v.texFiles) && !v.busy.Get() {
-			v.loadFile(v.texFiles[arg])
+			// Picking a .tex makes it the document the render compiles, and opens it
+			// (preserving every other file's edit buffer).
+			v.primaryPath = v.texFiles[arg]
+			v.openFile(v.texFiles[arg])
 		}
 	}
 	v.refresh()
+}
+
+// compileSource is the LaTeX the render pane compiles: the primary .tex's LIVE
+// buffer when a repo with a primary .tex is open — its editor content when that
+// file is active, else its stashed buffer — so the render tracks the primary's
+// edits even while another file is being edited. With no repo (or no primary
+// .tex) it falls back to the editor's own buffer (the sample document).
+func (v *gitView) compileSource() string {
+	if v.primaryPath != "" {
+		if c, ok := v.bufferContent(v.primaryPath); ok {
+			return c
+		}
+	}
+	return v.s.editor.Text().Get()
 }
 
 // handleChar types a printable character into the focused field. Returns whether
@@ -1077,11 +1296,14 @@ func (nopGitBackend) Clone(_ gitConfig, done func([]string, error)) { done(nil, 
 func (nopGitBackend) Pull(done func(error))                         { done(errNoBrowserGit) }
 func (nopGitBackend) Commit(_, _, _ string, done func(error))       { done(errNoBrowserGit) }
 func (nopGitBackend) Stage(_, _ string, done func(error))           { done(errNoBrowserGit) }
-func (nopGitBackend) Push(done func(error))                         { done(errNoBrowserGit) }
-func (nopGitBackend) ReadFile(string) ([]byte, error)               { return nil, errNoBrowserGit }
-func (nopGitBackend) Status() (gitStatus, bool)                     { return gitStatus{}, false }
-func (nopGitBackend) Log(int) []GitCommitInfo                       { return nil }
-func (nopGitBackend) HasRepo() bool                                 { return false }
+func (nopGitBackend) WriteFiles(_ map[string]string, done func(error)) {
+	done(errNoBrowserGit)
+}
+func (nopGitBackend) Push(done func(error))           { done(errNoBrowserGit) }
+func (nopGitBackend) ReadFile(string) ([]byte, error) { return nil, errNoBrowserGit }
+func (nopGitBackend) Status() (gitStatus, bool)       { return gitStatus{}, false }
+func (nopGitBackend) Log(int) []GitCommitInfo         { return nil }
+func (nopGitBackend) HasRepo() bool                   { return false }
 
 // errNoBrowserGit explains why the no-op backend never clones.
 var errNoBrowserGit = errors.New("git: remote git needs a browser")
