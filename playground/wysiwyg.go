@@ -149,6 +149,10 @@ func (w *wysiwyg) enter() {
 	w.editor.SetDocument(doc)
 	w.applyWysiwygBounds()
 	w.editor.Focused().Set(true)
+	// If the find modal is open, re-target it at the now-active RichEditor (clear
+	// the Source highlights, re-run the query over the block text). A no-op when it
+	// is closed.
+	w.s.fr.onEditorTabChanged()
 	w.s.dirty = true
 }
 
@@ -168,6 +172,9 @@ func (w *wysiwyg) leave() {
 	out, _ := writeLaTeX(w.editor.Document())
 	w.parseErr = ""
 	w.s.SetSource(string(out))
+	// If the find modal is open, re-target it at the now-active Source editor
+	// (clear the RichEditor highlights, re-run the query over the line buffer).
+	w.s.fr.onEditorTabChanged()
 	w.s.dirty = true
 }
 
