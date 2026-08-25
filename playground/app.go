@@ -1077,6 +1077,16 @@ func (s *State) HandleMove(x, y int) bool {
 		s.git.handleMove(x, y)
 		return true
 	}
+	// Footer link hover: raise the underline on the bottomZone link under the
+	// pointer (clear the others). handleMove reports true only when the hovered
+	// link actually changed, in which case the frame must repaint — so return
+	// consumed to make the host render(). A hover change can only happen over the
+	// footer band, disjoint from every body widget, so this never steals a drag
+	// (which keeps routing through the switch below on the no-change path).
+	if s.bottomZone.handleMove(x, y) {
+		s.dirty = true
+		return true
+	}
 	if s.wysiwygMove(x, y) { // WYSIWYG RichEditor drag (wysiwyg.go)
 		return true
 	}
