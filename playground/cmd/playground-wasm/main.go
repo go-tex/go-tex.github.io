@@ -295,6 +295,14 @@ func main() {
 				e.Call("preventDefault")
 				pasteFromClipboard(state, render)
 				return nil
+			case "f":
+				// ⌘F / Ctrl+F toggles the regex find-and-replace bar (over the
+				// browser's own find, which preventDefault suppresses).
+				e.Call("preventDefault")
+				if state.ToggleFindReplace() {
+					render()
+				}
+				return nil
 			}
 		}
 
@@ -316,9 +324,12 @@ func main() {
 			changed = state.HandleChar(key)
 		} else {
 			// Shift-prefix a NAVIGATION key so the editor extends its selection;
-			// other keys pass through untouched.
+			// other keys pass through untouched. When the find bar is open, Enter is
+			// also Shift-prefixed so Shift+Enter reaches it as "previous match" (the
+			// bar reads the modifier off the "Shift+" code); the editor's own
+			// Shift+Enter is left as a plain "Enter" newline when the bar is closed.
 			code := key
-			if e.Get("shiftKey").Bool() && isNavKey(key) {
+			if e.Get("shiftKey").Bool() && (isNavKey(key) || (key == "Enter" && state.FindVisible())) {
 				code = "Shift+" + key
 			}
 			changed = state.HandleKeyDown(code)
@@ -469,6 +480,27 @@ func main() {
 		}
 		x, y := state.CaretPixel(a[0].Int(), a[1].Int())
 		return []any{x, y}
+	}))
+
+	// gotexFindDebug -> the find-and-replace bar state a headless harness reads to
+	// prove the regex flow: whether it is open, the total/current count and its
+	// readout string, the invalid-pattern flag, and a device-pixel point inside
+	// each match's highlight band (so the harness can sample the canvas and prove
+	// the highlights paint on the matches and the current-match emphasis moves).
+	js.Global().Set("gotexFindDebug", js.FuncOf(func(js.Value, []js.Value) any {
+		pts := state.FindMatchPoints()
+		out := make([]any, len(pts))
+		for i, p := range pts {
+			out[i] = []any{p[0], p[1]}
+		}
+		return map[string]any{
+			"visible":     state.FindVisible(),
+			"total":       state.FindTotal(),
+			"current":     state.FindCurrent(),
+			"countText":   state.FindCountText(),
+			"invalid":     state.FindInvalid(),
+			"matchPoints": out,
+		}
 	}))
 
 	// Source↔render linking introspection. gotexRenderLineAt(x,y) -> the 1-based
