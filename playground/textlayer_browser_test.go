@@ -91,6 +91,11 @@ func TestRenderIsSearchableInABrowser(t *testing.T) {
 	for _, want := range []string{
 		"find(phrase)           : true",
 		`selection copied       : "office of the typesetter"`,
+		// The word boundaries an interruption used to swallow (engine v0.169.0):
+		// a formula between two words, two table cells, a line break.
+		"boundary phrase        : true | The rest mass is exactly",
+		"boundary phrase        : true | alpha beta",
+		"boundary phrase        : true | every word of it can be found",
 		"pointer-events         : none",
 		"outside the card: 0",
 		"element under a glyph  : canvas",
