@@ -16,10 +16,22 @@ The office of the typesetter is to place marks; the office of the document
 is to remain text. This paragraph is blitted pixels on a canvas, and every
 word of it can be found.
 
+The rest mass is $E = mc^2$ exactly, and a table:
+\begin{tabular}{ll}alpha & beta\\ gamma & delta\end{tabular}
+
 A second paragraph, so the click below has a line of its own to land on.
 \end{document}`;
 
 const PHRASE = "office of the typesetter"; // crosses spaces AND an ffi ligature
+
+// Phrases that only match once the word boundaries survive an interruption: a
+// formula between two words, a line break between two words, and two table
+// cells. Each of these read as one glued word before engine v0.169.0.
+const BOUNDARY_PHRASES = [
+  "The rest mass is exactly",  // across a formula
+  "alpha beta",                // across two table cells
+  "every word of it can be found", // across a line break
+];
 
 (async () => {
   const browser = await puppeteer.launch({
@@ -75,6 +87,22 @@ const PHRASE = "office of the typesetter"; // crosses spaces AND an ffi ligature
   console.log("find(phrase)           :", found.ok);
   console.log("selection copied       :", JSON.stringify(found.text));
 
+  const boundaries = await page.evaluate((phrases) => {
+    const out = {};
+    for (const p of phrases) {
+      window.getSelection().removeAllRanges();
+      out[p] = window.find(p, false, false, true, false, true, false);
+    }
+    window.getSelection().removeAllRanges();
+    return out;
+  }, BOUNDARY_PHRASES);
+  for (const [p, ok] of Object.entries(boundaries)) {
+    console.log("boundary phrase        :", ok, "|", p);
+  }
+  const dump = await page.evaluate(() =>
+    document.querySelector("#gotex-textlayer text").textContent.replace(/\s+/g, " ").trim());
+  console.log("layer text content     :", JSON.stringify(dump));
+
   // The overlay must land ON the glyphs, not merely near them: every run has to
   // sit inside the CARD — the <svg> stretched over the rasterised page. The
   // container around it is only the window the pane still shows, so a run below
@@ -99,7 +127,7 @@ const PHRASE = "office of the typesetter"; // crosses spaces AND an ffi ligature
   // overlay is inert to the pointer, so the canvas still receives it.
   const linking = await page.evaluate(async () => {
     const before = gotexDebug().cursorLine;
-    const el = document.querySelector("#gotex-textlayer text");
+    const el = document.querySelector("#gotex-textlayer tspan");
     const b = el.getBoundingClientRect();
     const x = b.left + b.width / 2, y = b.top + b.height / 2;
     const target = document.elementFromPoint(x, y);
@@ -126,6 +154,7 @@ const PHRASE = "office of the typesetter"; // crosses spaces AND an ffi ligature
     placed.count === 1 && placed.chars > 200 && placed.pointerEvents === "none" &&
     placed.insideCanvas && placed.inRenderPane &&
     found.ok === true && found.text.includes("office") &&
+    Object.values(boundaries).every(Boolean) &&
     aligned.runs > 0 && aligned.outside === 0 &&
     linking.hitTest === "canvas" && linking.after !== linking.before;
   console.log("RESULT " + JSON.stringify({ ok }));
