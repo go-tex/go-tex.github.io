@@ -4,14 +4,18 @@
 package playground
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/andybalholm/brotli"
+	"github.com/go-gfx/qr"
 	"github.com/go-widgets/mvvm"
 	"github.com/go-widgets/painter"
 	"github.com/go-widgets/toolkit"
@@ -206,6 +210,22 @@ type collabView struct {
 	// page load, so a peer can always tell WHICH client an invitation/reply came from.
 	id string
 
+	// baseURL is the origin+path a scan-to-connect QR/URL primes (see
+	// [buildSignalURL]). It defaults to [signalBaseURL]; the js layer overrides it at
+	// startup with the live location so a scanned code opens the right deployment.
+	baseURL string
+
+	// The scan-to-connect QR, computed ONCE when the offer/answer envelope is produced
+	// (see [collabView.buildQR]) — never per frame. qrPixels is the RGBA raster the
+	// persistent qrImage widget paints, qrW/qrH its source dimensions. qrShown is set
+	// when a scannable code was produced; qrTooLarge is set when the payload exceeded
+	// the version cap, so the panel shows the copy-paste fallback line instead of an
+	// unscannably dense code.
+	qrPixels   []byte
+	qrW, qrH   int
+	qrShown    bool
+	qrTooLarge bool
+
 	// The pasted peer's identity, decoded from the signalling envelope the user
 	// pastes (see [decodeEnvelope]). peerKnown is set once a valid envelope is
 	// consumed by CollabJoin / CollabAcceptAnswer, so the panel can name who it is
@@ -227,6 +247,7 @@ type collabView struct {
 	nameRect  toolkit.Rect
 	iceRect   toolkit.Rect
 	pasteRect toolkit.Rect
+	qrRect    toolkit.Rect // the panel square the scan-to-connect QR is drawn into
 
 	// Persistent toolkit widgets the panel is built from — created once and
 	// re-used every frame so they hold their own interactive state (a Button's
@@ -242,6 +263,7 @@ type collabView struct {
 	nameEntry   *toolkit.Entry
 	iceEntry    *toolkit.Entry
 	pasteEntry  *toolkit.Entry   // the visible signalling-blob paste field
+	qrImage     *toolkit.Image   // the persistent scan-to-connect QR image widget
 	labelPool   []*toolkit.Label // reused, one per visible text line
 	swatchPool  []*toolkit.Backdrop
 }
@@ -312,6 +334,7 @@ func newCollabView(s *State) *collabView {
 		s:          s,
 		backend:    nopBackend{},
 		iceServers: defaultICEServers(),
+		baseURL:    signalBaseURL,
 		rng:        rand.New(rand.NewSource(collabSeed())),
 	}
 	v.name = v.randomName()
@@ -556,6 +579,182 @@ var errBadEnvelope = fmt.Errorf("collab: unrecognised invitation blob")
 // not a valid envelope — the malformed-paste lane, shown through errMsg.
 const collabBadEnvelopeMsg = "That doesn't look like a valid invitation."
 
+// --- the QR "scan to connect" signalling URL ---------------------------------
+
+// signalBaseURL is the canonical playground URL a scan-to-connect QR/link primes.
+// It is the tagless default (keeping the URL helpers testable off a browser and
+// giving a native build a sensible value); the js layer overrides it at startup
+// with the live location (origin + path) via [State.SetCollabBaseURL].
+const signalBaseURL = "https://go-tex.github.io/playground/"
+
+// fragInvite / fragAnswer are the two fragment keys a scan-to-connect URL carries:
+// an invitation (the host's offer, scanned by the guest's phone → "#invite=…") or a
+// reply (the guest's answer, scanned by the host's phone → "#answer=…").
+const (
+	fragInvite = "invite"
+	fragAnswer = "answer"
+)
+
+// errBadSignalURL is returned when a fragment is not a well-formed scan-to-connect
+// link — an unknown key, a non-payload fragment, not base64url, or not a brotli
+// stream (junk or a truncated scan). The one-tap loader treats it as "no link".
+var errBadSignalURL = fmt.Errorf("collab: not a scan-to-connect link")
+
+// collabQRTooLargeMsg is shown in place of a QR when the signalling payload will
+// not fit under the version cap: a code that dense does not scan off a phone, so the
+// panel keeps the copy-paste flow instead of rendering an unscannable square.
+const collabQRTooLargeMsg = "Too large to QR — use Copy/paste."
+
+// compressEnvelope brotli-compresses an identity envelope (the base64-JSON blob
+// [encodeEnvelope] produces) and base64url-encodes it WITHOUT padding, for a compact
+// QR/URL payload. The SDP inside the envelope is highly repetitive, so brotli shrinks
+// it several-fold; base64url (no padding) keeps the result safe in a URL fragment. It
+// reuses the same andybalholm/brotli the collab document store compresses with, not a
+// second compressor. A bytes.Buffer write cannot fail, so those errors are discarded.
+func compressEnvelope(envelope string) string {
+	var buf bytes.Buffer
+	w := brotli.NewWriterLevel(&buf, brotli.BestCompression)
+	_, _ = w.Write([]byte(envelope))
+	_ = w.Close()
+	return base64.RawURLEncoding.EncodeToString(buf.Bytes())
+}
+
+// decompressEnvelope is the inverse of [compressEnvelope]: base64url-decode then
+// brotli-decompress back to the envelope blob. A payload that is not base64url or not
+// a brotli stream (junk, a truncated scan) yields [errBadSignalURL], never a panic.
+func decompressEnvelope(payload string) (string, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(payload))
+	if err != nil {
+		return "", errBadSignalURL
+	}
+	out, err := io.ReadAll(brotli.NewReader(bytes.NewReader(raw)))
+	if err != nil {
+		return "", errBadSignalURL
+	}
+	return string(out), nil
+}
+
+// buildSignalURL builds the scan-to-connect URL that primes the app for a peer:
+// baseURL + "#invite=<payload>" for the host's invitation, "#answer=<payload>" for
+// the guest's reply, where payload is the compressed envelope. baseURL is a parameter
+// (not read from location) so the builder is testable off a browser; the js layer
+// passes the live origin+path.
+func buildSignalURL(baseURL, frag, envelope string) string {
+	return baseURL + "#" + frag + "=" + compressEnvelope(envelope)
+}
+
+// parseSignalURL extracts the {kind, envelope} a scan-to-connect fragment carries. It
+// accepts a bare fragment ("invite=…"), a leading-hash fragment ("#invite=…") or a
+// whole URL ("https://…/#answer=…"), tolerates surrounding whitespace, and requires a
+// known key and a decompressible payload. Anything else — an unknown key, a
+// non-payload fragment, junk or a truncated scan — yields [errBadSignalURL] so the
+// caller can ignore it silently. kind is [fragInvite] or [fragAnswer].
+func parseSignalURL(s string) (kind, envelope string, err error) {
+	s = strings.TrimSpace(s)
+	if i := strings.Index(s, "#"); i >= 0 {
+		s = s[i+1:] // keep only the fragment, whether it came from a bare frag or a full URL
+	}
+	key, payload, ok := strings.Cut(s, "=")
+	if !ok || (key != fragInvite && key != fragAnswer) {
+		return "", "", errBadSignalURL
+	}
+	env, derr := decompressEnvelope(payload)
+	if derr != nil {
+		return "", "", errBadSignalURL
+	}
+	return key, env, nil
+}
+
+// qrMaxVersion caps the QR version a scan-to-connect code may reach. EC level Low
+// keeps the version as low as the payload allows; past this the modules get too dense
+// to scan reliably off a phone, so a payload that would need a bigger code falls back
+// to copy-paste rather than showing an unscannable QR.
+const qrMaxVersion = 22
+
+// qrModuleScale is the pixel size of one QR module in the generated raster, and
+// qrQuietModules the white quiet-zone margin (in modules) a scanner needs to lock on.
+// The toolkit Image nearest-neighbour-scales the raster again to its on-screen box, so
+// these only set the SOURCE resolution.
+const (
+	qrModuleScale  = 4
+	qrQuietModules = 4
+)
+
+// buildSignalQR encodes url into a QR raster (RGBA pixels + square dimensions) at EC
+// level Low, capped at [qrMaxVersion]. ok is false when the payload will not fit under
+// the cap ([qr.ErrTooLong], or any other encode error): the caller then shows the
+// copy-paste fallback instead of an unscannably dense code.
+func buildSignalQR(url string) (pixels []byte, w, h int, ok bool) {
+	m, err := qr.Encode([]byte(url), qr.WithLevel(qr.Low), qr.WithVersionRange(qr.MinVersion, qrMaxVersion))
+	if err != nil {
+		return nil, 0, 0, false
+	}
+	pixels, w, h = qrMatrixRGBA(m, qrModuleScale, qrQuietModules)
+	return pixels, w, h, true
+}
+
+// qrMatrixRGBA rasterises a QR matrix into the RGBA byte buffer the toolkit Image
+// widget paints: each module becomes a scale×scale block, dark modules black and light
+// modules white, with a quiet-zone margin of quiet modules on every side. It builds
+// the buffer directly (no image/png round-trip) so it stays pure and native-testable.
+func qrMatrixRGBA(m *qr.Matrix, scale, quiet int) (pixels []byte, w, h int) {
+	if scale < 1 {
+		scale = 1
+	}
+	if quiet < 0 {
+		quiet = 0
+	}
+	dim := m.Dimension()
+	modules := dim + 2*quiet
+	w = modules * scale
+	h = w
+	pixels = make([]byte, w*h*4)
+	for i := range pixels {
+		pixels[i] = 0xFF // start all-white (QR light), then paint the dark modules
+	}
+	q := m.QuietZone() // Module() coordinates include the matrix's own quiet zone
+	for my := 0; my < dim; my++ {
+		for mx := 0; mx < dim; mx++ {
+			if !m.Module(mx+q, my+q) {
+				continue
+			}
+			x0 := (mx + quiet) * scale
+			y0 := (my + quiet) * scale
+			for dy := 0; dy < scale; dy++ {
+				base := ((y0+dy)*w + x0) * 4
+				for dx := 0; dx < scale; dx++ {
+					o := base + dx*4
+					pixels[o], pixels[o+1], pixels[o+2] = 0x00, 0x00, 0x00 // black; alpha already 0xFF
+				}
+			}
+		}
+	}
+	return pixels, w, h
+}
+
+// buildQR recomputes the scan-to-connect QR for the current handshake step: the
+// host's invitation ([fragInvite]) in phaseHostWait, the guest's reply ([fragAnswer])
+// in phaseGuestWait. It runs ONCE per step (from the CollabHost/CollabJoin completion
+// that produced blob), never per frame, and records either a scannable raster
+// (qrShown) or the too-large fallback flag (qrTooLarge). An empty blob clears both.
+func (v *collabView) buildQR(frag, blob string) {
+	v.clearQR()
+	if blob == "" {
+		return
+	}
+	url := buildSignalURL(v.baseURL, frag, blob)
+	if px, w, h, ok := buildSignalQR(url); ok {
+		v.qrPixels, v.qrW, v.qrH, v.qrShown = px, w, h, true
+	} else {
+		v.qrTooLarge = true
+	}
+}
+
+// clearQR forgets any generated scan-to-connect QR (on teardown / phase reset).
+func (v *collabView) clearQR() {
+	v.qrPixels, v.qrW, v.qrH, v.qrShown, v.qrTooLarge = nil, 0, 0, false, false
+}
+
 // collabPeerLabel formats a peer's identity for the panel: "<name> #<id>", with an
 // "(anonymous)" fallback for a blank name and the bare name when no id is carried.
 func collabPeerLabel(name, id string) string {
@@ -675,6 +874,9 @@ func (s *State) CollabHost(done func(offer string, err error)) {
 			v.errMsg = err.Error()
 		} else {
 			v.offer, v.phase = encodeEnvelope(v.id, v.name, hexColor(v.color), offer), phaseHostWait
+			// Compute the scan-to-connect QR once, now the invitation exists — not per
+			// frame. A guest scans it to join with one tap (see [State.CollabApplySignalFragment]).
+			v.buildQR(fragInvite, v.offer)
 		}
 		if done != nil {
 			done(v.offer, err)
@@ -719,6 +921,9 @@ func (s *State) CollabJoin(offer string, done func(answer string, err error)) {
 			v.errMsg, v.connecting = err.Error(), false
 		} else {
 			v.answer, v.phase = encodeEnvelope(v.id, v.name, hexColor(v.color), answer), phaseGuestWait
+			// Compute the reply QR once, now the answer exists — the host scans it to
+			// complete the handshake (see [State.CollabApplySignalFragment]).
+			v.buildQR(fragAnswer, v.answer)
 		}
 		if done != nil {
 			done(v.answer, err)
@@ -778,11 +983,47 @@ func (s *State) CollabDisconnect() {
 	v.pasteText.Set("")
 	v.pasteFocused = false
 	v.clearPeer()
+	v.clearQR()
 	v.refresh()
 }
 
 // errEmptyBlob is returned when a paste step got nothing to work with.
 var errEmptyBlob = fmt.Errorf("collab: nothing to paste")
+
+// SetCollabBaseURL sets the origin+path a scan-to-connect QR/URL primes. The js layer
+// passes the live [location] at startup so a scanned code opens the exact deployment
+// it was generated on; an empty string is ignored, keeping the built-in default
+// ([signalBaseURL]).
+func (s *State) SetCollabBaseURL(base string) {
+	if base != "" {
+		s.collab.baseURL = base
+	}
+}
+
+// CollabApplySignalFragment consumes a scan-to-connect URL fragment on load: an
+// "#invite=…" opens the Collaborate panel and joins the host as the decoded invitation
+// (exactly as if the guest had pasted it), an "#answer=…" hands the reply to the
+// waiting host. The decoded envelope is dropped into the visible paste field first, so
+// the flow is identical to a manual paste, then driven through [State.CollabJoin] /
+// [State.CollabAcceptAnswer]. A malformed or non-signalling fragment is ignored (ok
+// false, panel untouched) so a junk hash never disrupts a normal load. kind is
+// [fragInvite]/[fragAnswer] on success.
+func (s *State) CollabApplySignalFragment(fragment string) (kind string, ok bool) {
+	k, envelope, err := parseSignalURL(fragment)
+	if err != nil {
+		return "", false
+	}
+	v := s.collab
+	v.open = true
+	v.pasteText.Set(envelope)
+	switch k {
+	case fragInvite:
+		s.CollabJoin(envelope, nil)
+	case fragAnswer:
+		s.CollabAcceptAnswer(envelope, nil)
+	}
+	return k, true
+}
 
 // --- introspection for the headless proof and the DOM host -------------------
 
@@ -909,6 +1150,9 @@ func (s *State) CollabButtonRects() map[string][4]int {
 	if v.pasteRect.W > 0 {
 		out["paste"] = rect(v.pasteRect)
 	}
+	if v.qrRect.W > 0 {
+		out["qr"] = rect(v.qrRect)
+	}
 	for _, b := range v.buttons {
 		if name := collabRoleName(b.role); name != "" {
 			out[name] = rect(b.rect)
@@ -959,6 +1203,7 @@ func (v *collabView) layout() {
 	v.nameRect = toolkit.Rect{}
 	v.iceRect = toolkit.Rect{}
 	v.pasteRect = toolkit.Rect{}
+	v.qrRect = toolkit.Rect{}
 	if !v.open {
 		return
 	}
@@ -1040,6 +1285,25 @@ func (v *collabView) layout() {
 		v.labels = append(v.labels, collabLabel{rect: toolkit.Rect{X: innerX + toolkit.Scaled(18), Y: cur, W: innerW - toolkit.Scaled(18), H: line}, text: text})
 		cur += line
 	}
+	// addQR reserves a captioned square for the scan-to-connect QR when one was
+	// generated (qrShown): a phone's camera opens the encoded URL and joins with one
+	// tap. When the payload was too large for a scannable code (qrTooLarge) it shows a
+	// short fallback line instead, and the copy-paste flow stands unchanged. The QR
+	// itself is a persistent [toolkit.Image] drawn from v.qrRect in draw().
+	addQR := func(caption string) {
+		switch {
+		case v.qrShown:
+			addLabel(caption)
+			side := toolkit.Scaled(150)
+			if side > innerW {
+				side = innerW
+			}
+			v.qrRect = toolkit.Rect{X: innerX + (innerW-side)/2, Y: cur, W: side, H: side}
+			cur += side + gap
+		case v.qrTooLarge:
+			addLabel(collabQRTooLargeMsg)
+		}
+	}
 	// addConnectingRow shows the "Connecting…" acknowledgement, naming the decoded
 	// peer (with its colour chip) once one is known and falling back to the generic
 	// line otherwise.
@@ -1060,6 +1324,7 @@ func (v *collabView) layout() {
 	case v.phase == phaseHostWait:
 		addLabel("1. Send this invitation to your peer:")
 		addButtons(collabItem{role: roleCopyOffer, label: "Copy invitation"})
+		addQR("Scan to join from a phone:")
 		if v.connecting {
 			// The reply was accepted: acknowledge it and show the connection is being
 			// attempted (naming the peer), instead of leaving the paste prompt untouched.
@@ -1093,6 +1358,7 @@ func (v *collabView) layout() {
 	case v.phase == phaseGuestWait:
 		addLabel("Send this reply back to the host:")
 		addButtons(collabItem{role: roleCopyAnswer, label: "Copy reply"})
+		addQR("Scan to reply from a phone:")
 		addConnectingRow()
 		addButtons(collabItem{role: roleCancel, label: "Cancel"})
 	case v.phase == phaseConnected:
@@ -1161,6 +1427,9 @@ func (v *collabView) ensureWidgets() {
 	v.nameEntry = toolkit.NewEntry("")
 	v.iceEntry = toolkit.NewEntry("")
 	v.pasteEntry = toolkit.NewEntry("")
+	// The scan-to-connect QR is a real Image widget: aspect-preserved (ScaleFit) so a
+	// square code stays square in its box, with an accessible name for a reader.
+	v.qrImage = &toolkit.Image{Scale: toolkit.ScaleFit, Alt: "Scan-to-connect QR code"}
 }
 
 // btn returns the persistent Button for a role, creating it (wired to dispatch
@@ -1240,6 +1509,13 @@ func (v *collabView) draw(p painter.Painter, theme *toolkit.Theme) {
 		v.pasteEntry.SetText(v.pasteText.Get())
 		v.pasteEntry.SetFocused(v.pasteFocused)
 		v.pasteEntry.Draw(p, theme)
+	}
+	// Scan-to-connect QR: the raster was computed once when the offer/answer was
+	// produced (buildQR); here it is only blitted through the persistent Image widget.
+	if v.qrRect.W > 0 && v.qrShown {
+		v.qrImage.Pixels, v.qrImage.W, v.qrImage.H = v.qrPixels, v.qrW, v.qrH
+		v.qrImage.SetBounds(v.qrRect)
+		v.qrImage.Draw(p, theme)
 	}
 
 	// Static text lines, each a reused Label.

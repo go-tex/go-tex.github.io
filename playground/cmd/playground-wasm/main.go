@@ -135,6 +135,23 @@ func main() {
 	// OS-clipboard hooks it needs. See package playground (collab.go/collab_js.go).
 	state.EnableCollab(render)
 
+	// Scan-to-connect: point the panel's QR/URL at THIS deployment (origin+path) so a
+	// scanned code opens the exact page it was generated on, and — if the page itself
+	// was opened from such a link (#invite=… / #answer=…) — apply that fragment as if
+	// pasted (one-tap join), then strip the hash so a reload is a clean load. Malformed
+	// fragments are ignored by CollabApplySignalFragment. See package playground.
+	if loc := js.Global().Get("location"); loc.Truthy() {
+		state.SetCollabBaseURL(loc.Get("origin").String() + loc.Get("pathname").String())
+		if hash := loc.Get("hash"); hash.Type() == js.TypeString && hash.String() != "" {
+			if _, ok := state.CollabApplySignalFragment(hash.String()); ok {
+				if h := js.Global().Get("history"); h.Truthy() {
+					// Drop the fragment (keep path + query) so refreshing does not re-join.
+					h.Call("replaceState", js.Null(), "", loc.Get("pathname").String()+loc.Get("search").String())
+				}
+			}
+		}
+	}
+
 	// Remote git (browsergit over the Fetch RoundTripper): the canvas Git panel
 	// drives Clone/Pull/Commit/Push against a CORS-enabled origin; this installs
 	// the real backend. See package playground (git.go/git_js.go).
