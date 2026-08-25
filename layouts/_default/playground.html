@@ -92,26 +92,30 @@ body{display:flex;flex-direction:column;min-height:100vh;min-height:100dvh}
 (function(){
   var $=function(id){return document.getElementById(id);};
   var errBox=$("err");
-  // The ~11 MB app wasm is built FRESH by the pages deploy and served from our own
+  // The app wasm (~21 MB, ~6 MB gzip on the wire — measured against the live URL,
+  // not the repository) is built FRESH by the pages deploy and served from our own
   // Pages origin, cache-busted with the commit sha (?v=…) so every deploy is a new
-  // URL — this is the PRIMARY source and always matches the deployed Go source.
-  // jsDelivr, pinned to the same commit, is the fallback (an independent immutable
-  // CDN); it serves the committed copy, which may lag, so it is second, not first.
+  // URL that always matches the deployed Go source.
+  //
+  // There is deliberately NO CDN fallback. There used to be one — jsDelivr pinned
+  // to the same commit — but jsDelivr serves what is COMMITTED, and the committed
+  // copy was a build artifact nobody rebuilt: by 2026-08-25 it was 35 playground
+  // commits behind. A fallback that silently boots a five-week-old application is
+  // worse than a visible failure, and an immutable pointer to the wrong bytes is
+  // not a virtue. The wasm is now a build artifact like git-worker.wasm — built at
+  // deploy, absent from the repository — and a failed load says so.
   {{ $sha := .Site.Params.wasmsha }}
   {{ $local := "playground.wasm" | absURL }}
   {{ $primary := $local }}
-  {{ $fallback := $local }}
-  {{ with $sha }}
-    {{ $primary = printf "%s?v=%s" $local . }}
-    {{ $fallback = printf "https://cdn.jsdelivr.net/gh/go-tex/go-tex.github.io@%s/static/playground.wasm" . }}
-  {{ end }}
+  {{ with $sha }}{{ $primary = printf "%s?v=%s" $local . }}{{ end }}
   var wasmURL={{ $primary }};
-  var wasmFallback={{ $fallback }};
   // The DECOMPRESSED wasm size, read at build time from the freshly-built asset.
   // Pages serves the wasm gzip-compressed (~⅓ the size over the wire), but the
   // stream reader yields DECOMPRESSED bytes while Content-Length is the COMPRESSED
   // length — so we drive the progress bar against this real decompressed total,
   // or the bar would shoot past 100%.
+  // Zero when the wasm has not been built (a local `hugo server` without the build
+  // step); the loader then drives the bar off Content-Length instead.
   {{ $wasmBytes := 0 }}{{ with (os.Stat "static/playground.wasm") }}{{ $wasmBytes = .Size }}{{ end }}
   var wasmBytes={{ $wasmBytes }};
   var started=false;
@@ -204,9 +208,7 @@ body{display:flex;flex-direction:column;min-height:100vh;min-height:100dvh}
         return WebAssembly.instantiate(ab,go.importObject);
       });
     }
-    streamFetch(wasmURL).catch(function(){
-      return wasmFallback===wasmURL ? Promise.reject() : streamFetch(wasmFallback);
-    }).then(boot).catch(fail);
+    streamFetch(wasmURL).then(boot).catch(fail);
   }
 
   // Lazy-load: fetch the wasm once the stage scrolls into view (it is above the
