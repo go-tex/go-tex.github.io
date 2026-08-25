@@ -20,7 +20,12 @@ body{display:flex;flex-direction:column;min-height:100vh;min-height:100dvh}
 .hero.mini h1{font-size:40px}
 .hero .caption{font-size:14px;opacity:.9;max-width:680px;margin:14px auto 0}
 .hero .caption code{background:rgba(255,255,255,.16);padding:1px 6px;border-radius:5px}
-.pg{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;max-width:none;margin:16px auto;padding:0 16px}
+/* margin is "16px 0", NOT "16px auto": body is a flex column, and auto cross-axis
+   margins on a flex item cancel align-items:stretch — the pg column would shrink to
+   its content width and centre, leaving the canvas narrower than the window (and
+   breaking the full-height flex chain). With no auto margins it stretches to the
+   full width and flex:1 fills the height. */
+.pg{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;max-width:none;margin:16px 0;padding:0 16px}
 /* The whole playground is ONE go-widgets canvas: editor on the left, the live
    gotex render on the right, its own status bar plus the moved-in topZone /
    bottomZone — all painted by the toolkit in WebAssembly. It flexes to fill the
