@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>go-tex playground — in-this-browser (BroadcastChannel) collaboration proof</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #ffffff;
+      }
+      /* A fixed CSS box the canvas app lays itself out into; the backing store is
+         this box × devicePixelRatio (2 under the driver). This is the REAL
+         playground app — one instance per tab, exactly as a user runs it. Both
+         tabs load THIS page from the same origin, so their BroadcastChannels
+         share one bus and the zero-config "In this browser (instant)" mode meets
+         with no WebRTC, no ICE and nothing to copy between the windows. */
+      #gotex-canvas {
+        display: block;
+        width: 1100px;
+        height: 780px;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="gotex-canvas"></canvas>
+    <!-- The Go toolchain's own loader, copied beside the wasm by the test. -->
+    <script src="wasm_exec.js"></script>
+    <script>
+      (async () => {
+        try {
+          const go = new Go();
+          const result = await WebAssembly.instantiateStreaming(
+            fetch("client.wasm"),
+            go.importObject,
+          );
+          go.run(result.instance);
+        } catch (err) {
+          console.log("DONE page failed to run the wasm: " + err);
+          globalThis.__bootError = String(err);
+        }
+      })();
+    </script>
+  </body>
+</html>

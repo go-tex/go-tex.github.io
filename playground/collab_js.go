@@ -278,6 +278,100 @@ func (b *webrtcBackend) Join(name string, color toolkit.RGBA, offer string, done
 	}()
 }
 
+// LocalConnect runs the zero-config "in this browser" mode: it elects host or
+// client on the fixed [collabLocalRoom] BroadcastChannel — the shared bus every
+// tab of this origin is already on — and binds the editor either way. Nothing is
+// relayed and no ICE is gathered, so this connects even where no WebRTC path can
+// form (a full-tunnel VPN, a strict NAT). The live session is reported through the
+// change hook exactly as the WebRTC path is; done receives only a setup error.
+//
+// The host and client are asymmetric for the same reason the WebRTC path is: one
+// tab must hold the document. The elected host runs a [collab.Server], joins it
+// over an in-process [collab.Pipe] so its OWN editor is a participant, seeds the
+// document with the current source, then serves the other tabs over the bus with
+// [collab.Server.ServeBroadcastChannel]. A client joins with
+// [collab.JoinBroadcastChannel]. This reuses [webrtcBackend.bind] and the same
+// Server+Pipe+editor wiring as [webrtcBackend.Host].
+func (b *webrtcBackend) LocalConnect(name string, color toolkit.RGBA, done func(error)) {
+	go func() {
+		b.session()
+		role, err := collab.HostOrJoin(b.ctx, collabLocalRoom, collab.DefaultElectionWindow)
+		if err != nil {
+			b.reportLocalErr(done, err)
+			return
+		}
+		if role == collab.RoleHost {
+			b.localHost(name, color, done)
+		} else {
+			b.localJoin(name, color, done)
+		}
+	}()
+}
+
+// localHost holds the document for the same-browser room: it runs a Server, joins
+// it over an in-process Pipe so the host's own editor is a participant, seeds the
+// shared text with the current source, then serves the other tabs over the bus
+// until the session is torn down (ctx cancelled by Disconnect).
+func (b *webrtcBackend) localHost(name string, color toolkit.RGBA, done func(error)) {
+	src := b.s.Source()
+	b.server = collab.NewServer(collab.Config{Store: collab.NewMemoryStore()})
+	client, server := collab.Pipe()
+	go func() { _ = b.server.ServePipe(b.ctx, server) }()
+
+	hostClient, err := collab.Join(b.ctx, client,
+		collab.ClientConfig{Document: docName, Site: randSite()})
+	if err != nil {
+		b.reportLocalErr(done, err)
+		return
+	}
+	if err := b.bind(hostClient, name, color); err != nil {
+		b.reportLocalErr(done, err)
+		return
+	}
+	// NewCollabText emptied the editor to the (empty) shared text; refill it so the
+	// seed flows into the CRDT as this participant's first edit.
+	b.s.editor.SetText(src)
+
+	if done != nil {
+		done(nil)
+	}
+	b.setConnected(true)
+	_ = b.server.ServeBroadcastChannel(b.ctx, collabLocalRoom) // blocks until torn down
+	b.setConnected(false)
+}
+
+// localJoin joins the tab that is holding the document for the same-browser room,
+// over the shared bus, and binds the editor to the shared document.
+func (b *webrtcBackend) localJoin(name string, color toolkit.RGBA, done func(error)) {
+	client, err := collab.Join(b.ctx, collab.JoinBroadcastChannel(collabLocalRoom),
+		collab.ClientConfig{Document: docName, Site: randSite()})
+	if err != nil {
+		b.reportLocalErr(done, err)
+		return
+	}
+	if err := b.bind(client, name, color); err != nil {
+		b.reportLocalErr(done, err)
+		return
+	}
+	if done != nil {
+		done(nil)
+	}
+	b.setConnected(true)
+	go func() { <-client.Done(); b.setConnected(false) }() // the host tab closed → back to idle
+}
+
+// reportLocalErr surfaces a same-browser setup error through done, unless the
+// session was already torn down by the user (a Disconnect cancels b.ctx and the
+// blocked election/dial returns context.Canceled — not a failure to show).
+func (b *webrtcBackend) reportLocalErr(done func(error), err error) {
+	if b.ctx != nil && b.ctx.Err() != nil {
+		return
+	}
+	if done != nil {
+		done(err)
+	}
+}
+
 // bind wires the editor to a client's shared text part and starts draining the
 // binding's remote updates.
 func (b *webrtcBackend) bind(client *collab.Client, name string, color toolkit.RGBA) error {

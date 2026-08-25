@@ -65,6 +65,20 @@ const (
 	textName = "file:main.tex"
 )
 
+// collabLocalRoom is the fixed BroadcastChannel room the zero-config "in this
+// browser" mode meets on. A BroadcastChannel is scoped to one origin and one
+// browser already, so every tab of the deployment joining the SAME name lands on
+// one shared bus — one room is exactly right, and there is nothing for a person
+// to choose or carry between the windows.
+const collabLocalRoom = "gotex-playground"
+
+// collabLocalConnectingMsg is the momentary acknowledgement shown while the
+// same-browser session elects a host and binds the editor (phaseLocalConnecting).
+// Unlike the WebRTC "Connecting to your peer…", there is no ICE to negotiate and
+// no blob to relay, so this clears almost at once when the change hook reports the
+// live session.
+const collabLocalConnectingMsg = "Connecting in this browser…"
+
 // collabPhase is where a session is in the copy-paste handshake.
 type collabPhase int
 
@@ -88,6 +102,14 @@ const (
 	// [collabFailedMsg] pointing at the TURN fix and offers a reset to idle,
 	// rather than waiting silently forever.
 	phaseFailed
+	// phaseLocalConnecting is the zero-config "in this browser" mode between the
+	// click and the live session: [State.CollabLocalConnect] elected host or
+	// client on the shared BroadcastChannel bus and is binding the editor. There
+	// is no blob to copy and no ICE to gather — every same-origin tab is already
+	// on the bus — so this is momentary; the change hook advances it to
+	// [phaseConnected]. It is numbered AFTER phaseFailed so the existing phase
+	// ints the headless harness asserts on (1 hostWait … 5 failed) are unchanged.
+	phaseLocalConnecting
 )
 
 // collabFailedMsg is the guidance shown when a connection fails with no path to
@@ -143,6 +165,11 @@ type collabBackend interface {
 	Join(name string, color toolkit.RGBA, offer string, done func(answer string, err error))
 	// AcceptAnswer completes the host's handshake with the peer's answer.
 	AcceptAnswer(answer string, done func(err error))
+	// LocalConnect joins the zero-config same-browser session on the shared
+	// BroadcastChannel bus: it elects host or client and binds the editor, with no
+	// blob to relay and no ICE to gather. It reports the live connection through the
+	// change hook (like the WebRTC path); done receives only a setup error, if any.
+	LocalConnect(name string, color toolkit.RGBA, done func(err error))
 	// Disconnect tears the whole session down.
 	Disconnect()
 	// Connected reports whether a peer's channel is open and joined.
@@ -306,6 +333,7 @@ const (
 	roleCancel
 	roleDisconnect
 	roleNameField
+	roleLocalConnect
 )
 
 // caretColors is the palette a participant's caret colour is drawn from — eight
@@ -972,6 +1000,38 @@ func (s *State) CollabAcceptAnswer(answer string, done func(err error)) {
 	})
 }
 
+// CollabLocalConnect starts the zero-config "in this browser" session: it hands
+// the backend this participant's identity and lets it elect host or client on the
+// shared BroadcastChannel bus and bind the editor. There is nothing to copy, scan
+// or configure — every tab of this deployment is already on the bus — so the panel
+// goes straight to a brief [phaseLocalConnecting] acknowledgement and the live
+// session is reported through the change hook ([collabView.onBackendChange]
+// advances it to [phaseConnected]). A setup failure (no BroadcastChannel, a bind
+// error) surfaces in the errMsg lane and returns the panel to idle. done (optional)
+// receives the setup error; the panel passes nil, the headless proof a handler.
+func (s *State) CollabLocalConnect(done func(err error)) {
+	v := s.collab
+	v.phase = phaseLocalConnecting
+	v.busy, v.connecting, v.errMsg = false, true, ""
+	v.clearPeer()
+	v.refresh()
+	v.backend.LocalConnect(v.name, v.color, func(err error) {
+		if err != nil {
+			v.connecting = false
+			v.errMsg = err.Error()
+			// Only fall back to idle if the live session did not already arrive; a
+			// late error must not yank a connected panel back.
+			if v.phase == phaseLocalConnecting {
+				v.phase = phaseIdle
+			}
+		}
+		if done != nil {
+			done(err)
+		}
+		v.refresh()
+	})
+}
+
 // CollabDisconnect tears the session down and returns the panel to its idle
 // choice.
 func (s *State) CollabDisconnect() {
@@ -1122,6 +1182,8 @@ func collabRoleName(r collabRole) string {
 		return "cancel"
 	case roleDisconnect:
 		return "disconnect"
+	case roleLocalConnect:
+		return "localConnect"
 	default:
 		return ""
 	}
@@ -1319,8 +1381,20 @@ func (v *collabView) layout() {
 	case v.busy:
 		addLabel("Working…")
 	case v.phase == phaseIdle:
-		addLabel("Edit this document together, peer-to-peer.")
+		addLabel("Edit this document together.")
+		// The easy first choice: two tabs of THIS browser, instantly, with nothing to
+		// copy, scan or configure — the BroadcastChannel bus every same-origin tab
+		// already shares. This is the path that works even where no WebRTC route can be
+		// formed (a full-tunnel VPN, a strict NAT), because there is no wire to form.
+		addButtons(collabItem{role: roleLocalConnect, label: "In this browser (instant)"})
+		addLabel("With someone else, or another device:")
 		addButtons(collabItem{role: roleHost, label: "Host"}, collabItem{role: roleJoin, label: "Join"})
+	case v.phase == phaseLocalConnecting:
+		// The same-browser session is being set up (host election + editor bind). It
+		// is momentary — no ICE, no blob — but a Cancel is offered so a click is never
+		// a trap if the bus is somehow unavailable.
+		addLabel(collabLocalConnectingMsg)
+		addButtons(collabItem{role: roleCancel, label: "Cancel"})
 	case v.phase == phaseHostWait:
 		addLabel("1. Send this invitation to your peer:")
 		addButtons(collabItem{role: roleCopyOffer, label: "Copy invitation"})
@@ -1650,6 +1724,9 @@ func (v *collabView) dispatch(role collabRole) {
 		v.pasteText.Set("")
 		v.focusPaste()
 		v.s.CollabHost(nil)
+	case roleLocalConnect:
+		// Zero-config same-browser mode: no field to fill, no blob to relay.
+		v.s.CollabLocalConnect(nil)
 	case roleJoin:
 		v.phase = phaseGuestOffer
 		v.pasteText.Set("")
@@ -1910,11 +1987,14 @@ func (nopBackend) Join(_ string, _ toolkit.RGBA, _ string, done func(string, err
 }
 
 func (nopBackend) AcceptAnswer(_ string, done func(error)) { done(errNoBrowser) }
-func (b nopBackend) Disconnect()                           { _ = b } // no session to tear down
-func (nopBackend) Connected() bool                         { return false }
-func (nopBackend) ConnFailed() bool                        { return false }
-func (nopBackend) PeerCount() int                          { return 0 }
-func (b nopBackend) SetOnChange(func())                    { _ = b } // nothing ever changes
+
+func (nopBackend) LocalConnect(_ string, _ toolkit.RGBA, done func(error)) { done(errNoBrowser) }
+
+func (b nopBackend) Disconnect()        { _ = b } // no session to tear down
+func (nopBackend) Connected() bool      { return false }
+func (nopBackend) ConnFailed() bool     { return false }
+func (nopBackend) PeerCount() int       { return 0 }
+func (b nopBackend) SetOnChange(func()) { _ = b } // nothing ever changes
 
 // errNoBrowser explains why the no-op backend never connects.
 var errNoBrowser = fmt.Errorf("collab: live collaboration needs a browser")
