@@ -72,6 +72,32 @@ the document exactly as a real \LaTeX{} run would.
 // device-pixel ratio via SetupText so glyphs render crisp on a Retina panel.
 const baseFontPx = 16
 
+// buildInfoSegment is the index of the status-bar segment that carries the build
+// stamp (SHA + UTC time). It is the LAST segment, so the toolkit Statusbar
+// expands it to fill the bar's right-hand remainder; updateStatus owns segments
+// 0..buildInfoSegment-1 and never overwrites it.
+const buildInfoSegment = 4
+
+// defaultBuildInfo is the build stamp shown when no ldflags value was injected —
+// i.e. a native `go test`, a `go run`, or a wasm build that skipped the deploy
+// -X flags. It keeps the segment honest ("this is an un-stamped/dev binary")
+// rather than blank or falsely current.
+const defaultBuildInfo = "dev · unknown"
+
+// formatBuildInfo renders the compact status-bar stamp "<version> · <buildTime>"
+// (e.g. "4d63d59 · 2026-08-25 13:20 UTC"). An empty field falls back to its dev
+// placeholder so a half-injected build (SHA but no time, or vice-versa) still
+// reads sensibly instead of showing a dangling separator.
+func formatBuildInfo(version, buildTime string) string {
+	if version == "" {
+		version = "dev"
+	}
+	if buildTime == "" {
+		buildTime = "unknown"
+	}
+	return version + " · " + buildTime
+}
+
 // pressKind records what the current pointer press captured, so a following
 // move/release is routed to the same target (the fix for a divider/scrollbar
 // that could not be dragged because move/up were discarded).
@@ -118,6 +144,13 @@ type State struct {
 
 	schemePicker *toolkit.DropDown
 	minimapBtn   *toolkit.Button
+
+	// buildInfo is the immutable "which build is this" string shown in the last
+	// status-bar segment: a git short SHA + a UTC build timestamp, baked into the
+	// wasm at deploy time via -ldflags and pushed in once at startup by the
+	// wasm shell (SetBuildInfo). A native/dev build leaves it at defaultBuildInfo
+	// ("dev · unknown"), so the segment is honest about an un-stamped binary.
+	buildInfo string
 
 	// Chrome grounds that were once hand-filled rectangles, now persistent
 	// Backdrop widgets (so they carry theming/HiDPI like every other element and
@@ -270,7 +303,13 @@ func NewState(w, h int, dark bool) *State {
 	s.toolbarRule = &toolkit.Backdrop{}
 	s.errorBand = &toolkit.Backdrop{}
 
-	s.status = toolkit.NewStatusbar([]string{"Ln 1, Col 1", "UTF-8", "0 pages", ""})
+	// Segments 0..3 are the live editor read-out (caret, encoding, page count,
+	// issue count — all refreshed by updateStatus). Segment buildInfoSegment is the
+	// immutable build stamp: it is the LAST segment, set once here to the dev
+	// default and overwritten once by SetBuildInfo when the wasm shell hands over
+	// the ldflags-injected SHA + timestamp. updateStatus never touches it.
+	s.buildInfo = defaultBuildInfo
+	s.status = toolkit.NewStatusbar([]string{"Ln 1, Col 1", "UTF-8", "0 pages", "", s.buildInfo})
 	s.collab = newCollabView(s) // Collaborate affordance (see collab.go)
 	s.git = newGitView(s)       // Remote-git affordance (see git.go)
 
@@ -691,6 +730,24 @@ func (s *State) updateStatus() {
 	} else {
 		s.status.SetSegment(3, "")
 	}
+}
+
+// SetBuildInfo stamps the build identity into the last status-bar segment: a git
+// short SHA (version) and a UTC build timestamp, both baked into the wasm at
+// deploy time via `-ldflags -X`. The wasm shell (cmd/playground-wasm) calls it
+// ONCE at startup with those injected values; a native/dev build never calls it
+// and keeps the defaultBuildInfo placeholder. Because it targets the segment
+// updateStatus leaves alone, the stamp survives every later compile — so a SHA
+// visible on screen corresponds exactly to the wasm actually running (a new SHA
+// after a deploy proves the fresh binary loaded past any Pages/CDN cache).
+//
+// It is an immutable set-once value, not a per-frame cross-boundary copy, so it
+// respects the MVVM boundary (no reactive Observable is warranted for a constant
+// stamped in at init).
+func (s *State) SetBuildInfo(version, buildTime string) {
+	s.buildInfo = formatBuildInfo(version, buildTime)
+	s.status.SetSegment(buildInfoSegment, s.buildInfo)
+	s.dirty = true
 }
 
 // editorLines is the editor buffer as a slice of lines. TextView's line buffer

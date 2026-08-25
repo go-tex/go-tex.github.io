@@ -33,7 +33,17 @@ jobs:
         working-directory: playground
         env:
           GOWORK: "off"
-        run: GOOS=js GOARCH=wasm go build -trimpath -o ../static/playground.wasm ./cmd/playground-wasm
+        # Bake the build identity INTO the wasm via -ldflags -X so the SHA + time
+        # the app shows in its status bar is the one actually running (it survives
+        # Pages/CDN caching: a new SHA on screen = the new wasm loaded). The short
+        # SHA comes from the checked-out history (the default checkout depth keeps
+        # HEAD, so `git rev-parse` resolves without fetch-depth: 0); the time is UTC.
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          TS=$(date -u +'%Y-%m-%d %H:%M UTC')
+          GOOS=js GOARCH=wasm go build -trimpath \
+            -ldflags "-X 'main.buildVersion=${SHA}' -X 'main.buildTime=${TS}'" \
+            -o ../static/playground.wasm ./cmd/playground-wasm
       # Build the on-demand git worker wasm FRESH too (same freshness reasoning as
       # above). It is loaded in a Web Worker only when the user opens the Git panel,
       # so it stays out of the main playground.wasm download.
