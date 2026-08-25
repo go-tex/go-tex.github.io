@@ -8,22 +8,25 @@
 <script src="{{ "js/theme.js" | relURL }}"></script>
 <style>
 /* Playground-only styles — kept off every other page. */
-.hero.mini{padding:48px 24px 40px}
+/* The page is a full-height flex column: the blue header keeps its natural
+   height and the canvas stage flexes to fill the whole remaining viewport, so
+   the one go-widgets WebAssembly app runs edge-to-edge below the header. The
+   status line that used to sit above the canvas and the description/footer that
+   sat below it now live INSIDE the wasm (its topZone / bottomZone), painted by
+   the toolkit — see playground/zones.go. */
+html,body{height:100%}
+body{display:flex;flex-direction:column;min-height:100vh;min-height:100dvh}
+.hero.mini{flex:0 0 auto;padding:48px 24px 40px}
 .hero.mini h1{font-size:40px}
 .hero .caption{font-size:14px;opacity:.9;max-width:680px;margin:14px auto 0}
 .hero .caption code{background:rgba(255,255,255,.16);padding:1px 6px;border-radius:5px}
-.pg{max-width:none;margin:24px auto 56px;padding:0 16px}
-.pg-bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;color:var(--muted);
-  font-size:13px;margin:0 2px 12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.pg-bar .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:0 0 auto}
-.pg-bar .dot.ok{background:var(--from)}
-.pg-bar .grow{flex:1}
+.pg{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;max-width:none;margin:16px auto;padding:0 16px}
 /* The whole playground is ONE go-widgets canvas: editor on the left, the live
-   gotex render on the right, and a status bar — all painted by the toolkit in
-   WebAssembly. It fills a fixed-height frame so the page never reflows as pages
-   are typeset. */
+   gotex render on the right, its own status bar plus the moved-in topZone /
+   bottomZone — all painted by the toolkit in WebAssembly. It flexes to fill the
+   viewport below the blue header (with a sensible floor on short screens). */
 .stage{position:relative;background:var(--card);border:1px solid var(--line);border-radius:16px;
-  box-shadow:0 10px 30px var(--shadow);overflow:hidden;height:76vh;min-height:460px}
+  box-shadow:0 10px 30px var(--shadow);overflow:hidden;flex:1 1 auto;min-height:520px}
 #gotex-canvas{display:block;width:100%;height:100%;background:var(--bg);opacity:0;transition:opacity .25s}
 .stage.ready #gotex-canvas{opacity:1}
 /* HTML loading placeholder: a two-pane skeleton with a real progress bar driven
@@ -46,8 +49,6 @@
 :root[data-theme="dark"] #err{background:#3a1113;color:#f7b4b4}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) #err{background:#3a1113;color:#f7b4b4}}
 #err.show{display:block}
-.pg-note{color:var(--muted);font-size:13px;margin:16px 2px 0;text-align:center}
-.pg-back{display:inline-block;margin-top:6px;font-weight:600}
 </style>
 </head><body>
 <section class="hero mini">
@@ -59,12 +60,6 @@
 </section>
 
 <div class="pg">
-  <div class="pg-bar">
-    <span class="dot" id="statusdot"></span>
-    <span id="status">loading the engine (one time)…</span>
-    <span class="grow"></span>
-    <span id="ver"></span>
-  </div>
   <div id="err"></div>
   <div class="stage">
     <canvas id="gotex-canvas"></canvas>
@@ -77,17 +72,7 @@
       </div>
     </div>
   </div>
-  <p class="pg-note">
-    A single go-widgets/toolkit canvas app driving the pure-Go
-    <a href="https://github.com/go-tex/engine">go-tex/engine</a> — the render pane
-    is a shared go-widgets PagedView with continuous / paginated modes, zoom, and
-    full wheel + keyboard page navigation. Click the render to jump the caret to
-    that source line, and move the caret to scroll the render to its output.<br>
-    <a class="pg-back" href="{{ "" | relURL }}">← Back to go-tex</a>
-  </p>
 </div>
-
-<footer>Built with Hugo · Pure Go, CGO=0 · Branding from <a href="https://github.com/go-tex/brand">go-tex/brand</a></footer>
 
 <script src="{{ "js/wasm_exec.js" | absURL }}"></script>
 <script>
@@ -161,15 +146,13 @@
         if(globalThis.gotexPlaygroundReady){
           clearInterval(t);
           document.querySelector(".stage").classList.add("ready"); // reveal canvas, hide placeholder
-          $("statusdot").classList.add("ok");
-          $("status").textContent="engine ready";
-          $("ver").textContent="pure-Go · go-widgets canvas";
+          // The "engine ready" status line now lives inside the wasm (its topZone),
+          // so there is no HTML status/dot/version to update here anymore.
           syncTheme();
         }
       },50);
     };
     var fail=function(e){
-      $("status").textContent="engine failed to load";
       $("pg-msg").textContent="Engine failed to load.";
       var hint = location.protocol==="file:"
         ? "\n(open this page over http:// — file:// blocks fetching the engine.)"

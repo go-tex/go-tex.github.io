@@ -38,9 +38,16 @@ func TestEditorPressDragSelects(t *testing.T) {
 
 func TestHandleClickToolbarMiss(t *testing.T) {
 	s := newTestState(t, false)
-	// A press in the toolbar row but not on any control is not consumed.
-	if s.HandleClick(s.w-2, 2) {
+	// A press in the toolbar row but not on any control is not consumed. The row
+	// now sits below the topZone band, so the empty-row probe is taken at the
+	// toolbar's own Y (topZoneH+2) — a layout-shift recalibration, not a behaviour
+	// change.
+	if s.HandleClick(s.w-2, s.topZoneH+2) {
 		t.Fatalf("empty toolbar press should not be consumed")
+	}
+	// A press in the topZone status band (above the toolbar) is likewise inert.
+	if s.HandleClick(s.w/2, 2) {
+		t.Fatalf("topZone press should not be consumed")
 	}
 	// A press below the status bar (nowhere) is not consumed.
 	if s.HandleClick(s.w/2, s.h+50) {

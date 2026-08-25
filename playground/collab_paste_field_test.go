@@ -230,9 +230,12 @@ func TestCollabPasteFieldRendersOnScreen(t *testing.T) {
 	if !ok || pr[2] <= 0 || pr[3] <= 0 {
 		t.Fatalf("the paste field rect is not exposed while pasting an invitation: %v ok=%v", pr, ok)
 	}
-	// A point over the scrim but outside the panel card (just under the toolbar,
-	// hard left) versus the field's centre: the field must paint something else.
-	scrim := samplePixel(buf, 2, s.toolbarH+2)
+	// A point over the scrim but outside the panel card (just inside the body, hard
+	// left) versus the field's centre: the field must paint something else. The
+	// body now begins at bodyTop() (below the moved-in topZone band + the toolbar),
+	// so the scrim reference point is sampled there — a layout-shift recalibration,
+	// not a behaviour change.
+	scrim := samplePixel(buf, 2, s.bodyTop()+2)
 	field := samplePixel(buf, pr[0]+pr[2]/2, pr[1]+pr[3]/2)
 	if field == scrim {
 		t.Fatalf("the paste field pixel %+v equals the scrim %+v — the field was not painted", field, scrim)

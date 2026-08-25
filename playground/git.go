@@ -618,7 +618,7 @@ func (v *gitView) layout() {
 	lw := toolkit.Scaled(gitLauncherW)
 	gap := toolkit.Scaled(6)
 	collabW := toolkit.Scaled(collabLauncherW)
-	v.launcher = toolkit.Rect{X: v.s.w - collabW - pad - lw - gap, Y: toolkit.Scaled(4), W: lw, H: v.s.toolbarH - 2*toolkit.Scaled(4)}
+	v.launcher = toolkit.Rect{X: v.s.w - collabW - pad - lw - gap, Y: v.s.topZoneH + toolkit.Scaled(4), W: lw, H: v.s.toolbarH - 2*toolkit.Scaled(4)}
 	if v.s.toolbarH == 0 { // before the host's first layout
 		v.launcher.H = bh
 	}
@@ -635,7 +635,7 @@ func (v *gitView) layout() {
 		pw = v.s.w - 2*pad
 	}
 	x := (v.s.w - pw) / 2
-	y := pad + v.s.toolbarH
+	y := pad + v.s.bodyTop()
 	line := toolkit.Scaled(20)
 	innerX := x + pad
 	innerW := pw - 2*pad
@@ -812,8 +812,10 @@ func (v *gitView) draw(p painter.Painter, theme *toolkit.Theme) {
 		return
 	}
 
-	// Modal scrim + panel body, each a Backdrop rather than hand-filled rects.
-	v.scrim.SetBounds(toolkit.Rect{X: 0, Y: v.s.toolbarH, W: v.s.w, H: v.s.h - v.s.toolbarH - v.s.statusH})
+	// Modal scrim + panel body, each a Backdrop rather than hand-filled rects. The
+	// scrim dims the body region between the toolbar and the status bar (below the
+	// topZone band, above the bottomZone band).
+	v.scrim.SetBounds(toolkit.Rect{X: 0, Y: v.s.bodyTop(), W: v.s.w, H: v.s.h - v.s.bodyTop() - v.s.statusH - v.s.bottomZoneH})
 	v.scrim.Draw(p, theme)
 	v.card.Fill = theme.Surface
 	v.card.Stroke = theme.Border
