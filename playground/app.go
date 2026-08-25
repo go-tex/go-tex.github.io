@@ -347,8 +347,15 @@ func (s *State) HandleCut() bool {
 }
 
 // HandlePaste inserts text at the caret (replacing any selection). The host reads
-// the OS clipboard asynchronously and passes the text here. No-op when unfocused.
+// the OS clipboard asynchronously and passes the text here. A paste into a focused
+// Collaborate panel field (the signalling-blob paste field, the ICE or the name
+// field) goes there instead, so ⌘V/Ctrl+V drops the invitation/reply into the
+// visible field — the immediate proof it was taken. No-op when nothing is focused.
 func (s *State) HandlePaste(text string) bool {
+	if s.collab.handlePaste(text) { // paste into the focused Collaborate field
+		s.dirty = true
+		return true
+	}
 	if !s.editor.Focused().Get() {
 		return false
 	}

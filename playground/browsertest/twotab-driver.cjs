@@ -173,7 +173,11 @@ const ICE_PROBE = (tag) => `
     await clickButton(B, "join");
     await waitState(B, (s) => s.phase === 2, 4000, "B guestOffer");
     await B.evaluate((o) => navigator.clipboard.writeText(o), offer);
+    // "Paste from clipboard" fills the visible field (async clipboard read); the
+    // primary Connect button then joins using the field's text, not the clipboard.
     await clickButton(B, "pasteOffer");
+    await waitState(B, (s) => s.pasteText && s.pasteText.length > 0, 4000, "B field filled from clipboard");
+    await clickButton(B, "connectOffer");
     const bWait = await waitState(B, (s) => s.phase === 3 || s.answer, 22000, "B answer ready (guestWait)");
     check(bWait.phase === 3, "tab B reached guestWait after pasting the invitation (phase " + bWait.phase + ")");
 
@@ -186,6 +190,8 @@ const ICE_PROBE = (tag) => `
     await A.bringToFront();
     await A.evaluate((a) => navigator.clipboard.writeText(a), answer);
     await clickButton(A, "pasteAnswer");
+    await waitState(A, (s) => s.pasteText && s.pasteText.length > 0, 4000, "A field filled from clipboard");
+    await clickButton(A, "connectAnswer");
 
     // --- the moment of truth: do two independent tabs actually connect? -------
     let connected = true;

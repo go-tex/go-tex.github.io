@@ -476,7 +476,7 @@ func TestCollabDispatchRoles(t *testing.T) {
 
 	var written string
 	v.clipWrite = func(text string) { written = text }
-	v.clipRead = func(cb func(string)) { cb("PASTED") }
+	v.clipRead = func(onText func(string), _ func(error)) { onText("PASTED") }
 
 	v.open = true
 	v.dispatch(roleClose)
@@ -505,14 +505,29 @@ func TestCollabDispatchRoles(t *testing.T) {
 		t.Fatalf("roleCopyAnswer wrote %q", written)
 	}
 
-	// Paste roles read the clipboard and feed Join / AcceptAnswer.
+	// "Paste from clipboard" fills the visible field (it no longer connects
+	// straight from the clipboard); the primary Connect button reads the field.
 	v.dispatch(rolePasteOffer)
-	if f.gotOffer != "PASTED" {
-		t.Fatalf("rolePasteOffer fed %q to Join", f.gotOffer)
+	if v.pasteText.Get() != "PASTED" {
+		t.Fatalf("rolePasteOffer filled the field with %q, want PASTED", v.pasteText.Get())
 	}
+	if !v.pasteFocused {
+		t.Fatal("rolePasteOffer should focus the paste field")
+	}
+	v.dispatch(roleConnectOffer)
+	if f.gotOffer != "PASTED" {
+		t.Fatalf("roleConnectOffer fed %q to Join, want the field text PASTED", f.gotOffer)
+	}
+	v.pasteText.Set("REPLY")
+	v.dispatch(roleConnectAnswer)
+	if f.gotAnswer != "REPLY" {
+		t.Fatalf("roleConnectAnswer fed %q to AcceptAnswer, want the field text REPLY", f.gotAnswer)
+	}
+	// rolePasteAnswer also just fills the field from the clipboard.
+	v.pasteText.Set("")
 	v.dispatch(rolePasteAnswer)
-	if f.gotAnswer != "PASTED" {
-		t.Fatalf("rolePasteAnswer fed %q to AcceptAnswer", f.gotAnswer)
+	if v.pasteText.Get() != "PASTED" {
+		t.Fatalf("rolePasteAnswer filled the field with %q, want PASTED", v.pasteText.Get())
 	}
 
 	name0 := v.name
@@ -727,18 +742,20 @@ func TestCollabButtonRects(t *testing.T) {
 	// Every button role maps to its stable, non-empty name; the non-button roles
 	// (roleNone / roleNameField) map to the empty string.
 	wantNames := map[collabRole]string{
-		roleClose:       "close",
-		roleHost:        "host",
-		roleJoin:        "join",
-		roleCopyOffer:   "copyOffer",
-		roleCopyAnswer:  "copyAnswer",
-		rolePasteOffer:  "pasteOffer",
-		rolePasteAnswer: "pasteAnswer",
-		roleShuffle:     "shuffle",
-		roleCancel:      "cancel",
-		roleDisconnect:  "disconnect",
-		roleNone:        "",
-		roleNameField:   "",
+		roleClose:         "close",
+		roleHost:          "host",
+		roleJoin:          "join",
+		roleCopyOffer:     "copyOffer",
+		roleCopyAnswer:    "copyAnswer",
+		rolePasteOffer:    "pasteOffer",
+		rolePasteAnswer:   "pasteAnswer",
+		roleConnectOffer:  "connectOffer",
+		roleConnectAnswer: "connectAnswer",
+		roleShuffle:       "shuffle",
+		roleCancel:        "cancel",
+		roleDisconnect:    "disconnect",
+		roleNone:          "",
+		roleNameField:     "",
 	}
 	for role, want := range wantNames {
 		if got := collabRoleName(role); got != want {
