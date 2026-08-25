@@ -32,6 +32,17 @@ import (
 // canvasID is the id of the <canvas> the host page provides.
 const canvasID = "gotex-canvas"
 
+// buildVersion and buildTime identify exactly which binary is running. The
+// deploy workflow overrides them at link time with `-ldflags -X` (the git short
+// SHA and a UTC build timestamp); a local `go build` leaves the honest defaults.
+// They are handed to the playground State (SetBuildInfo) and shown in the status
+// bar so a viewer can tell whether the deployed app is up to date — a fresh SHA
+// on screen proves the new wasm loaded past any GitHub Pages / CDN cache.
+var (
+	buildVersion = "dev"
+	buildTime    = "unknown"
+)
+
 func main() {
 	doc := js.Global().Get("document")
 	canvas := doc.Call("getElementById", canvasID)
@@ -74,6 +85,9 @@ func main() {
 
 	dark := detectDark(doc)
 	state := playground.NewState(dw, dh, dark)
+	// Stamp the running binary's identity into the status bar (git short SHA + UTC
+	// build time, injected by the deploy workflow's -ldflags). Set once, at init.
+	state.SetBuildInfo(buildVersion, buildTime)
 	curDPR := d
 
 	// Stamp each compile's Log entries with the viewer's local wall-clock time,
