@@ -671,3 +671,52 @@ func TestReplaceSpans(t *testing.T) {
 		t.Fatalf("two-span replace = %q, want %q", got, "X bar X")
 	}
 }
+
+// TestFindModalDragsByItsTitleBar drives a press-move-move-release on the
+// modal's title bar through the REAL input path — HandleClick / HandleMove /
+// HandleRelease, the same calls the wasm host makes from DOM events — and
+// asserts the panel actually moved.
+//
+// It is written this way because the toolkit gained a draggable Dialog title bar
+// in v0.255.0 and the modal still did not move: the press was routed, and the
+// moves and the release were not. A test on the Dialog alone would have passed
+// throughout, which is exactly why this one goes through the app.
+func TestFindModalDragsByItsTitleBar(t *testing.T) {
+	s := newTestState(t, false)
+	s.ToggleFindReplace()
+	buf := make([]byte, testW*testH*4)
+	s.Draw(buf) // lay the panel out
+
+	before := s.fr.modal.Panel.Bounds()
+	// The title strip: above the input bar, left of the × button.
+	tx := before.X + before.W/3
+	ty := before.Y + toolkit.Scaled(toolkit.DialogTitleH)/2
+
+	if !s.HandleClick(tx, ty) {
+		t.Fatal("the modal must capture a press on its title bar")
+	}
+	const dx, dy = 40, 25
+	s.HandleMove(tx+dx/2, ty+dy/2)
+	s.HandleMove(tx+dx, ty+dy)
+	s.HandleRelease(tx+dx, ty+dy)
+	s.Draw(buf) // re-lay: the drag offset must survive the relayout
+
+	after := s.fr.modal.Panel.Bounds()
+	if after.X == before.X && after.Y == before.Y {
+		t.Fatalf("the panel did not move: still at %+v after a %d,%d drag", after, dx, dy)
+	}
+	if got := after.X - before.X; got != dx {
+		t.Errorf("moved %d px horizontally, want %d (%+v -> %+v)", got, dx, before, after)
+	}
+	if got := after.Y - before.Y; got != dy {
+		t.Errorf("moved %d px vertically, want %d (%+v -> %+v)", got, dy, before, after)
+	}
+
+	// A move after the release must NOT keep dragging it.
+	parked := s.fr.modal.Panel.Bounds()
+	s.HandleMove(tx+dx+60, ty+dy+60)
+	s.Draw(buf)
+	if s.fr.modal.Panel.Bounds() != parked {
+		t.Errorf("the panel kept moving after the release: %+v -> %+v", parked, s.fr.modal.Panel.Bounds())
+	}
+}
