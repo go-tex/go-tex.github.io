@@ -136,15 +136,15 @@ func main() {
 	}
 	alloc(dw, dh)
 
-	// The rendered pages are blitted pixels; the browser is told what they say
-	// by a DOM text layer placed over them after every frame. See textlayer.go.
-	textLayers := newTextLayerHost(doc)
+	// The render pane lays the typeset pages out and paints their paper; the
+	// browser draws the pages themselves, as SVG. See domrender.go.
+	pageHost := newDOMRenderHost(doc)
 
 	render := func() {
 		state.Draw(local)
 		js.CopyBytesToJS(dst, local)
 		ctx.Call("putImageData", imageData, 0, 0)
-		textLayers.sync(state.TextOverlays(), curDPR)
+		pageHost.sync(state.PageRenders(), curDPR, state.SetLineBands)
 	}
 
 	// Live collaborative editing (WebRTC, server-less copy-paste signalling): the

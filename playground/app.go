@@ -21,6 +21,7 @@
 package playground
 
 import (
+	"image"
 	"strconv"
 	"strings"
 
@@ -246,10 +247,14 @@ type State struct {
 	// raised while a render-click drives the caret, so the caret-move that results
 	// does NOT re-scroll the render underneath the click.
 	lineMaps []pageLineMap
-	// textLayers is the per-rendered-page searchable text (an <svg> of invisible
-	// <text> runs, parallel to the PagedView's pages). The canvas shows the
-	// rasterised page; this is what the browser can find, read aloud and copy.
-	textLayers    []string
+	// svgs is the per-rendered-page SVG the host draws, parallel to the render
+	// pane's pages. The pane paints each page's paper, shadow and border; this is
+	// what goes on top — searchable, selectable and crisp at any zoom, because
+	// the browser renders it rather than a bitmap standing in for it.
+	svgs []string
+	// pageSizes is each page's natural (un-zoomed) size in device pixels, the
+	// space the host reports its line-band measurements in.
+	pageSizes     []image.Point
 	lastCaretLine int
 	syncing       bool
 
@@ -870,11 +875,19 @@ func (s *State) Compile() {
 	s.pages = res.pages
 	s.drawnPages = res.drawnPages
 	s.diag = res.diag
-	s.lineMaps = res.lineMaps     // per-page source-line bands for click↔caret linking
-	s.textLayers = res.textLayers // per-page searchable text, placed over the canvas by the host
-	s.logCompile(res)             // append a timestamped block to the accumulating Log
+	s.svgs = res.svgs
+	s.pageSizes = res.sizes
+	// The source-line bands are MEASURED FROM THE DOM once the host has placed
+	// the pages (see SetLineBands): the browser lays the text out, so it is the
+	// one that knows where each line ended up. They are cleared here so a click
+	// between a compile and that measurement resolves to nothing rather than to
+	// the previous document's lines.
+	s.lineMaps = nil
+	s.logCompile(res) // append a timestamped block to the accumulating Log
 
-	s.renderView.SetPages(res.bitmaps) // nil bitmaps clear the viewer
+	// The pane lays the pages out and paints their paper; the host draws the
+	// content over them, reading where from PagedView.PageRect.
+	s.renderView.SetPageSizes(res.sizes)
 	s.updateStatus()
 	s.dirty = true
 }

@@ -67,17 +67,20 @@ func TestMakeLineMapOrdersAndTieBreaks(t *testing.T) {
 	}
 }
 
-func TestCompileProducesParallelLineMaps(t *testing.T) {
+// The line bands no longer come out of the compile — the browser measures them
+// once it has laid the pages out (see State.SetLineBands). What the compile must
+// still guarantee is a page per drawable page, each with a size to lay out in.
+func TestCompileProducesParallelPages(t *testing.T) {
 	res := compileLaTeX(SampleLaTeX, toolkit.DefaultLight())
-	if len(res.lineMaps) != len(res.bitmaps) {
-		t.Fatalf("lineMaps(%d) not parallel to bitmaps(%d)", len(res.lineMaps), len(res.bitmaps))
+	if len(res.sizes) != len(res.svgs) {
+		t.Fatalf("sizes(%d) not parallel to svgs(%d)", len(res.sizes), len(res.svgs))
 	}
 	total := 0
-	for _, lm := range res.lineMaps {
-		total += len(lm.bands)
+	for _, sz := range res.sizes {
+		total += sz.X * sz.Y
 	}
 	if total == 0 {
-		t.Fatalf("sample doc recorded no source-line bands")
+		t.Fatalf("sample doc produced no page area to lay out")
 	}
 }
 
@@ -217,23 +220,17 @@ func TestCaretMaybeChangedGuards(t *testing.T) {
 func TestCaretMoveScrollsRenderToLaterPage(t *testing.T) {
 	s := newTestState(t, false)
 	s.SetSource(multiLinePageDoc())
-	if len(s.lineMaps) < 2 {
-		t.Fatalf("multi-page doc produced %d line maps, want >= 2", len(s.lineMaps))
+	if s.DrawnPages() < 2 {
+		t.Fatalf("multi-page doc drew %d pages, want >= 2", s.DrawnPages())
 	}
-	// Find a source line whose FIRST rendered occurrence is on a page after the
-	// first (so pageYForLine resolves it to that later page, not page 1).
-	var laterLine, laterPage int
-	for pi := 1; pi < len(s.lineMaps) && laterPage == 0; pi++ {
-		for _, bd := range s.lineMaps[pi].bands {
-			if p, _, ok := s.pageYForLine(bd.line); ok && p == pi+1 {
-				laterLine, laterPage = bd.line, pi+1
-				break
-			}
-		}
-	}
-	if laterPage == 0 {
-		t.Fatalf("no source line first rendered on a later page")
-	}
+	// The bands are measured from the DOM by the host, which there is none of in
+	// a headless test, so they are seeded here through the same seam the host
+	// uses. What this test is about is the LINKING — that a caret move scrolls
+	// the render to the page carrying that line — and that logic does not care
+	// where the measurement came from.
+	s.SetLineBands(1, []int{3}, []int{0}, []int{100})
+	s.SetLineBands(2, []int{9}, []int{0}, []int{100})
+	laterLine, laterPage := 9, 2
 	// Paginated mode so the scroll is observable as a page change.
 	s.renderView.Mode().Set(toolkit.PagedPaginated)
 	if s.RenderCurrentPage() != 1 {

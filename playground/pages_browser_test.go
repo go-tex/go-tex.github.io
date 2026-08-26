@@ -55,7 +55,7 @@ func TestRenderIsSearchableInABrowser(t *testing.T) {
 
 	root := t.TempDir()
 	copyFile(t, wasmExec, filepath.Join(root, "wasm_exec.js"))
-	copyFile(t, "browsertest/textlayer-index.html", filepath.Join(root, "index.html"))
+	copyFile(t, "browsertest/pages-index.html", filepath.Join(root, "index.html"))
 
 	build := exec.Command("go", "build", "-o", filepath.Join(root, "client.wasm"), "./cmd/playground-wasm")
 	build.Env = append(os.Environ(), "GOOS=js", "GOARCH=wasm", "GOWORK=off")
@@ -75,7 +75,7 @@ func TestRenderIsSearchableInABrowser(t *testing.T) {
 		t.Fatalf("resolving the screenshot path: %v", err)
 	}
 
-	cmd := exec.Command(node, "browsertest/textlayer-driver.cjs")
+	cmd := exec.Command(node, "browsertest/pages-driver.cjs")
 	cmd.Env = append(os.Environ(),
 		"PAGE_URL="+srv.URL+"/index.html",
 		"CHROME="+chrome,

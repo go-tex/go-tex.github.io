@@ -98,12 +98,12 @@ func TestCompileLaTeXStacksAllPages(t *testing.T) {
 	if multi.pages != multi.drawnPages {
 		t.Fatalf("pages(%d) != drawnPages(%d) for a clean multi-page compile", multi.pages, multi.drawnPages)
 	}
-	// One bitmap per drawn page; the multi-page doc yields more than the single.
-	if len(multi.bitmaps) != multi.drawnPages {
-		t.Fatalf("bitmaps(%d) != drawnPages(%d)", len(multi.bitmaps), multi.drawnPages)
+	// One SVG per drawn page; the multi-page doc yields more than the single.
+	if len(multi.svgs) != multi.drawnPages {
+		t.Fatalf("svgs(%d) != drawnPages(%d)", len(multi.svgs), multi.drawnPages)
 	}
-	if len(multi.bitmaps) <= len(single.bitmaps) {
-		t.Fatalf("multi-page bitmaps %d not > single-page %d", len(multi.bitmaps), len(single.bitmaps))
+	if len(multi.svgs) <= len(single.svgs) {
+		t.Fatalf("multi-page svgs %d not > single-page %d", len(multi.svgs), len(single.svgs))
 	}
 }
 

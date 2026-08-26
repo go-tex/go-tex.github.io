@@ -6,7 +6,6 @@ require (
 	github.com/andybalholm/brotli v1.2.2
 	github.com/go-crdt/collab v0.26.1
 	github.com/go-crdt/crdt v0.31.0
-	github.com/go-gfx/gfx v0.7.0
 	github.com/go-gfx/qr v0.1.0
 	github.com/go-git/go-billy/v5 v5.9.0
 	github.com/go-git/go-git/v5 v5.19.2
@@ -16,7 +15,7 @@ require (
 	github.com/go-tex/engine v0.172.0
 	github.com/go-widgets/mvvm v0.7.0
 	github.com/go-widgets/painter v0.11.0
-	github.com/go-widgets/toolkit v0.255.0
+	github.com/go-widgets/toolkit v0.256.0
 	github.com/go-widgets/toolkit/rougelex v0.2.0
 )
 
@@ -28,6 +27,7 @@ require (
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/cyphar/filepath-securejoin v0.6.1 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
+	github.com/go-gfx/gfx v0.7.0 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-iconoir/iconoir v0.2.0 // indirect
 	github.com/go-images/images v0.0.0-20260815210351-4a50ef5ab734 // indirect
