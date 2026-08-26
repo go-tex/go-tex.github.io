@@ -29,24 +29,24 @@ func TestCompileLaTeXHardErrorBranch(t *testing.T) {
 			if res.errText != "boom" {
 				t.Fatalf("errText = %q, want boom", res.errText)
 			}
-			if res.bitmaps != nil {
-				t.Fatalf("hard error should yield no bitmaps")
+			if res.svgs != nil || res.sizes != nil {
+				t.Fatalf("hard error should yield no pages")
 			}
 		},
 	)
 }
 
-func TestCompileLaTeXUnrasterizablePages(t *testing.T) {
-	// Pages the shared rasteriser cannot parse are skipped; with none left, the result
-	// reports zero drawable pages without an image.
+func TestCompileLaTeXUnsizablePages(t *testing.T) {
+	// A page whose size cannot be read off its SVG root is skipped; with none
+	// left, the result reports zero drawable pages.
 	withCompileFn(
 		func([]byte, engine.Options) ([]string, engine.Diagnostics, error) {
 			return []string{"not an svg", "also not svg"}, engine.Diagnostics{}, nil
 		},
 		func() {
 			res := compileLaTeX("anything", toolkit.DefaultLight())
-			if res.bitmaps != nil {
-				t.Fatalf("unrasterizable pages should yield no bitmaps")
+			if res.svgs != nil {
+				t.Fatalf("unsizable pages should yield no drawable page")
 			}
 			if res.pages != 2 {
 				t.Fatalf("pages = %d, want 2 (the engine's page count is kept)", res.pages)

@@ -50,13 +50,13 @@ const BOUNDARY_PHRASES = [
   await page.waitForFunction("gotexDebug().drawnPages > 0", { timeout: 60000 });
   // The overlay is written during the frame that follows the compile.
   await page.waitForFunction(
-    "document.querySelectorAll('#gotex-textlayer .pg-textpage').length > 0",
+    "document.querySelectorAll('#gotex-pages .pg-page').length > 0",
     { timeout: 30000 },
   );
 
   const placed = await page.evaluate(() => {
-    const pages = [...document.querySelectorAll("#gotex-textlayer .pg-textpage")];
-    const layer = document.getElementById("gotex-textlayer");
+    const pages = [...document.querySelectorAll("#gotex-pages .pg-page")];
+    const layer = document.getElementById("gotex-pages");
     const cs = getComputedStyle(layer);
     const box = pages[0].getBoundingClientRect();
     const canvas = document.getElementById("gotex-canvas").getBoundingClientRect();
@@ -101,7 +101,7 @@ const BOUNDARY_PHRASES = [
     console.log("boundary phrase        :", ok, "|", p);
   }
   const dump = await page.evaluate(() =>
-    document.querySelector("#gotex-textlayer text").textContent.replace(/\s+/g, " ").trim());
+    document.querySelector("#gotex-pages text").textContent.replace(/\s+/g, " ").trim());
   console.log("layer text content     :", JSON.stringify(dump));
 
   // The overlay must land ON the glyphs, not merely near them: every run has to
@@ -109,9 +109,9 @@ const BOUNDARY_PHRASES = [
   // container around it is only the window the pane still shows, so a run below
   // the fold is correctly outside the container and correctly inside the card.
   const aligned = await page.evaluate(() => {
-    const runs = [...document.querySelectorAll("#gotex-textlayer text")];
+    const runs = [...document.querySelectorAll("#gotex-pages text")];
     if (!runs.length) return null;
-    const card = document.querySelector("#gotex-textlayer svg").getBoundingClientRect();
+    const card = document.querySelector("#gotex-pages svg").getBoundingClientRect();
     let bad = 0;
     for (const r of runs) {
       const b = r.getBoundingClientRect();
@@ -128,7 +128,7 @@ const BOUNDARY_PHRASES = [
   // overlay is inert to the pointer, so the canvas still receives it.
   const linking = await page.evaluate(async () => {
     const before = gotexDebug().cursorLine;
-    const el = document.querySelector("#gotex-textlayer tspan");
+    const el = document.querySelector("#gotex-pages tspan");
     const b = el.getBoundingClientRect();
     const x = b.left + b.width / 2, y = b.top + b.height / 2;
     const target = document.elementFromPoint(x, y);

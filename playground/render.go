@@ -5,17 +5,18 @@ package playground
 
 import (
 	"image"
-	"image/color"
 	"sort"
 	"strconv"
+	"strings"
 
-	gfxsvg "github.com/go-gfx/gfx/svg"
 	engine "github.com/go-tex/engine"
 	"github.com/go-widgets/toolkit"
 )
 
-// rasterScale is how many device pixels the engine SVG's point is rasterized to.
-// 2.0 gives crisp glyph outlines without an unreasonably large buffer.
+// rasterScale is how many device pixels one of the engine SVG's points counts
+// for. Nothing is rasterised any more — the host draws the SVG — but the factor
+// stays, because it is what the render pane's page geometry, zoom percentages
+// and fit-width were calibrated against.
 const rasterScale = 2.0
 
 // lineBand is one source line's natural-pixel Y extent on a single rendered page.
@@ -36,38 +37,6 @@ type lineBand struct {
 // the PagedView is described by lineMaps[i].
 type pageLineMap struct {
 	bands []lineBand
-}
-
-// linesFromGroups rebuilds the go-tex-specific source-line→device-Y band map from
-// the shared rasteriser's per-<g> groups. The engine tags each source line's glyph
-// run as <g data-l="N">; the shared [gfxsvg] package reports every <g> with the
-// device-pixel bounds of everything it drew but assigns no meaning to any
-// attribute, so the data-l interpretation lives HERE (it is go-tex-specific). For
-// each group carrying a positive data-l, its bounds' [Min.Y, Max.Y) contributes to
-// that line's band; a line appearing in several groups is unioned on Y. Empty
-// groups (which drew nothing) and non-positive / unparsable data-l are skipped.
-func linesFromGroups(groups []gfxsvg.Group) map[int][2]int {
-	lines := map[int][2]int{}
-	for _, g := range groups {
-		if g.Bounds.Empty() {
-			continue
-		}
-		ln := atoiSafe(g.Attrs["data-l"])
-		if ln <= 0 {
-			continue
-		}
-		b := [2]int{g.Bounds.Min.Y, g.Bounds.Max.Y}
-		if cur, ok := lines[ln]; ok {
-			if cur[0] < b[0] {
-				b[0] = cur[0]
-			}
-			if cur[1] > b[1] {
-				b[1] = cur[1]
-			}
-		}
-		lines[ln] = b
-	}
-	return lines
 }
 
 // atoiSafe parses a non-negative integer, returning 0 on any error (an empty or
@@ -105,36 +74,38 @@ func makeLineMap(lines map[int][2]int) pageLineMap {
 	return pageLineMap{bands: bands}
 }
 
-// compileResult is the outcome of one compile+rasterize pass: the per-page
-// bitmaps (natural device size, fed straight to the render pane's
-// [toolkit.PagedView]), the per-page source-line maps (parallel to bitmaps, for
-// source↔render linking), the engine's logical page count, how many pages
-// actually rasterized, and either an error string or nil.
+// compileResult is the outcome of one compile: the per-page SVG the engine
+// produced, each page's natural size (what a bitmap of it would have measured),
+// the engine's logical page count, how many pages are drawable, and either an
+// error string or nil.
 type compileResult struct {
-	bitmaps    []*image.RGBA      // one natural-size RGBA per drawable page
-	lineMaps   []pageLineMap      // source-line Y-bands per drawn page, parallel to bitmaps
-	textLayers []string           // per drawn page, the searchable <text> lifted out of the SVG
+	svgs       []string           // one themed SVG per drawable page, for the host to render
+	sizes      []image.Point      // each page's natural size in device pixels, parallel to svgs
 	pages      int                // engine (logical) page count
-	drawnPages int                // pages actually rasterized
+	drawnPages int                // pages with a usable size
 	errText    string             // "" on success; a human message on a hard compile error
 	diag       engine.Diagnostics // undefined commands/environments, dropped math, alarms
 }
-
-// toColor converts a toolkit/painter RGBA to an image/color.RGBA (both are
-// straight-alpha 8-bit), the form gfxsvg.Options consumes.
-func toColor(c toolkit.RGBA) color.RGBA { return color.RGBA{R: c.R, G: c.G, B: c.B, A: c.A} }
 
 // compileFn is the engine entry point compileLaTeX calls, kept as a package var
 // so a test can substitute a stub to exercise the hard-error and
 // unrasterizable-page branches the tolerant real engine does not reach.
 var compileFn = engine.CompileToSVGPagesDiag
 
-// compileLaTeX runs the pure-Go TeX engine on src and rasterizes every SVG page
-// with the shared [gfxsvg] rasteriser themed from the given theme (paper =
-// Surface, ink = OnSurface) into a natural-size RGBA bitmap. The bitmaps are
-// handed to the render pane's [toolkit.PagedView], which owns all paging, zoom,
-// card decoration and scroll. It never panics on bad input: a hard compile error
-// yields a result whose errText is set and whose bitmap slice is nil.
+// compileLaTeX runs the pure-Go TeX engine on src and prepares each SVG page for
+// the HOST to render, themed from the given theme (paper = Surface, ink =
+// OnSurface). It does not rasterise: the render pane lays the pages out (paging,
+// zoom, card decoration, scroll) and the host draws the content over them.
+//
+// That is the whole point of the change. Rasterising in wasm was 70-75% of what
+// this app spent between a keystroke and a rendered page, and the browser draws
+// the same SVG 2.6x to 5.6x faster — measured in wasm against the browser it
+// runs in. The bitmaps also pinned the preview to one resolution and held 17.6 MB
+// of RGBA for a three-page document; an SVG in the DOM is crisp at any zoom and
+// carries its own selectable text.
+//
+// It never panics on bad input: a hard compile error yields a result whose
+// errText is set and whose page slices are nil.
 func compileLaTeX(src string, theme *toolkit.Theme) compileResult {
 	opt := engine.Options{Size: 11, Lenient: true}
 	pages, diag, err := compileFn([]byte(src), opt)
@@ -142,37 +113,17 @@ func compileLaTeX(src string, theme *toolkit.Theme) compileResult {
 		return compileResult{errText: err.Error()}
 	}
 
-	ropt := gfxsvg.Options{
-		Scale: rasterScale,
-		Ink:   toColor(theme.OnSurface),
-		Paper: toColor(theme.Surface),
-	}
-
-	var bitmaps []*image.RGBA
-	var lineMaps []pageLineMap
-	var textLayers []string
+	var svgs []string
+	var sizes []image.Point
 	for _, svg := range pages {
-		res, perr := gfxsvg.Rasterize(svg, ropt)
-		if perr != nil || res == nil || res.Image == nil || res.Image.W <= 0 || res.Image.H <= 0 {
-			continue
+		sz := naturalSize(svg)
+		if sz.X <= 0 || sz.Y <= 0 {
+			continue // a page whose size cannot be read draws nothing
 		}
-		// res.Image.Pix is a straight-alpha RGBA buffer of exactly W*H*4 bytes, the
-		// same layout the render pane feeds SetPages, so it wraps directly as an
-		// *image.RGBA with no copy.
-		bitmaps = append(bitmaps, &image.RGBA{
-			Pix:    res.Image.Pix,
-			Stride: res.Image.W * 4,
-			Rect:   image.Rect(0, 0, res.Image.W, res.Image.H),
-		})
-		// The <g data-l="N"> Y-bands, rebuilt from the shared rasteriser's group
-		// bounds and kept parallel to the bitmap so the click↔caret linking can map
-		// this page's natural pixels to source lines and back.
-		lineMaps = append(lineMaps, makeLineMap(linesFromGroups(res.Groups)))
-		// The same page as DOM-placeable text: the bitmap says how the page
-		// looks, this says what it says.
-		textLayers = append(textLayers, textOverlaySVG(svg))
+		svgs = append(svgs, themeSVG(svg, theme))
+		sizes = append(sizes, sz)
 	}
-	if len(bitmaps) == 0 {
+	if len(svgs) == 0 {
 		// A compile that produced no drawable page (e.g. an empty document):
 		// report it as a valid zero-page result rather than a blank crash.
 		return compileResult{
@@ -183,13 +134,64 @@ func compileLaTeX(src string, theme *toolkit.Theme) compileResult {
 	}
 
 	return compileResult{
-		bitmaps:    bitmaps,
-		lineMaps:   lineMaps,
-		textLayers: textLayers,
+		svgs:       svgs,
+		sizes:      sizes,
 		pages:      len(pages),
-		drawnPages: len(bitmaps),
+		drawnPages: len(svgs),
 		diag:       diag,
 	}
+}
+
+// naturalSize is the page's size in the DEVICE pixels a bitmap of it would have
+// had: the SVG's own point size times [rasterScale]. Keeping that factor is what
+// makes the change invisible to the layout — the render pane pages, zooms and
+// fits exactly as it did when the pixels were real.
+func naturalSize(svg string) image.Point {
+	w := ptAttr(svg, ` width="`)
+	h := ptAttr(svg, ` height="`)
+	return image.Point{X: int(w*rasterScale + 0.5), Y: int(h*rasterScale + 0.5)}
+}
+
+// ptAttr reads a "NNNpt" attribute off the SVG root. Zero when absent or
+// unparsable, which naturalSize reports as an undrawable page.
+func ptAttr(svg, attr string) float64 {
+	i := strings.Index(svg, attr)
+	if i < 0 {
+		return 0
+	}
+	rest := svg[i+len(attr):]
+	j := strings.IndexByte(rest, '"')
+	if j < 0 {
+		return 0
+	}
+	v, err := strconv.ParseFloat(strings.TrimSuffix(rest[:j], "pt"), 64)
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
+// themeSVG recolours a page for the app's theme, which is what the rasteriser
+// used to do through its Ink and Paper options. The engine paints a page on
+// white with black glyphs; on a dark scheme that would be a white sheet in a
+// dark window.
+//
+// The two substitutions cover everything the engine emits: the full-bleed page
+// rect is fill="white", and both the glyph group and the colour go-tex/math
+// bakes in are fill="black". Coloured text carries its own fill and is left
+// alone, as it was under the rasteriser.
+func themeSVG(svg string, theme *toolkit.Theme) string {
+	svg = strings.ReplaceAll(svg, `fill="white"`, `fill="`+cssColor(theme.Surface)+`"`)
+	return strings.ReplaceAll(svg, `fill="black"`, `fill="`+cssColor(theme.OnSurface)+`"`)
+}
+
+// cssColor renders a toolkit colour as #rrggbb.
+func cssColor(c toolkit.RGBA) string {
+	const hex = "0123456789abcdef"
+	return string([]byte{'#',
+		hex[c.R>>4], hex[c.R&0xF],
+		hex[c.G>>4], hex[c.G&0xF],
+		hex[c.B>>4], hex[c.B&0xF]})
 }
 
 // diagSummaryEmpty returns an explanatory message for a compile that yielded no
