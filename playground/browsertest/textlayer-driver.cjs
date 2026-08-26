@@ -28,9 +28,10 @@ const PHRASE = "office of the typesetter"; // crosses spaces AND an ffi ligature
 // formula between two words, a line break between two words, and two table
 // cells. Each of these read as one glued word before engine v0.169.0.
 const BOUNDARY_PHRASES = [
-  "The rest mass is exactly",  // across a formula
-  "alpha beta",                // across two table cells
-  "every word of it can be found", // across a line break
+  "The rest mass is E = mc^2 exactly", // across a formula, which speaks its source
+  "E = mc^2",                          // the formula itself
+  "alpha beta",                        // across two table cells
+  "every word of it can be found",     // across a source newline
 ];
 
 (async () => {
