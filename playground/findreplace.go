@@ -420,6 +420,35 @@ func (f *findReplace) handleClick(x, y int) bool {
 	return true
 }
 
+// handleDrag and handleRelease carry a title-bar drag through to the Dialog.
+//
+// [toolkit.Dialog] arms a drag on a press over the title strip, moves the panel
+// on each EventMouseDrag and lets go on EventMouseUp. handleClick delivered the
+// press and nothing delivered the rest, so the modal armed a drag it was never
+// told to continue — the title bar looked draggable and the panel never moved.
+//
+// The panel-local coordinates are recomputed against the panel's CURRENT bounds
+// on every tick, which is what makes a moving target work: the Dialog adds its
+// own origin back to reconstruct the absolute pointer position, and that is the
+// only thing it compares against where the pointer was last.
+func (f *findReplace) handleDrag(x, y int) {
+	if !f.shown {
+		return
+	}
+	panel := f.modal.Panel.Bounds()
+	f.modal.Panel.OnEvent(toolkit.Event{Kind: toolkit.EventMouseDrag, X: x - panel.X, Y: y - panel.Y})
+	f.s.dirty = true
+}
+
+func (f *findReplace) handleRelease(x, y int) {
+	if !f.shown {
+		return
+	}
+	panel := f.modal.Panel.Bounds()
+	f.modal.Panel.OnEvent(toolkit.Event{Kind: toolkit.EventMouseUp, X: x - panel.X, Y: y - panel.Y})
+	f.s.dirty = true
+}
+
 // focusQuery / focusReplace move the keyboard focus between the two text fields,
 // lighting the focused one's caret and muting the other.
 func (f *findReplace) focusQuery() {

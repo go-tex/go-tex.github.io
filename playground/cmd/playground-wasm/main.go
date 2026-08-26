@@ -496,6 +496,14 @@ func main() {
 		}
 	}))
 
+	// gotexToggleFindReplace opens or closes the find-and-replace modal, so a
+	// headless harness can reach it without synthesising the ⌘F chord.
+	js.Global().Set("gotexToggleFindReplace", js.FuncOf(func(js.Value, []js.Value) any {
+		open := state.ToggleFindReplace()
+		render()
+		return open
+	}))
+
 	// gotexSource returns the current editor buffer, so a headless harness can
 	// assert clipboard paste/cut changed the text.
 	js.Global().Set("gotexSource", js.FuncOf(func(js.Value, []js.Value) any {

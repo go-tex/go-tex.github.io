@@ -746,7 +746,34 @@ func (s *State) DebugRects() map[string][4]int {
 		"renderContent": rect(s.renderContentRect()),
 		"sourceTab":     s.EditorTabRect(tabSource),
 		"wysiwygTab":    s.EditorTabRect(tabWysiwyg),
+		// The find-and-replace panel and the title strip a drag must be started
+		// on. Zero rectangles while the modal is closed.
+		"findPanel": rect(s.findPanelRect()),
+		"findTitle": rect(s.findTitleRect()),
 	}
+}
+
+// findPanelRect is the find-and-replace panel's device rectangle, or the zero
+// rectangle when the modal is closed.
+func (s *State) findPanelRect() toolkit.Rect {
+	if s.fr == nil || !s.fr.shown {
+		return toolkit.Rect{}
+	}
+	return s.fr.modal.Panel.Bounds()
+}
+
+// findTitleRect is the panel's title strip: the band a drag must start on, left
+// of the close button. Zero while the modal is closed.
+func (s *State) findTitleRect() toolkit.Rect {
+	p := s.findPanelRect()
+	if p.W == 0 {
+		return toolkit.Rect{}
+	}
+	h := toolkit.Scaled(toolkit.DialogTitleH)
+	if h > p.H {
+		h = p.H
+	}
+	return toolkit.Rect{X: p.X, Y: p.Y, W: p.W - h, H: h}
 }
 
 // renderContentRect is the render pane area BELOW the PagedView's toolbar strip:
@@ -1163,6 +1190,16 @@ func (s *State) HandleClick(x, y int) bool {
 // divider and the scrollbar thumbs draggable (previously a no-op, so move/up
 // were discarded and no widget ever received EventMouseDrag).
 func (s *State) HandleMove(x, y int) bool {
+	// The find-and-replace modal is modal: while it is open it swallows every
+	// move, and while its title bar is held it IS the drag. This has to come
+	// FIRST — the hover and drag routes below would otherwise take the move and
+	// the panel would never follow the pointer.
+	if s.fr.shown {
+		if s.pressKind == pressFind {
+			s.fr.handleDrag(x, y)
+		}
+		return true
+	}
 	// An open Collaborate / Git panel is modal: route the move to it for button
 	// hover feedback regardless of whether a button is pressed.
 	if s.collab.open {
@@ -1214,6 +1251,14 @@ func (s *State) HandleMove(x, y int) bool {
 
 // HandleRelease ends a captured drag, delivering EventMouseUp to the target.
 func (s *State) HandleRelease(x, y int) bool {
+	// The find-and-replace modal gets its release: a title-bar drag ends on it,
+	// and without one the Dialog stays armed and the panel follows the pointer
+	// after the button is up.
+	if s.pressKind == pressFind {
+		s.fr.handleRelease(x, y)
+		s.pressKind = pressNone
+		return true
+	}
 	// A Collaborate / Git panel that captured the press gets the release even if
 	// the action closed it — the mouseup clears the pressed button faces.
 	if s.pressKind == pressCollab {
