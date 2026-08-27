@@ -8,10 +8,16 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	engine "github.com/go-tex/engine"
 	"github.com/go-widgets/toolkit"
 )
+
+// monoClock is the clock compileLaTeX times a run against, kept as a package var
+// so a test can substitute a deterministic one (time.Now itself is monotonic on
+// every platform this builds for, wasm included).
+var monoClock = time.Now
 
 // rasterScale is how many device pixels one of the engine SVG's points counts
 // for. Nothing is rasterised any more — the host draws the SVG — but the factor
@@ -85,6 +91,10 @@ type compileResult struct {
 	drawnPages int                // pages with a usable size
 	errText    string             // "" on success; a human message on a hard compile error
 	diag       engine.Diagnostics // undefined commands/environments, dropped math, alarms
+	elapsed    time.Duration      // wall time the engine run took (for the verbose Log)
+	srcBytes   int                // input size in bytes
+	srcLines   int                // input line count
+	outBytes   int                // total bytes of the drawable themed SVG (the "output size")
 }
 
 // compileFn is the engine entry point compileLaTeX calls, kept as a package var
@@ -108,20 +118,25 @@ var compileFn = engine.CompileToSVGPagesDiag
 // errText is set and whose page slices are nil.
 func compileLaTeX(src string, theme *toolkit.Theme, resolve func(string) ([]byte, bool)) compileResult {
 	opt := engine.Options{Size: 11, Lenient: true, Resolve: resolve}
+	start := monoClock()
 	pages, diag, err := compileFn([]byte(src), opt)
+	elapsed := monoClock().Sub(start)
 	if err != nil {
 		return compileResult{errText: err.Error()}
 	}
 
 	var svgs []string
 	var sizes []image.Point
+	outBytes := 0
 	for _, svg := range pages {
 		sz := naturalSize(svg)
 		if sz.X <= 0 || sz.Y <= 0 {
 			continue // a page whose size cannot be read draws nothing
 		}
-		svgs = append(svgs, themeSVG(svg, theme))
+		themed := themeSVG(svg, theme)
+		svgs = append(svgs, themed)
 		sizes = append(sizes, sz)
+		outBytes += len(themed)
 	}
 	if len(svgs) == 0 {
 		// A compile that produced no drawable page (e.g. an empty document):
@@ -139,7 +154,20 @@ func compileLaTeX(src string, theme *toolkit.Theme, resolve func(string) ([]byte
 		pages:      len(pages),
 		drawnPages: len(svgs),
 		diag:       diag,
+		elapsed:    elapsed,
+		srcBytes:   len(src),
+		srcLines:   lineCount(src),
+		outBytes:   outBytes,
 	}
+}
+
+// lineCount is the number of lines in src (0 for empty; one more than the newline
+// count otherwise, so a file with no trailing newline still counts its last line).
+func lineCount(src string) int {
+	if src == "" {
+		return 0
+	}
+	return strings.Count(src, "\n") + 1
 }
 
 // naturalSize is the page's size in the DEVICE pixels a bitmap of it would have
