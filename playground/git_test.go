@@ -39,10 +39,21 @@ type fakeGitBackend struct {
 
 	hold    bool
 	release func() // parked done, invoked by the test when hold is set
+
+	// onClone, when set, runs at the top of Clone — the moment a test can
+	// observe the state the app is in WHILE the operation is in flight.
+	onClone func()
 }
+
+// fakeGitBackend stands in for the worker-RPC backend, prewarm included, so the
+// paths that only run for a worker-backed clone are exercised.
+func (f *fakeGitBackend) Prewarm() {}
 
 func (f *fakeGitBackend) Clone(cfg gitConfig, done func([]string, error)) {
 	f.cloneCalls++
+	if f.onClone != nil {
+		f.onClone()
+	}
 	f.gotCfg = cfg
 	fire := func() {
 		if f.cloneErr != nil {

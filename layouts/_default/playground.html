@@ -78,7 +78,7 @@ body{display:flex;flex-direction:column;min-height:100vh;min-height:100dvh}
     <div id="pg-placeholder">
       <div class="pg-skel"><div></div><div></div></div>
       <div class="pg-load">
-        <div id="pg-msg">Downloading the WebAssembly engine…</div>
+        <div id="pg-msg">Downloading playground.wasm…</div>
         <div class="pg-track"><div class="pg-fill" id="pg-fill"></div></div>
         <div id="pg-pct">0%</div>
       </div>
@@ -156,7 +156,7 @@ body{display:flex;flex-direction:column;min-height:100vh;min-height:100dvh}
     var go=new Go();
     var boot=function(result){
       setProgress(1);
-      $("pg-msg").textContent="Starting the engine…";
+      $("pg-msg").textContent="playground.wasm downloaded — starting the engine…";
       go.run(result.instance);
       var t=setInterval(function(){
         if(globalThis.gotexPlaygroundReady){

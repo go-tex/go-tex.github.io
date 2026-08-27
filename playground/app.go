@@ -222,6 +222,13 @@ type State struct {
 	diag       engine.Diagnostics
 
 	// chrome heights (device pixels), recomputed each layout at the active scale.
+	// assetLoading names the wasm the app is fetching in the background, or is
+	// empty. The playground is interactive long before every asset has arrived —
+	// the git client is a separate 4.2 MB (gzip) binary that only downloads when
+	// a repository is opened — and a reader should be told what is still coming
+	// rather than left to wonder why a panel is not ready yet.
+	assetLoading string
+
 	// topZoneH / bottomZoneH are the two moved-in HTML bands' reserved heights (the
 	// bottom one grows with its wrapped prose); the toolbar + body + status sit
 	// between them.
@@ -1651,3 +1658,17 @@ func absInt(n int) int {
 	}
 	return n
 }
+
+// SetAssetLoading names the background asset currently downloading ("" clears
+// it). The topZone shows it in place of the ready line, so the reader can see
+// which wasm is still on its way.
+func (s *State) SetAssetLoading(name string) {
+	if s.assetLoading == name {
+		return
+	}
+	s.assetLoading = name
+	s.dirty = true
+}
+
+// AssetLoading is what the topZone is currently announcing (host introspection).
+func (s *State) AssetLoading() string { return s.assetLoading }

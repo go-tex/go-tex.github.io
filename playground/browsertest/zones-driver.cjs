@@ -92,6 +92,24 @@ const puppeteer = require("puppeteer-core");
     );
 
     // Pull the band geometry from the app.
+    // The band announces a background asset while it downloads — the git client
+    // is fetched as the app opens its sample repository — and returns to the
+    // ready line when that settles. Wait for the steady state rather than
+    // sampling into the middle of it.
+    //
+    // This wait is also the regression guard for a worker that never comes up.
+    // THIS harness has no git-worker.js, so the Worker fails to load, and until
+    // that was handled the transport posted into a void and blocked forever:
+    // every git operation hung, the announcement never cleared, and the band
+    // said "loading git-worker.wasm …" for as long as the page was open. If that
+    // returns, this wait times out and the two topZone checks below fail.
+    await page
+      .waitForFunction(() => /engine ready/.test(globalThis.gotexZones().topStatus), {
+        timeout: 60000,
+        polling: 100,
+      })
+      .catch(() => {});
+
     const z = await page.evaluate(() => globalThis.gotexZones());
     check(/engine ready/.test(z.topStatus), "topZone status reads 'engine ready' (" + z.topStatus + ")");
     check(Array.isArray(z.links) && z.links.length === 3, "bottomZone laid out 3 links (got " + (z.links && z.links.length) + ")");

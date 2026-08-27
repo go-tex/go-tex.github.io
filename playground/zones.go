@@ -37,6 +37,20 @@ var readyDotColor = toolkit.RGBA{R: 0x43, G: 0xA0, B: 0x47, A: 0xFF}
 // separator reads correctly under either face.
 const topZoneStatus = "engine ready - pure-Go go-widgets canvas"
 
+// loadingDotColor is the amber shown while a background asset is still
+// downloading, so "ready" and "still fetching" are told apart at a glance
+// without reading the line.
+var loadingDotColor = toolkit.RGBA{R: 0xE8, G: 0xA3, B: 0x3D, A: 0xFF}
+
+// statusLine is what the band says: the asset still downloading, if any, else
+// that the engine is ready.
+func (z *topZone) statusLine() (string, toolkit.RGBA) {
+	if a := z.s.assetLoading; a != "" {
+		return "loading " + a + " …", loadingDotColor
+	}
+	return topZoneStatus, readyDotColor
+}
+
 // engineURL / brandURL are the two external repositories the bottomZone links to;
 // the third link (Back to go-tex) targets the deployment's own site root, which is
 // dynamic (State.siteRoot), so it is read at layout time rather than a constant.
@@ -96,7 +110,9 @@ func (z *topZone) draw(p painter.Painter, theme *toolkit.Theme) {
 
 	pad := toolkit.Scaled(10)
 	d := toolkit.Scaled(8)
-	z.dot.Fill = readyDotColor
+	line, dot := z.statusLine()
+	z.lbl.Text().Set(line)
+	z.dot.Fill = dot
 	z.dot.SetBounds(toolkit.Rect{X: r.X + pad, Y: r.Y + (r.H-d)/2, W: d, H: d})
 	z.dot.Draw(p, theme)
 
@@ -383,7 +399,10 @@ func (z *bottomZone) handleClick(x, y int) bool {
 // wasm shell surfaces them through the gotexZones() hook.
 
 // TopZoneStatusText is the topZone's status line.
-func (s *State) TopZoneStatusText() string { return topZoneStatus }
+func (s *State) TopZoneStatusText() string {
+	line, _ := s.topZone.statusLine()
+	return line
+}
 
 // TopZoneRect / BottomZoneRect are the two bands' device-pixel [x,y,w,h] bounds.
 func (s *State) TopZoneRect() [4]int {

@@ -76,9 +76,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     }, repoURL);
 
     // The Worker must fetch git-worker.wasm — the separate-binary, on-demand proof.
-    await page.waitForRequest((r) => r.url().includes("git-worker.wasm"), {
-      timeout: OP_TIMEOUT,
-    });
+    // Wait on the RECORDED request, not on a fresh one. The worker is spawned
+    // when the app opens its sample repository at boot, which is before this
+    // line runs — waitForRequest would sit here waiting for an event that has
+    // already happened. The page.on("request") listener above is registered
+    // before page.goto, so it catches it whenever it comes.
+    for (let i = 0; i < OP_TIMEOUT / 100 && !workerWasmURL; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    if (!workerWasmURL) throw new Error("the Web Worker never requested git-worker.wasm");
     console.log("Web Worker requested git-worker.wasm: " + workerWasmURL);
 
     // Clone → the seeded main.tex must load into the SOURCE editor.
