@@ -6,9 +6,7 @@
 package main
 
 import (
-	"fmt"
 	"strconv"
-	"strings"
 	"syscall/js"
 
 	"github.com/go-tex/go-tex.github.io/playground"
@@ -92,7 +90,7 @@ func newDOMRenderHost(doc js.Value) *domRenderHost {
 // the device pixel ratio: the placements arrive in the surface's device pixels
 // and the page lays out in CSS pixels. measured is called with each page's
 // freshly measured source-line bands whenever a page's content changed.
-func (h *domRenderHost) sync(renders []playground.PageRender, dpr float64, measured func(page int, lines, tops, bots []int), overlays []toolkit.Rect) {
+func (h *domRenderHost) sync(renders []playground.PageRender, dpr float64, measured func(page int, lines, tops, bots []int), overlays []playground.CanvasOverlay) {
 	if h == nil {
 		return
 	}
@@ -168,33 +166,20 @@ func (h *domRenderHost) sync(renders []playground.PageRender, dpr float64, measu
 // journey is drawn: it leaves a wedge cut out of the page. Measured — the
 // polygon(evenodd, …) form notches the left edge, the path(evenodd, "M…Z M…Z")
 // form does not.
-func (h *domRenderHost) punchOut(overlays []toolkit.Rect, dpr float64) {
+func (h *domRenderHost) punchOut(overlays []playground.CanvasOverlay, dpr float64) {
 	st := h.root.Get("style")
-	if len(overlays) == 0 {
+	clip := playground.CanvasClipPath(overlays, dpr)
+	if clip == "" {
 		if h.clip != "" {
 			st.Set("clipPath", "none")
 			h.clip = ""
 		}
 		return
 	}
-	// The container's own box, then one subpath per window.
-	var b strings.Builder
-	b.WriteString(`path(evenodd, "M0 0H100000V100000H0Z`)
-	for _, r := range overlays {
-		fmt.Fprintf(&b, " M%s %sH%sV%sH%sZ",
-			px(r.X, dpr), px(r.Y, dpr), px(r.X+r.W, dpr), px(r.Y+r.H, dpr), px(r.X, dpr))
-	}
-	b.WriteString(`")`)
-	if clip := b.String(); clip != h.clip {
+	if clip != h.clip {
 		st.Set("clipPath", clip)
 		h.clip = clip
 	}
-}
-
-// px is a device length as the plain CSS-pixel number a path() takes (no unit:
-// a path's coordinates are in the element's own user space, which is CSS px).
-func px(v int, dpr float64) string {
-	return strconv.FormatFloat(float64(v)/dpr, 'f', 1, 64)
 }
 
 // measureLineBands reads every <g data-l="N"> element's box out of a rendered

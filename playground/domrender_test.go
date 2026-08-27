@@ -149,13 +149,55 @@ func TestCanvasOverlaysReportsOpenWindows(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("the find modal must be reported, got %+v", got)
 	}
-	if got[0] != s.fr.modal.Panel.Bounds() {
-		t.Errorf("overlay %+v is not the panel %+v", got[0], s.fr.modal.Panel.Bounds())
+	if got[0].Rect != s.fr.modal.Panel.Bounds() {
+		t.Errorf("overlay %+v is not the panel %+v", got[0].Rect, s.fr.modal.Panel.Bounds())
+	}
+	// The find modal is a rounded toolkit.Dialog: its overlay must carry that
+	// corner radius so the punched hole follows the rounding (else black notches).
+	if got[0].Radius != toolkit.Scaled(toolkit.DialogRadius) {
+		t.Errorf("find modal overlay radius = %d, want the Dialog radius %d", got[0].Radius, toolkit.Scaled(toolkit.DialogRadius))
 	}
 
 	s.ToggleFindReplace()
 	if got := s.CanvasOverlays(); len(got) != 0 {
 		t.Errorf("closing the modal must clear it: %+v", got)
+	}
+}
+
+// TestCanvasClipPath checks the punch-out path: empty overlays yield "" (the
+// host sets clip-path:none); a square overlay punches a plain rectangle; a
+// rounded one punches arcs so the page is cut to the window's rounded shape and
+// no black notch remains behind a rounded corner.
+func TestCanvasClipPath(t *testing.T) {
+	if got := CanvasClipPath(nil, 1); got != "" {
+		t.Errorf("no overlays should yield an empty path, got %q", got)
+	}
+	square := CanvasClipPath([]CanvasOverlay{{Rect: toolkit.Rect{X: 10, Y: 20, W: 100, H: 60}, Radius: 0}}, 1)
+	if !strings.HasPrefix(square, `path(evenodd, "M0 0H100000V100000H0Z`) {
+		t.Errorf("path must open with the container box, got %q", square)
+	}
+	if strings.Contains(square, "A") {
+		t.Errorf("a square overlay must not draw arcs, got %q", square)
+	}
+	rounded := CanvasClipPath([]CanvasOverlay{{Rect: toolkit.Rect{X: 10, Y: 20, W: 100, H: 60}, Radius: 12}}, 1)
+	if !strings.Contains(rounded, "A") {
+		t.Errorf("a rounded overlay must draw corner arcs, got %q", rounded)
+	}
+	// dpr halves the CSS coordinates: a device x of 10 becomes 5.0.
+	half := CanvasClipPath([]CanvasOverlay{{Rect: toolkit.Rect{X: 10, Y: 20, W: 100, H: 60}, Radius: 0}}, 2)
+	if !strings.Contains(half, "M5.0 10.0") {
+		t.Errorf("dpr=2 should halve coordinates, got %q", half)
+	}
+}
+
+// TestWriteOverlaySubpathClampsRadius checks a radius larger than half the box is
+// clamped, so a small window still yields a valid rounded rectangle.
+func TestWriteOverlaySubpathClampsRadius(t *testing.T) {
+	var b strings.Builder
+	writeOverlaySubpath(&b, CanvasOverlay{Rect: toolkit.Rect{X: 0, Y: 0, W: 20, H: 10}, Radius: 100}, 1)
+	// Radius clamps to 5 (half the 10px height): arcs use "A5.0 5.0".
+	if !strings.Contains(b.String(), "A5.0 5.0") {
+		t.Errorf("radius should clamp to half the shorter side, got %q", b.String())
 	}
 }
 
@@ -167,5 +209,25 @@ func TestCanvasOverlaysSkipsEmptyRects(t *testing.T) {
 	s.git.panel = toolkit.Rect{} // open but not laid out yet
 	if got := s.CanvasOverlays(); len(got) != 0 {
 		t.Errorf("an unlaid panel has nothing to punch out: %+v", got)
+	}
+}
+
+// TestCanvasOverlaysSquarePanels checks the Git and Collaborate panels are
+// reported with radius 0: they are square-cornered Backdrops, so their hole is a
+// plain rectangle (no rounding, no black-notch problem to solve).
+func TestCanvasOverlaysSquarePanels(t *testing.T) {
+	s := newTestState(t, false)
+	s.git.open = true
+	s.git.panel = toolkit.Rect{X: 5, Y: 5, W: 200, H: 120}
+	s.collab.open = true
+	s.collab.panel = toolkit.Rect{X: 20, Y: 20, W: 180, H: 100}
+	got := s.CanvasOverlays()
+	if len(got) != 2 {
+		t.Fatalf("both square panels must be reported, got %+v", got)
+	}
+	for _, o := range got {
+		if o.Radius != 0 {
+			t.Errorf("a square Backdrop panel must have radius 0, got %+v", o)
+		}
 	}
 }
