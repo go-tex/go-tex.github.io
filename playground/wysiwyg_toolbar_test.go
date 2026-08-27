@@ -16,6 +16,10 @@ import (
 // all fall inside the strip.
 func TestToolbarVisibilityAndLayout(t *testing.T) {
 	s := newWysState(t)
+	// This exercises the toolbar's own geometry: close the workspace sidebar
+	// (open by default) so the editor pane keeps the full width the 12-button
+	// strip was sized against, isolating the toolbar from the sidebar column.
+	s.SetSidebarOpen(false)
 	s.SetSource(wysSnippet)
 
 	// Source tab: the toolbar is hidden and its rect is zero-height.
@@ -100,6 +104,10 @@ func TestToolbarVisibilityAndLayout(t *testing.T) {
 // bullet-list button wraps it in a list.
 func TestToolbarClickDrivesEditor(t *testing.T) {
 	s := newWysState(t)
+	// Close the workspace sidebar (open by default) so the editor pane holds the
+	// full width the 12-button toolbar is laid out against — otherwise the last
+	// buttons fall outside the narrowed strip and the pointer misses them.
+	s.SetSidebarOpen(false)
 	s.SetSource("\\section{Title}\n\nPlain paragraph.\n")
 	s.SetEditorTab(tabWysiwyg)
 	if !s.WysiwygActive() {

@@ -23,12 +23,14 @@ import (
 // the viewport, exactly like the Hugo playground page — and proves, only through
 // the gotexSidebar hook + real canvas pixels:
 //
-//   - before opening, the canvas fills the viewport height below the header AND
-//     its full width (the #46 layout the sidebar must not break);
-//   - opening the sidebar reserves a sane left column while the canvas CSS box is
-//     unchanged (the column paints INSIDE the canvas) and the editor body shrinks
-//     to its right;
-//   - the column actually paints a non-background band on the left.
+//   - on load, the canvas fills the viewport height below the header AND its full
+//     width (the #46 layout the sidebar must not break);
+//   - the sidebar is OPEN on load — no click needed: it reserves a sane left
+//     column while the canvas CSS box is unchanged (the column paints INSIDE the
+//     canvas) and the editor body sits to its right;
+//   - the column actually paints a non-background band on the left on load;
+//   - the toggle still closes it: the column drops to zero width and the editor
+//     body reclaims the full canvas width, with the canvas box unchanged.
 //
 // It reuses the browser/puppeteer discovery + wasm-MIME helpers from
 // collab_browser_test.go, and the zones host page. It needs a browser, which CI
@@ -97,13 +99,16 @@ func TestSidebarLayoutBrowser(t *testing.T) {
 	for _, want := range []string{
 		"canvas fills the height below the header",
 		"canvas fills the full viewport width",
-		"sidebar reports open",
+		"sidebar is open on load",
 		"sidebar column is anchored to the left",
 		"sidebar column has a sane device width",
 		"sidebar does not swallow the whole canvas",
-		"editor body shrank to the right of the column",
-		"opening the sidebar did not resize the canvas box",
-		"sidebar column painted a non-background band on the left",
+		"editor body sits to the right of the column",
+		"sidebar column painted a non-background band on the left on load",
+		"toggle closes the sidebar",
+		"closed sidebar reserves no column",
+		"editor body widened when the sidebar closed",
+		"toggling the sidebar did not resize the canvas box",
 		"RESULT ",
 		`"ok":true`,
 	} {

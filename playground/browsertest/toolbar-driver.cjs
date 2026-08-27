@@ -67,6 +67,12 @@ const BTN_BULLET = 10;
       return;
     }
 
+    // This proof exercises the 12-button formatting toolbar, which needs the full
+    // editor-pane width. The app now boots with the workspace sidebar open, which
+    // narrows that pane; close it first (the editor+render split rebalances to the
+    // reclaimed width) so the toolbar is measured at its designed width.
+    await page.evaluate(() => globalThis.gotexSidebar(false));
+
     const debug = () => page.evaluate(() => globalThis.gotexWysiwygDebug());
     const rects = () => page.evaluate(() => globalThis.gotexRichToolbarRects());
 

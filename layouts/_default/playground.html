@@ -41,11 +41,22 @@ body{display:flex;flex-direction:column;min-height:100vh;min-height:100dvh}
    <svg> inside it does not inherit an inline-element baseline gap. */
 #gotex-pages svg{display:block}
 .stage.ready #gotex-canvas{opacity:1}
-/* HTML loading placeholder: a two-pane skeleton with a real progress bar driven
-   by the streamed wasm download; hidden once the app signals it is ready. */
+/* HTML loading placeholder: a workspace-shaped skeleton (sidebar | editor |
+   render) with a real progress bar driven by the streamed wasm download; hidden
+   once the app signals it is ready.
+   The app boots with the Git workspace sidebar OPEN (playground/sidebar.go,
+   sidebarW = 264 logical px). The toolkit renders at devicePixelRatio, so one
+   logical pixel is one CSS pixel — the sidebar is 264 CSS px wide. The skeleton's
+   first column matches that width so the three shimmer bands preview the loaded
+   sidebar|editor|render layout and the canvas reveal does not jump. */
 #pg-placeholder{position:absolute;inset:0;display:flex;flex-direction:column;gap:14px;padding:16px;background:var(--card)}
 .stage.ready #pg-placeholder{display:none}
-.pg-skel{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:14px;min-height:0}
+/* First column = the workspace sidebar (264px, matching sidebarW); the remaining
+   space splits evenly between the editor and the render pane, as the app lays it
+   out. On a viewport too narrow to seat all three, the sidebar band is dropped so
+   the editor/render preview keeps a sensible size. */
+.pg-skel{flex:1;display:grid;grid-template-columns:264px 1fr 1fr;gap:14px;min-height:0}
+@media (max-width:720px){.pg-skel{grid-template-columns:1fr 1fr}.pg-skel-side{display:none}}
 .pg-skel>div{border:1px solid var(--line);border-radius:12px;
   background:linear-gradient(100deg,var(--bg) 30%,var(--line) 50%,var(--bg) 70%);
   background-size:200% 100%;animation:pgshimmer 1.4s linear infinite}
@@ -76,7 +87,7 @@ body{display:flex;flex-direction:column;min-height:100vh;min-height:100dvh}
   <div class="stage">
     <canvas id="gotex-canvas"></canvas>
     <div id="pg-placeholder">
-      <div class="pg-skel"><div></div><div></div></div>
+      <div class="pg-skel"><div class="pg-skel-side"></div><div></div><div></div></div>
       <div class="pg-load">
         <div id="pg-msg">Downloading playground.wasm…</div>
         <div class="pg-track"><div class="pg-fill" id="pg-fill"></div></div>

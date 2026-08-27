@@ -370,8 +370,9 @@ func NewState(w, h int, dark bool) *State {
 	s.collab = newCollabView(s) // Collaborate affordance (see collab.go)
 	s.git = newGitView(s)       // Remote-git affordance (see git.go)
 	s.sidebar = newSidebar(s)   // Git workspace sidebar, left column (see sidebar.go)
-	// The toolbar toggle for the workspace sidebar. Closed by default so the
-	// canvas keeps its full width until the user opens it.
+	// The toolbar toggle for the workspace sidebar. OPEN by default (see
+	// newSidebar) so the workspace is present on load; this toggle lets the user
+	// close it to reclaim the full canvas width.
 	s.sidebarBtn = toolkit.NewButton("Workspace", func() {
 		s.sidebar.toggle()
 		s.layout()

@@ -296,6 +296,11 @@ func TestFindScrimAndCloseButton(t *testing.T) {
 // on an action button (Next) fires it via the Dialog.
 func TestFindClickRouting(t *testing.T) {
 	s := newTestState(t, false)
+	// This drives the find modal's four action buttons by their pixel centres, so
+	// the panel must keep its full design width. Close the workspace sidebar (open
+	// by default): with it open at this test viewport the editor pane is narrow
+	// enough that positionPanel clamps the panel below the width its buttons need.
+	s.SetSidebarOpen(false)
 	setFindDoc(s)
 	if s.fr.handleClick(10, 10) {
 		t.Fatalf("closed modal consumed a click")

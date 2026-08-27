@@ -6,15 +6,20 @@
 // playground page), and proves, only through the gotex* hooks + real canvas
 // pixels:
 //
-//   1. Before opening, the canvas fills the viewport height below the header AND
-//      its full width (the #46 full-width/full-height layout the sidebar must not
-//      break — the regression that a synthetic page missed).
-//   2. Opening the sidebar (gotexSidebar(true)) reserves a left column of a sane
-//      width while the canvas STILL fills the viewport (the sidebar is painted
-//      inside the canvas, so the CSS box is unchanged) and the editor+render body
-//      shrinks to the right of the column (editorW < canvasW).
-//   3. The sidebar column actually paints: a vertical band of non-background
-//      pixels on the left of the canvas, at the column's device rect.
+//   1. On load the canvas fills the viewport height below the header AND its full
+//      width (the #46 full-width/full-height layout the sidebar must not break —
+//      the regression that a synthetic page missed).
+//   2. The sidebar is OPEN on load — no click needed: gotexSidebar() (no arg)
+//      reports open, reserves a left column of a sane width while the canvas
+//      fills the viewport (the sidebar is painted inside the canvas, so the CSS
+//      box is unchanged), and the editor+render body sits to the right of the
+//      column (editorW < canvasW).
+//   3. The sidebar column actually paints on load: a vertical band of
+//      non-background pixels on the left of the canvas, at the column's device
+//      rect — the workspace is present without any interaction.
+//   4. The toggle still works: gotexSidebar(false) closes the column (width 0)
+//      and the editor+render body reclaims the full canvas width, and the canvas
+//      CSS box is unchanged throughout.
 //
 // CommonJS so require() finds puppeteer-core via NODE_PATH. Env: PAGE_URL,
 // CHROME, SCREENSHOT (optional).
@@ -80,7 +85,7 @@ const puppeteer = require("puppeteer-core");
         };
       });
 
-    // 1. Full-height AND full-width BEFORE the sidebar is opened.
+    // 1. Full-height AND full-width on load.
     const g0 = await geom();
     const avail = g0.viewH - g0.headerBottom;
     check(g0.top >= g0.headerBottom - 1, "canvas sits below the header (top " + g0.top.toFixed(0) + ")");
@@ -91,24 +96,22 @@ const puppeteer = require("puppeteer-core");
     // catches — a near-full width is the guard, not pixel-exact edges).
     check(g0.width >= g0.viewW - 40, "canvas fills the full viewport width (" + g0.width.toFixed(0) + " of " + g0.viewW + ")");
 
-    // 2. Open the sidebar; it reserves a left column while the canvas box is
-    //    unchanged (the column is painted INSIDE the canvas) and the editor
-    //    shrinks to the right of it.
-    const sb = await page.evaluate(() => globalThis.gotexSidebar(true));
+    // 2. The sidebar is OPEN on load — read it with NO argument (no click / no
+    //    open call): the workspace column is already reserved on the left while
+    //    the canvas box still fills the viewport (the column is painted INSIDE the
+    //    canvas), and the editor+render body sits to its right.
+    const sb = await page.evaluate(() => globalThis.gotexSidebar());
     const r = sb.rect; // [x, y, w, h] device px
-    check(sb.open === true, "sidebar reports open");
+    check(sb.open === true, "sidebar is open on load");
     check(r[0] === 0, "sidebar column is anchored to the left (x=" + r[0] + ")");
     check(r[2] >= 200, "sidebar column has a sane device width (" + r[2] + " px)");
     check(r[2] < sb.canvasW, "sidebar does not swallow the whole canvas (" + r[2] + " < " + sb.canvasW + ")");
     check(r[3] >= sb.canvasH * 0.4, "sidebar column fills most of the body height (" + r[3] + " of " + sb.canvasH + ")");
-    check(sb.editorW > 0 && sb.editorW < sb.canvasW - r[2] + 8, "editor body shrank to the right of the column (editorW " + sb.editorW + ", canvasW " + sb.canvasW + ")");
+    check(sb.editorW > 0 && sb.editorW < sb.canvasW - r[2] + 8, "editor body sits to the right of the column (editorW " + sb.editorW + ", canvasW " + sb.canvasW + ")");
 
-    // The canvas CSS box is UNCHANGED by opening the sidebar (still full-bleed).
-    const g1 = await geom();
-    check(Math.abs(g1.width - g0.width) < 1 && Math.abs(g1.height - g0.height) < 1, "opening the sidebar did not resize the canvas box (" + g1.width.toFixed(0) + "x" + g1.height.toFixed(0) + ")");
-
-    // 3. The column actually paints: sample the canvas backing pixels inside the
-    //    sidebar rect and confirm a non-background vertical band on the left.
+    // 3. The column actually paints on load: sample the canvas backing pixels
+    //    inside the sidebar rect and confirm a non-background vertical band on the
+    //    left — the workspace is present without any interaction.
     const readImage = (rr) =>
       page.evaluate((q) => {
         const c = document.getElementById("gotex-canvas");
@@ -129,7 +132,21 @@ const puppeteer = require("puppeteer-core");
         break;
       }
     }
-    check(painted, "sidebar column painted a non-background band on the left");
+    check(painted, "sidebar column painted a non-background band on the left on load");
+
+    // 4. The toggle still closes it: gotexSidebar(false) drops the column (width
+    //    0) and the editor+render body reclaims the full canvas width.
+    const sc = await page.evaluate(() => globalThis.gotexSidebar(false));
+    check(sc.open === false, "toggle closes the sidebar");
+    check(sc.rect[2] === 0 && sc.width === 0, "closed sidebar reserves no column (width " + sc.width + ")");
+    check(sc.editorW > sb.editorW, "editor body widened when the sidebar closed (" + sb.editorW + " -> " + sc.editorW + ")");
+
+    // The canvas CSS box is UNCHANGED by the sidebar toggling (still full-bleed).
+    const g1 = await geom();
+    check(Math.abs(g1.width - g0.width) < 1 && Math.abs(g1.height - g0.height) < 1, "toggling the sidebar did not resize the canvas box (" + g1.width.toFixed(0) + "x" + g1.height.toFixed(0) + ")");
+
+    // Re-open so the screenshot captures the on-load workspace look.
+    await page.evaluate(() => globalThis.gotexSidebar(true));
 
     if (screenshot) {
       try {
