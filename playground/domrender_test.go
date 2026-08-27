@@ -16,7 +16,7 @@ import (
 // render pane's paging, zoom and fit-width behaving exactly as before.
 func TestCompileYieldsSizedPages(t *testing.T) {
 	res := compileLaTeX(`\documentclass{article}\begin{document}Findable words here.\end{document}`,
-		toolkit.DefaultLight())
+		toolkit.DefaultLight(), nil)
 	if len(res.svgs) == 0 {
 		t.Fatalf("no page compiled: %q", res.errText)
 	}

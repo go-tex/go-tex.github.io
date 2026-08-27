@@ -106,8 +106,8 @@ var compileFn = engine.CompileToSVGPagesDiag
 //
 // It never panics on bad input: a hard compile error yields a result whose
 // errText is set and whose page slices are nil.
-func compileLaTeX(src string, theme *toolkit.Theme) compileResult {
-	opt := engine.Options{Size: 11, Lenient: true}
+func compileLaTeX(src string, theme *toolkit.Theme, resolve func(string) ([]byte, bool)) compileResult {
+	opt := engine.Options{Size: 11, Lenient: true, Resolve: resolve}
 	pages, diag, err := compileFn([]byte(src), opt)
 	if err != nil {
 		return compileResult{errText: err.Error()}

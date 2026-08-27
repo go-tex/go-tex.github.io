@@ -12,7 +12,7 @@ import (
 )
 
 func TestCompileLaTeXSampleProducesContent(t *testing.T) {
-	res := compileLaTeX(SampleLaTeX, toolkit.DefaultLight())
+	res := compileLaTeX(SampleLaTeX, toolkit.DefaultLight(), nil)
 	if res.errText != "" {
 		t.Fatalf("sample compile error: %s", res.errText)
 	}
@@ -36,7 +36,7 @@ func TestCompileLaTeXSampleProducesContent(t *testing.T) {
 func TestCompileLaTeXHardError(t *testing.T) {
 	// An undefined control sequence in STRICT mode would error, but compileLaTeX
 	// uses lenient mode; force a genuine structural error instead.
-	res := compileLaTeX(`\documentclass{article}\begin{document}\end{document}\end{document}`, toolkit.DefaultLight())
+	res := compileLaTeX(`\documentclass{article}\begin{document}\end{document}\end{document}`, toolkit.DefaultLight(), nil)
 	// Whatever the engine decides, the function must not panic and must return a
 	// coherent result (either an error string or drawable pages).
 	if res.errText == "" && res.svgs == nil && res.pages == 0 {

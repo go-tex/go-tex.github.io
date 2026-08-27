@@ -904,7 +904,7 @@ func (s *State) applyLeftSplit() {
 // render pane's PagedView, updates the diagnostics Log and the status bar. A
 // hard error (or an empty document) yields no bitmaps, which clears the viewer.
 func (s *State) Compile() {
-	res := compileLaTeX(s.git.compileSource(), s.theme)
+	res := compileLaTeX(s.git.compileSource(), s.theme, s.git.resolveWorkspace())
 	s.errText = res.errText
 	s.pages = res.pages
 	s.drawnPages = res.drawnPages

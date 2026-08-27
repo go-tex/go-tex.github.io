@@ -71,7 +71,7 @@ func TestMakeLineMapOrdersAndTieBreaks(t *testing.T) {
 // once it has laid the pages out (see State.SetLineBands). What the compile must
 // still guarantee is a page per drawable page, each with a size to lay out in.
 func TestCompileProducesParallelPages(t *testing.T) {
-	res := compileLaTeX(SampleLaTeX, toolkit.DefaultLight())
+	res := compileLaTeX(SampleLaTeX, toolkit.DefaultLight(), nil)
 	if len(res.sizes) != len(res.svgs) {
 		t.Fatalf("sizes(%d) not parallel to svgs(%d)", len(res.sizes), len(res.svgs))
 	}
