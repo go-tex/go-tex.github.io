@@ -130,16 +130,26 @@ func withClonedSidebar(t *testing.T) (*State, *fakeGitBackend) {
 
 func TestSidebarToggleAndWidth(t *testing.T) {
 	s := newTestState(t, false)
-	if s.SidebarOpen() || s.SidebarWidth() != 0 {
-		t.Fatalf("sidebar should start closed with zero width")
-	}
-	s.ToggleSidebar()
+	// OPEN by default: the workspace column reserves its width on load and the
+	// editor+render body sits to the right of it.
 	if !s.SidebarOpen() || s.SidebarWidth() != toolkit.Scaled(sidebarW) {
+		t.Fatalf("sidebar should start open with reserved width: open=%v width=%d", s.SidebarOpen(), s.SidebarWidth())
+	}
+	if s.paned.Bounds().X != toolkit.Scaled(sidebarW) {
+		t.Fatalf("paned did not start right of the open sidebar: X=%d", s.paned.Bounds().X)
+	}
+	// The toggle closes it, reclaiming the full canvas width.
+	s.ToggleSidebar()
+	if s.SidebarOpen() || s.SidebarWidth() != 0 {
 		t.Fatalf("after toggle: open=%v width=%d", s.SidebarOpen(), s.SidebarWidth())
 	}
-	// The editor+render body shrank to the right of the reserved column.
-	if s.paned.Bounds().X != toolkit.Scaled(sidebarW) {
-		t.Fatalf("paned did not shift right of the sidebar: X=%d", s.paned.Bounds().X)
+	if s.paned.Bounds().X != 0 {
+		t.Fatalf("paned did not reclaim full width when sidebar closed: X=%d", s.paned.Bounds().X)
+	}
+	// A second toggle re-opens it.
+	s.ToggleSidebar()
+	if !s.SidebarOpen() || s.SidebarWidth() != toolkit.Scaled(sidebarW) {
+		t.Fatalf("second toggle should re-open: open=%v width=%d", s.SidebarOpen(), s.SidebarWidth())
 	}
 	// SetSidebarOpen(true) is idempotent (no second toggle); (false) closes.
 	s.SetSidebarOpen(true)
@@ -156,23 +166,69 @@ func TestSidebarToggleAndWidth(t *testing.T) {
 	}
 }
 
+// TestSidebarToggleRebalancesDivider proves that closing the sidebar hands the
+// reclaimed column width to the editor+render split proportionally (the editor
+// keeps its share of the now-wider Paned) rather than the render pane swallowing
+// the whole delta, and that re-opening restores the earlier split.
+func TestSidebarToggleRebalancesDivider(t *testing.T) {
+	s := newTestState(t, false)
+	// Lay out once with the sidebar open so the divider holds its open-state
+	// position before we toggle.
+	s.Draw(make([]byte, testW*testH*4))
+	if !s.SidebarOpen() {
+		t.Fatal("precondition: the sidebar should be open")
+	}
+	openEditorW := s.editor.Bounds().W
+	openPos := s.paned.Position().Get()
+	if openEditorW <= 0 || openPos <= 0 {
+		t.Fatalf("open-state editor width/divider not laid out: w=%d pos=%d", openEditorW, openPos)
+	}
+
+	// Close: the Paned gains the sidebar's width and the divider is rescaled up,
+	// so the editor pane grows rather than staying pinned at its narrow width.
+	s.SetSidebarOpen(false)
+	closedPos := s.paned.Position().Get()
+	if closedPos <= openPos {
+		t.Fatalf("divider did not grow when the sidebar closed: %d -> %d", openPos, closedPos)
+	}
+	if s.editor.Bounds().W <= openEditorW {
+		t.Fatalf("editor did not widen when the sidebar closed: %d -> %d", openEditorW, s.editor.Bounds().W)
+	}
+	// The ratio is preserved (within rounding): pos/panedW is stable across the
+	// toggle. Open paned width = w - sidebarW; closed = w.
+	openPanedW := testW - toolkit.Scaled(sidebarW)
+	if got, want := closedPos*openPanedW, openPos*testW; absInt(got-want) > openPanedW {
+		t.Fatalf("divider ratio not preserved across close: closed=%d open=%d", closedPos, openPos)
+	}
+
+	// Re-open: the divider is rescaled back down to (about) its original spot.
+	s.SetSidebarOpen(true)
+	if got := s.paned.Position().Get(); absInt(got-openPos) > 1 {
+		t.Fatalf("re-opening did not restore the divider: %d, want ~%d", got, openPos)
+	}
+}
+
 func TestSidebarToolbarButtonToggles(t *testing.T) {
 	s := newTestState(t, false)
+	// The sidebar starts OPEN (workspace present on load).
+	if !s.SidebarOpen() {
+		t.Fatal("sidebar should start open by default")
+	}
 	// Click the toolbar "Workspace" toggle through the real input path: the
-	// button's callback opens the sidebar and re-lays out.
+	// button's callback closes the sidebar and re-lays out.
 	r := s.sidebarBtn.Bounds()
 	if !s.HandleClick(r.X+r.W/2, r.Y+r.H/2) {
 		t.Fatal("toolbar sidebar toggle click should be consumed")
 	}
 	s.HandleRelease(r.X+r.W/2, r.Y+r.H/2)
-	if !s.SidebarOpen() {
-		t.Fatal("clicking the toolbar toggle should open the sidebar")
+	if s.SidebarOpen() {
+		t.Fatal("clicking the toolbar toggle should close the sidebar")
 	}
-	// A second click closes it again.
+	// A second click re-opens it.
 	s.HandleClick(r.X+r.W/2, r.Y+r.H/2)
 	s.HandleRelease(r.X+r.W/2, r.Y+r.H/2)
-	if s.SidebarOpen() {
-		t.Fatal("a second toolbar toggle click should close the sidebar")
+	if !s.SidebarOpen() {
+		t.Fatal("a second toolbar toggle click should re-open the sidebar")
 	}
 }
 
@@ -458,7 +514,9 @@ func TestSidebarDrawGuards(t *testing.T) {
 	before := make([]byte, len(buf))
 	copy(before, buf)
 	p := painter.NewPixelPainter(buf, 100, 100)
-	// Closed → draw is a no-op (returns before touching the buffer).
+	// Closed → draw is a no-op (returns before touching the buffer). The sidebar
+	// opens by default, so close it first to exercise the closed guard.
+	s.sidebar.open = false
 	s.sidebar.draw(p, s.theme)
 	if !bytesEqual(buf, before) {
 		t.Fatal("a closed sidebar should paint nothing")

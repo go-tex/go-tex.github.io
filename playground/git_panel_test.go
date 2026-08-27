@@ -288,9 +288,12 @@ func TestBootCloneOpensTheWorkspace(t *testing.T) {
 	s, f, _ := withGit(t)
 	f.files = []string{"article.tex", "gotex-demo.sty"}
 	f.fileData["article.tex"] = `\documentclass{article}\begin{document}cloned\end{document}`
-	if s.SidebarOpen() {
-		t.Fatal("the workspace must start closed")
+	// The workspace is present from load (open by default); a reader may still
+	// have closed it while the clone was in flight, so BootClone reveals it again.
+	if !s.SidebarOpen() {
+		t.Fatal("the workspace must start open by default")
 	}
+	s.SetSidebarOpen(false)
 
 	var gotErr error
 	s.BootClone(func(err error) { gotErr = err })
@@ -347,9 +350,10 @@ func TestExplicitCloneStillLoads(t *testing.T) {
 // already open.
 func TestBootCloneIsInertWhenItShouldBe(t *testing.T) {
 	bare := newTestState(t, false) // no backend attached
+	bare.SetSidebarOpen(false)     // reader closed it; BootClone must not touch it
 	bare.BootClone(nil)
 	if bare.SidebarOpen() {
-		t.Error("no backend: the workspace must stay closed")
+		t.Error("no backend: BootClone must not force the workspace open")
 	}
 
 	s, f, _ := withGit(t)

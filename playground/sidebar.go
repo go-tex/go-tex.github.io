@@ -138,10 +138,11 @@ type sidebar struct {
 	btns     map[sidebarRole]*toolkit.Button
 }
 
-// newSidebar builds the affordance for s (closed by default, so the canvas keeps
-// its full width until the user opens the sidebar from the toolbar).
+// newSidebar builds the affordance for s (OPEN by default, so the workspace is
+// present on load — showing its EmptyState + Clone… until a repo is cloned). The
+// toolbar toggle still lets the user close it to reclaim the full canvas width.
 func newSidebar(s *State) *sidebar {
-	return &sidebar{s: s, nodePaths: map[*toolkit.TreeTableNode]string{}}
+	return &sidebar{s: s, open: true, nodePaths: map[*toolkit.TreeTableNode]string{}}
 }
 
 // ensureWidgets lazily builds the persistent widgets. Called at the top of every
@@ -179,9 +180,21 @@ func (b *sidebar) btn(role sidebarRole, label string) *toolkit.Button {
 // hasRepo reports whether a repository is open (a clone has succeeded).
 func (b *sidebar) hasRepo() bool { return b.s.git.backend.HasRepo() }
 
-// toggle flips the sidebar open/closed and repaints.
+// toggle flips the sidebar open/closed and repaints. Opening or closing the
+// column changes the width left for the editor+render Paned by exactly the
+// sidebar width; the divider is rescaled proportionally so the editor keeps its
+// SHARE of the newly available width — otherwise the render pane would swallow
+// the whole delta when the sidebar closes (leaving the editor stuck at the
+// narrow, sidebar-open width) and yield it all back when it re-opens. The
+// caller re-lays out after this; here we only adjust the absolute divider so
+// that relayout preserves the ratio.
 func (b *sidebar) toggle() {
+	oldW := b.s.paned.Bounds().W
 	b.open = !b.open
+	if newW := b.s.w - b.width(); oldW > 0 && newW > 0 {
+		pos := b.s.paned.Position()
+		pos.Set(pos.Get() * newW / oldW)
+	}
 	b.s.git.refresh()
 }
 
