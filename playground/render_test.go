@@ -80,3 +80,12 @@ func TestFillRGBA(t *testing.T) {
 		t.Fatalf("fillRGBA wrong: %v", buf[:4])
 	}
 }
+
+// TestPreviewDefaultsToFitWidth: the render pane opens in sticky fit-to-width so
+// a page fills the pane instead of sitting at a fixed 100% in empty margins.
+func TestPreviewDefaultsToFitWidth(t *testing.T) {
+	s := newTestState(t, false)
+	if !s.renderView.FitWidth() {
+		t.Fatal("the previewer should default to sticky fit-to-width")
+	}
+}

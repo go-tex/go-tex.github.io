@@ -330,6 +330,10 @@ func NewState(w, h int, dark bool) *State {
 	})
 
 	s.renderView = toolkit.NewPagedView(nil)
+	// Fill the pane by default: a page at the fixed 100% left most of the render
+	// pane's width empty. Sticky fit-to-width scales each page to the pane and
+	// re-fits on resize / a new document, until the reader zooms manually.
+	s.renderView.SetFitWidth(true)
 	s.logView = toolkit.NewLogView()
 	s.logView.MaxEntries = 500
 	s.rightPane = newRightPane(s.renderView, s.logView)
