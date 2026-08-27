@@ -90,8 +90,8 @@ func multiPageDoc() string {
 }
 
 func TestCompileLaTeXStacksAllPages(t *testing.T) {
-	single := compileLaTeX(SampleLaTeX, toolkit.DefaultLight())
-	multi := compileLaTeX(multiPageDoc(), toolkit.DefaultLight())
+	single := compileLaTeX(SampleLaTeX, toolkit.DefaultLight(), nil)
+	multi := compileLaTeX(multiPageDoc(), toolkit.DefaultLight(), nil)
 	if multi.drawnPages < 2 {
 		t.Fatalf("multi-page doc rasterized %d pages, want >=2", multi.drawnPages)
 	}

@@ -25,7 +25,7 @@ func TestCompileLaTeXHardErrorBranch(t *testing.T) {
 			return nil, engine.Diagnostics{}, errors.New("boom")
 		},
 		func() {
-			res := compileLaTeX("anything", toolkit.DefaultLight())
+			res := compileLaTeX("anything", toolkit.DefaultLight(), nil)
 			if res.errText != "boom" {
 				t.Fatalf("errText = %q, want boom", res.errText)
 			}
@@ -44,7 +44,7 @@ func TestCompileLaTeXUnsizablePages(t *testing.T) {
 			return []string{"not an svg", "also not svg"}, engine.Diagnostics{}, nil
 		},
 		func() {
-			res := compileLaTeX("anything", toolkit.DefaultLight())
+			res := compileLaTeX("anything", toolkit.DefaultLight(), nil)
 			if res.svgs != nil {
 				t.Fatalf("unsizable pages should yield no drawable page")
 			}

@@ -1254,6 +1254,37 @@ func (v *gitView) dispatch(role gitRole, arg int) {
 	v.refresh()
 }
 
+// resolveWorkspace answers the engine's request for a class, package or \input
+// file out of the OPEN WORKSPACE, so a document can load a .sty that sits beside
+// it in the repository.
+//
+// Without it the engine sees only its embedded set and the document's own
+// \usepackage silently does nothing: every command that package defined becomes
+// undefined, and — because an undefined command swallows its argument — the text
+// those commands wrapped disappears from the page. The sample article lost 112
+// characters that way, and the status bar counted three issues, before the
+// workspace was wired here.
+//
+// nil when no repository is open, which is the engine's "disk and embedded set
+// only" default.
+func (v *gitView) resolveWorkspace() func(string) ([]byte, bool) {
+	if v.backend == nil || !v.backend.HasRepo() {
+		return nil
+	}
+	return func(name string) ([]byte, bool) {
+		// The engine asks with the extension already on ("gotex-demo.sty"); look
+		// for it at the repository root and anywhere else it may sit.
+		for _, p := range v.files {
+			if p == name || strings.HasSuffix(p, "/"+name) {
+				if b, err := v.backend.ReadFile(p); err == nil {
+					return b, true
+				}
+			}
+		}
+		return nil, false
+	}
+}
+
 // compileSource is the LaTeX the render pane compiles: the primary .tex's LIVE
 // buffer when a repo with a primary .tex is open — its editor content when that
 // file is active, else its stashed buffer — so the render tracks the primary's

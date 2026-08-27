@@ -451,3 +451,83 @@ func TestTopZoneNamesTheAssetItIsFetching(t *testing.T) {
 		t.Errorf("AssetLoading not cleared: %q", s.AssetLoading())
 	}
 }
+
+// A document can load a .sty that sits beside it in the repository. Without the
+// workspace resolver the engine sees only its embedded set, \usepackage silently
+// does nothing, and every command that package defined becomes undefined — which
+// swallows its argument, so the text those commands wrapped disappears from the
+// page. The sample article lost 112 characters that way.
+func TestWorkspaceResolvesItsOwnPackage(t *testing.T) {
+	s, f, _ := withGit(t)
+	f.files = []string{"paper.tex", "local-demo.sty"}
+	f.fileData["local-demo.sty"] = `\ProvidesPackage{local-demo}` + "\n" +
+		`\newcommand{\keyword}[1]{\textbf{#1}}`
+	f.fileData["paper.tex"] = `\documentclass{article}\usepackage{local-demo}` +
+		`\begin{document}a \keyword{resolved} word\end{document}`
+	s.GitClone(nil)
+
+	res := compileLaTeX(s.git.compileSource(), s.theme, s.git.resolveWorkspace())
+	if n := len(res.diag.Skipped); n != 0 {
+		t.Errorf("the package did not resolve: %v", res.diag.Skipped)
+	}
+	// The wrapped word must survive: an undefined \keyword eats its argument.
+	var text strings.Builder
+	for _, svg := range res.svgs {
+		text.WriteString(svg)
+	}
+	if !strings.Contains(text.String(), "<text") {
+		t.Fatal("no text layer to read")
+	}
+	if got := textOf(res); !strings.Contains(got, "resolved") {
+		t.Errorf("the argument of a resolved command was swallowed: %q", got)
+	}
+}
+
+// With no repository open there is no resolver, which is the engine's own
+// "disk and embedded set only" default.
+func TestNoWorkspaceNoResolver(t *testing.T) {
+	s := newTestState(t, false)
+	if s.git.resolveWorkspace() != nil {
+		t.Error("no repository is open: there is nothing to resolve from")
+	}
+}
+
+// textOf reads what a compiled result's pages say, out of their text layers.
+func textOf(res compileResult) string {
+	var out strings.Builder
+	for _, svg := range res.svgs {
+		rest := svg
+		for {
+			i := strings.Index(rest, "<text")
+			if i < 0 {
+				break
+			}
+			rest = rest[i:]
+			j := strings.Index(rest, "</text>")
+			if j < 0 {
+				break
+			}
+			out.WriteString(dropTags(rest[:j]))
+			rest = rest[j+len("</text>"):]
+		}
+	}
+	return out.String()
+}
+
+// dropTags leaves the character data between an SVG fragment's tags.
+func dropTags(s string) string {
+	var out strings.Builder
+	for {
+		i := strings.IndexByte(s, '<')
+		if i < 0 {
+			out.WriteString(s)
+			return out.String()
+		}
+		out.WriteString(s[:i])
+		j := strings.IndexByte(s[i:], '>')
+		if j < 0 {
+			return out.String()
+		}
+		s = s[i+j+1:]
+	}
+}
