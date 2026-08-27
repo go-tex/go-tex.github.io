@@ -88,7 +88,10 @@ func TestRenderDragRoutedToPagedView(t *testing.T) {
 func TestWheelFlipsPageInPaginatedMode(t *testing.T) {
 	s := newTestState(t, false)
 	// Deterministic short pages (each fits the pane) so a single wheel notch flips
-	// at the page edge rather than scrolling within a tall page.
+	// at the page edge rather than scrolling within a tall page. Fit-to-width is
+	// off here so the pages stay their short natural size: this exercises the
+	// edge-flip router, not the fit behaviour (which would scale them tall).
+	s.renderView.SetFitWidth(false)
 	s.renderView.SetPages(testBitmaps(6))
 	s.renderView.Mode().Set(toolkit.PagedPaginated)
 	if s.RenderCurrentPage() != 1 {
