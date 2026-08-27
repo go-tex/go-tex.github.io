@@ -510,6 +510,18 @@ func (b *sidebar) draw(p painter.Painter, theme *toolkit.Theme) {
 	b.header.Draw(p, theme)
 
 	if !b.hasRepo() {
+		// An empty workspace after a FAILED boot clone is not the same thing as
+		// one nobody asked for, and it looks identical. Say which it is, here —
+		// beside what is missing — rather than in the global status band, where
+		// it would sit for as long as the page is open and crowd out the line
+		// that says the engine is ready.
+		if n := b.s.BootNotice(); n != "" {
+			b.empty.Message().Set("Sample documents unavailable")
+			b.empty.Caption().Set(n)
+		} else {
+			b.empty.Message().Set("No repository open")
+			b.empty.Caption().Set("Clone one to browse its files here")
+		}
 		b.empty.Draw(p, theme)
 		b.drawButtons(p, theme)
 		return
