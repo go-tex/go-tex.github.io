@@ -100,6 +100,11 @@ func TestRenderIsSearchableInABrowser(t *testing.T) {
 		"pointer-events         : none",
 		"outside the card: 0",
 		"element under a glyph  : canvas",
+		// The page overlay must carry a hole while a canvas window is open, and
+		// none once it closes.
+		"page overlay clip-path : path(evenodd,",
+		"subpaths: 2",
+		"clip after closing     : none",
 		"RESULT ",
 		`"ok":true`,
 	} {

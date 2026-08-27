@@ -85,9 +85,15 @@ func main() {
 
 	dark := detectDark(doc)
 	state := playground.NewState(dw, dh, dark)
-	// Stamp the running binary's identity into the status bar (git short SHA + UTC
-	// build time, injected by the deploy workflow's -ldflags). Set once, at init.
-	state.SetBuildInfo(buildVersion, buildTime)
+	// Stamp the running binary's identity into the status bar: the git short SHA,
+	// and the build time in the READER'S OWN timezone.
+	//
+	// The deploy injects UTC through -ldflags, which is the right thing to bake
+	// into a binary; showing it raw is not. The Log beside it already stamps
+	// entries in the browser's locale, so the window carried two timezones with
+	// nothing saying so — enough to make a build eight minutes old look two hours
+	// stale.
+	state.SetBuildInfo(buildVersion, localBuildTime(buildTime))
 	curDPR := d
 
 	// Stamp each compile's Log entries with the viewer's local wall-clock time,
@@ -144,7 +150,7 @@ func main() {
 		state.Draw(local)
 		js.CopyBytesToJS(dst, local)
 		ctx.Call("putImageData", imageData, 0, 0)
-		pageHost.sync(state.PageRenders(), curDPR, state.SetLineBands)
+		pageHost.sync(state.PageRenders(), curDPR, state.SetLineBands, state.CanvasOverlays())
 	}
 
 	// Live collaborative editing (WebRTC, server-less copy-paste signalling): the
@@ -878,4 +884,29 @@ func mustInt(v js.Value) int {
 		return v.Int()
 	}
 	return 1
+}
+
+// localBuildTime renders a "2006-01-02 15:04 UTC" stamp in the reader's own
+// timezone and locale. Anything it cannot parse is returned unchanged — a local
+// `go build` leaves "unknown" there, and a wrong guess would be worse than the
+// honest original.
+func localBuildTime(utc string) string {
+	if utc == "" || utc == "unknown" {
+		return utc
+	}
+	// Date.parse wants a form it recognises: "2026-08-27 13:23 UTC" becomes
+	// "2026-08-27T13:23Z".
+	iso := strings.Replace(strings.TrimSuffix(utc, " UTC"), " ", "T", 1) + "Z"
+	d := js.Global().Get("Date").New(iso)
+	if t := d.Call("getTime"); t.Type() != js.TypeNumber || js.Global().Get("isNaN").Invoke(t).Bool() {
+		return utc
+	}
+	local := d.Call("toLocaleString", js.Undefined(), map[string]any{
+		"year": "numeric", "month": "2-digit", "day": "2-digit",
+		"hour": "2-digit", "minute": "2-digit",
+	})
+	if local.Type() != js.TypeString || local.String() == "" {
+		return utc
+	}
+	return local.String()
 }

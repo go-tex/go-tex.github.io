@@ -131,3 +131,41 @@ func TestPageRendersFollowsTheTab(t *testing.T) {
 		t.Errorf("the Log tab shows no pages, got %d", len(got))
 	}
 }
+
+// A window the canvas paints must be punched out of the DOM page overlay: a DOM
+// element is unconditionally above a <canvas> sibling, so a dialog painted into
+// the canvas cannot come forward over a rendered page. Dragging the find modal
+// onto the render pane sliced it off at the page's edge until this existed.
+func TestCanvasOverlaysReportsOpenWindows(t *testing.T) {
+	s := newTestState(t, false)
+	if got := s.CanvasOverlays(); len(got) != 0 {
+		t.Fatalf("nothing is open: %+v", got)
+	}
+
+	s.ToggleFindReplace()
+	buf := make([]byte, testW*testH*4)
+	s.Draw(buf) // lay the panel out
+	got := s.CanvasOverlays()
+	if len(got) != 1 {
+		t.Fatalf("the find modal must be reported, got %+v", got)
+	}
+	if got[0] != s.fr.modal.Panel.Bounds() {
+		t.Errorf("overlay %+v is not the panel %+v", got[0], s.fr.modal.Panel.Bounds())
+	}
+
+	s.ToggleFindReplace()
+	if got := s.CanvasOverlays(); len(got) != 0 {
+		t.Errorf("closing the modal must clear it: %+v", got)
+	}
+}
+
+// A zero-area window is not reported: punching a hole of no size is nothing but
+// a longer clip-path.
+func TestCanvasOverlaysSkipsEmptyRects(t *testing.T) {
+	s := newTestState(t, false)
+	s.git.open = true
+	s.git.panel = toolkit.Rect{} // open but not laid out yet
+	if got := s.CanvasOverlays(); len(got) != 0 {
+		t.Errorf("an unlaid panel has nothing to punch out: %+v", got)
+	}
+}
