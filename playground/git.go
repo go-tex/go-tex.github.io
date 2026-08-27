@@ -178,6 +178,25 @@ type gitView struct {
 	backend gitBackend
 	repaint func() // host repaint hook; nil in tests
 
+	// bootBuffer is the document the editor held when a BOOT clone started. The
+	// clone loads the repository's primary .tex into the editor, which would
+	// throw away whatever the reader had typed while the network was busy — so
+	// on a boot clone the load happens only if the buffer is still exactly this.
+	// Empty outside a boot clone, where an explicit Clone always loads.
+	bootBuffer string
+
+	// cloneGen counts clone attempts so a superseded one cannot act on its
+	// result, and bootInFlight says whether the running one is the speculative
+	// boot clone.
+	//
+	// A boot clone must never keep the reader from opening the repository they
+	// actually asked for, so an explicit clone supersedes it and a late result
+	// from it is dropped. Two EXPLICIT clones are a different matter — a
+	// double-click on Clone — and the second is still refused, which is the
+	// guard that was there before any of this.
+	cloneGen     int
+	bootInFlight bool
+
 	open  bool
 	focus gitField
 
@@ -218,11 +237,10 @@ type gitView struct {
 	log      []GitCommitInfo
 
 	// geometry, recomputed by layout() before every draw and hit-test.
-	launcher toolkit.Rect
-	panel    toolkit.Rect
-	buttons  []gitItem
-	labels   []gitLabel
-	boxes    []gitFieldBox
+	panel   toolkit.Rect
+	buttons []gitItem
+	labels  []gitLabel
+	boxes   []gitFieldBox
 
 	// Persistent toolkit widgets the panel is built from — created once and re-used
 	// every frame so a Button keeps its pressed / hover face between the mousedown
@@ -230,12 +248,11 @@ type gitView struct {
 	// caret. The panel draws + routes events through these instead of hand-painting
 	// rectangles and text. Buttons are keyed by role+arg (the file-picker has one
 	// per .tex file); fields by their gitField.
-	launcherBtn *toolkit.Button
-	scrim       *toolkit.Backdrop
-	card        *toolkit.Backdrop
-	btns        map[string]*toolkit.Button
-	entries     map[gitField]*toolkit.Entry
-	labelPool   []*toolkit.Label
+	scrim     *toolkit.Backdrop
+	card      *toolkit.Backdrop
+	btns      map[string]*toolkit.Button
+	entries   map[gitField]*toolkit.Entry
+	labelPool []*toolkit.Label
 }
 
 // gitItem is one clickable button in the panel; role drives dispatch and arg
@@ -281,7 +298,7 @@ func newGitView(s *State) *gitView {
 	return &gitView{
 		s:       s,
 		backend: nopGitBackend{},
-		url:     mvvm.NewObservable(""),
+		url:     mvvm.NewObservable(DefaultRemoteURL),
 		branch:  mvvm.NewObservable(gitDefaultBranch),
 		token:   mvvm.NewObservable(""),
 		author:  mvvm.NewObservable(""),
@@ -366,17 +383,43 @@ var (
 // GitClone clones the configured remote into memory and loads its primary .tex
 // into the source editor. done (optional) receives the error; the panel passes
 // nil, the headless proof passes a handler.
-func (s *State) GitClone(done func(err error)) {
+func (s *State) GitClone(done func(err error)) { s.gitClone(false, done) }
+
+// gitClone runs a clone. boot marks the speculative one the application starts
+// with (see [State.BootClone]): it stands aside for anything explicit, while an
+// explicit clone SUPERSEDES whatever is in flight — a reader who asks for a
+// repository must not be told to wait for one they never asked for.
+func (s *State) gitClone(boot bool, done func(err error)) {
 	v := s.git
-	if v.busy.Get() {
-		return
+	if v.busy.Get() && (boot || !v.bootInFlight) {
+		return // a boot clone stands aside; an explicit one only supersedes a boot
 	}
+	v.cloneGen++
+	gen := v.cloneGen
+	v.bootInFlight = boot
 	v.busy.Set(true)
+	// The git client is a separate binary — 4.2 MB gzip of go-git — that only
+	// downloads when a repository is opened. Name it while it is on its way: the
+	// playground is already interactive and typesetting, and a reader watching a
+	// workspace that has not filled yet deserves to know what is still coming
+	// rather than to guess.
+	if _, worker := v.backend.(gitPrewarmer); worker {
+		s.SetAssetLoading("git-worker.wasm")
+	}
 	v.errMsg.Set("")
 	v.notice.Set("")
 	v.refresh()
 	v.backend.Clone(v.config(), func(files []string, err error) {
+		if gen != v.cloneGen {
+			// Superseded: another clone started while this one was in flight, and
+			// acting now would overwrite what it opened.
+			if done != nil {
+				done(err)
+			}
+			return
+		}
 		v.busy.Set(false)
+		s.SetAssetLoading("")
 		if err != nil {
 			v.errMsg.Set(gitErrorMessage(err))
 		} else {
@@ -387,9 +430,16 @@ func (s *State) GitClone(done func(err error)) {
 			v.primaryPath = primaryTeX(files)
 			v.log = v.backend.Log(gitLogLimit)
 			v.refreshStatus()
-			if v.primaryPath != "" {
+			typedMeanwhile := v.bootBuffer != "" && s.Source() != v.bootBuffer
+			v.bootBuffer = ""
+			switch {
+			case typedMeanwhile:
+				// The reader started writing while the clone was in flight. Their
+				// text wins; the workspace still fills with the repository.
+				v.notice.Set("Cloned — kept what you were writing.")
+			case v.primaryPath != "":
 				v.loadFresh(v.primaryPath)
-			} else {
+			default:
 				v.loaded.Set("")
 				v.notice.Set("Cloned — no .tex file to open.")
 			}
@@ -417,6 +467,7 @@ func (s *State) GitPull(done func(err error)) {
 	v.refresh()
 	v.backend.Pull(func(err error) {
 		v.busy.Set(false)
+		s.SetAssetLoading("")
 		if err != nil {
 			v.errMsg.Set(gitErrorMessage(err))
 		} else {
@@ -585,6 +636,7 @@ func (s *State) GitPush(done func(err error)) {
 	v.refresh()
 	v.backend.Push(func(err error) {
 		v.busy.Set(false)
+		s.SetAssetLoading("")
 		if err != nil {
 			v.errMsg.Set(gitErrorMessage(err))
 		} else {
@@ -872,10 +924,20 @@ func (s *State) GitLog() []GitCommitInfo { return s.git.log }
 
 // --- the panel: layout, draw, input ------------------------------------------
 
-// gitPanelW / gitLauncherW are the panel + launcher logical sizes.
+// DefaultRemoteURL is the repository the playground opens with: the go-tex
+// sample documents, on the org's own Forgejo.
+//
+// It has to be that host and not GitHub. A clone from a browser is an ordinary
+// fetch, so the server must send the CORS headers for this origin, and GitHub
+// does not: reaching a GitHub repository from here needs a proxy, and the one
+// this app was written against answers nothing. The Forgejo does send them —
+// access-control-allow-origin: https://go-tex.github.io on the git endpoints —
+// so the clone works with no intermediary at all.
+const DefaultRemoteURL = "https://sources.mesocentre.plateau-de-saclay.net/go-tex/examples.git"
+
+// gitPanelW is the panel's logical width.
 const (
-	gitPanelW    = 420
-	gitLauncherW = 64
+	gitPanelW = 420
 )
 
 // layout recomputes the launcher rect and, when open, the panel geometry and its
@@ -883,15 +945,7 @@ const (
 func (v *gitView) layout() {
 	pad := toolkit.Scaled(8)
 	bh := toolkit.Scaled(26)
-	// Launcher pill: just left of the Collaborate launcher in the toolbar row.
-	lw := toolkit.Scaled(gitLauncherW)
 	gap := toolkit.Scaled(6)
-	collabW := toolkit.Scaled(collabLauncherW)
-	v.launcher = toolkit.Rect{X: v.s.w - collabW - pad - lw - gap, Y: v.s.topZoneH + toolkit.Scaled(4), W: lw, H: v.s.toolbarH - 2*toolkit.Scaled(4)}
-	if v.s.toolbarH == 0 { // before the host's first layout
-		v.launcher.H = bh
-	}
-
 	v.buttons = v.buttons[:0]
 	v.labels = v.labels[:0]
 	v.boxes = v.boxes[:0]
@@ -1015,10 +1069,9 @@ func shortHash(h string) string {
 // ensureWidgets lazily builds the persistent toolkit widgets the panel is drawn
 // from and routes events through. Called at the top of every draw / input path.
 func (v *gitView) ensureWidgets() {
-	if v.launcherBtn != nil {
+	if v.scrim != nil {
 		return
 	}
-	v.launcherBtn = toolkit.NewButton("Git", func() { v.openPanel(); v.refresh() })
 	v.scrim = &toolkit.Backdrop{Fill: toolkit.RGBA{A: 0x66}, Interactive: true}
 	v.card = &toolkit.Backdrop{}
 	v.btns = map[string]*toolkit.Button{}
@@ -1073,10 +1126,6 @@ func (v *gitView) draw(p painter.Painter, theme *toolkit.Theme) {
 	v.layout()
 	v.ensureWidgets()
 
-	v.launcherBtn.SetBounds(v.launcher)
-	v.launcherBtn.Selected().Set(v.open)
-	v.launcherBtn.Draw(p, theme)
-
 	if !v.open {
 		return
 	}
@@ -1128,12 +1177,7 @@ func (v *gitView) handleClick(x, y int) bool {
 	v.layout()
 	v.ensureWidgets()
 	if !v.open {
-		v.launcherBtn.SetBounds(v.launcher)
-		if v.launcherBtn.HitTest(x, y) {
-			v.launcherBtn.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - v.launcher.X, Y: y - v.launcher.Y})
-			return true
-		}
-		return false
+		return false // no launcher: the workspace sidebar's Clone opens this panel
 	}
 	// Focus a text field.
 	for _, b := range v.boxes {
@@ -1174,12 +1218,11 @@ func (v *gitView) handleMove(x, y int) {
 	v.s.dirty = true
 }
 
-// handleRelease ends a press: the launcher and every panel button clear their
-// pressed face on the mouseup, so a depress is momentary. Called whenever this
-// view captured the preceding press (even if the action closed the panel).
+// handleRelease ends a press: every panel button clears its pressed face on the
+// mouseup, so a depress is momentary. Called whenever this view captured the
+// preceding press (even if the action closed the panel).
 func (v *gitView) handleRelease(x, y int) {
 	v.ensureWidgets()
-	v.launcherBtn.OnEvent(toolkit.Event{Kind: toolkit.EventMouseUp, X: x, Y: y})
 	for _, b := range v.btns {
 		b.OnEvent(toolkit.Event{Kind: toolkit.EventMouseUp, X: x, Y: y})
 	}
@@ -1307,3 +1350,40 @@ func (nopGitBackend) HasRepo() bool                   { return false }
 
 // errNoBrowserGit explains why the no-op backend never clones.
 var errNoBrowserGit = errors.New("git: remote git needs a browser")
+
+// BootClone opens [DefaultRemoteURL] in the workspace as the application
+// starts, and shows the workspace sidebar once it lands.
+//
+// It does NOT block the start. The app comes up on its built-in document
+// immediately and the repository arrives when the network delivers it, so a
+// slow or unreachable Forgejo costs a reader nothing but the samples — where
+// waiting for the clone would have made every start as slow as the worst
+// network, and a failed one leave a blank window.
+//
+// A reader who begins typing before the clone lands keeps what they wrote: the
+// buffer at boot is remembered and the repository's primary .tex is only loaded
+// if it is still untouched.
+//
+// It is a no-op with no backend (a headless test), with a repository already
+// open, or when a clone is already in flight.
+func (s *State) BootClone(done func(err error)) {
+	v := s.git
+	if v.backend == nil || v.busy.Get() || v.backend.HasRepo() {
+		if done != nil {
+			done(nil)
+		}
+		return
+	}
+	v.url.Set(DefaultRemoteURL)
+	v.bootBuffer = s.Source()
+	s.gitClone(true, func(err error) {
+		if err == nil {
+			s.sidebar.open = true
+			s.layout()
+			s.dirty = true
+		}
+		if done != nil {
+			done(err)
+		}
+	})
+}

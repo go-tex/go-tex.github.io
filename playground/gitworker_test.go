@@ -314,14 +314,13 @@ func TestOpenPanelPrewarmsWorkerBackend(t *testing.T) {
 		t.Fatalf("opening the panel should prewarm the worker: open=%v spawns=%d", s.GitActive(), tr.spawnCount())
 	}
 
-	// A launcher click (through the app hook) also opens + prewarms.
+	// Opening from the workspace sidebar also opens + prewarms.
 	s2 := newTestState(t, false)
 	tr2 := &fakeTransport{}
 	s2.git.attach(newWorkerGitBackend(tr2), func() {})
-	s2.git.layout()
-	lb := s2.git.launcher
-	if !s2.HandleClick(lb.X+lb.W/2, lb.Y+lb.H/2) || tr2.spawnCount() == 0 {
-		t.Fatalf("launcher click should prewarm the worker: spawns=%d", tr2.spawnCount())
+	s2.sidebar.dispatch(sbRoleClone)
+	if !s2.GitActive() || tr2.spawnCount() == 0 {
+		t.Fatalf("opening from the workspace should prewarm the worker: spawns=%d", tr2.spawnCount())
 	}
 }
 

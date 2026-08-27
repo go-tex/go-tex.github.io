@@ -54,6 +54,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       }
     });
 
+    // Record the Worker's request for git-worker.wasm BEFORE the page loads: the
+    // worker is spawned when the app opens its sample repository at boot, so a
+    // listener attached afterwards would miss it.
+    let workerWasmSeen = false;
+    page.on("request", (r) => {
+      if (r.url().includes("git-worker.wasm")) workerWasmSeen = true;
+    });
+
     await page.goto(url, { waitUntil: "load", timeout: 30000 });
     await page.waitForFunction(() => globalThis.gotexPlaygroundReady === true, {
       timeout: READY_TIMEOUT,
@@ -66,7 +74,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       globalThis.gotexGitConfigure(repo, "main", "headless proof", "proof@go-tex.local");
       globalThis.gotexGitOpen(true);
     }, repoURL);
-    await page.waitForRequest((r) => r.url().includes("git-worker.wasm"), { timeout: OP_TIMEOUT });
+    for (let i = 0; i < OP_TIMEOUT / 100 && !workerWasmSeen; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    if (!workerWasmSeen) throw new Error("the Web Worker never requested git-worker.wasm");
 
     await page.evaluate(() => globalThis.gotexGitClone());
     await page.waitForFunction(

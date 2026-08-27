@@ -48,6 +48,9 @@ type jsWorkerTransport struct {
 	mu      sync.Mutex
 	worker  js.Value
 	spawned bool
+	// dead is raised when the Worker itself failed — its script or its wasm did
+	// not load. Every call then fails immediately instead of posting into a void.
+	dead    bool
 	nextID  int
 	pending map[int]chan gitrpc.Reply
 
@@ -110,10 +113,23 @@ func (w *jsWorkerTransport) Spawn() {
 	})
 	w.worker.Set("onmessage", w.onmessage)
 
-	// A worker-level error (e.g. the wasm failed to load) must not hang the first
-	// Call forever: release the ready gate so Call proceeds and its request surfaces
-	// a transport error instead.
+	// A worker-level error — its script 404s, its wasm fails to instantiate, a CSP
+	// blocks it — must not hang git forever.
+	//
+	// Releasing the ready gate is not enough on its own, and that is what used to
+	// happen: Call went on to post a message to a dead Worker and blocked on a
+	// reply that could never arrive, so every git operation hung, silently and
+	// permanently. Each pending call is failed here, and the transport is marked
+	// dead so later ones fail at once.
 	w.onerror = js.FuncOf(func(_ js.Value, _ []js.Value) any {
+		w.mu.Lock()
+		w.dead = true
+		pending := w.pending
+		w.pending = map[int]chan gitrpc.Reply{}
+		w.mu.Unlock()
+		for id, ch := range pending {
+			ch <- workerDeadReply(id)
+		}
 		w.readyOnce.Do(func() { close(w.readyCh) })
 		return nil
 	})
@@ -128,6 +144,10 @@ func (w *jsWorkerTransport) Call(req gitrpc.Request) gitrpc.Reply {
 
 	ch := make(chan gitrpc.Reply, 1)
 	w.mu.Lock()
+	if w.dead {
+		w.mu.Unlock()
+		return workerDeadReply(req.ID)
+	}
 	w.nextID++
 	req.ID = w.nextID
 	w.pending[req.ID] = ch
@@ -136,4 +156,17 @@ func (w *jsWorkerTransport) Call(req gitrpc.Request) gitrpc.Reply {
 
 	worker.Call("postMessage", gitrpc.EncodeRequest(req))
 	return <-ch
+}
+
+// workerDeadReply is what a call gets when the Worker itself never came up. It
+// names the asset, because that is the actionable part: the git client is a
+// separate binary, and "it did not load" is a different problem from "the clone
+// was refused".
+func workerDeadReply(id int) gitrpc.Reply {
+	return gitrpc.Reply{
+		ID:    id,
+		OK:    false,
+		Code:  "worker",
+		Error: "the git client (git-worker.wasm) did not load",
+	}
 }

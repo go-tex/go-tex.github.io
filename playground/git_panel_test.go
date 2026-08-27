@@ -3,32 +3,44 @@
 
 package playground
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-func TestGitLauncherThroughHandleClick(t *testing.T) {
+// The Git panel has no launcher of its own any more: the workspace sidebar is
+// the way in, and its Clone row opens the panel. This drives that path — the
+// sidebar's own dispatch — and checks the panel came up.
+func TestGitPanelOpensFromTheWorkspace(t *testing.T) {
+	s := newTestState(t, false)
+	if s.GitActive() {
+		t.Fatal("the panel must start closed")
+	}
+	s.sidebar.dispatch(sbRoleClone)
+	if !s.GitActive() {
+		t.Fatal("the workspace Clone action did not open the Git panel")
+	}
+}
+
+// And nothing in the toolbar band opens it any more: a click where the launcher
+// used to sit is not consumed by the Git view.
+func TestNoGitLauncherInTheToolbar(t *testing.T) {
 	s := newTestState(t, false)
 	s.git.layout()
-	lb := s.git.launcher
-	// A click on the launcher, routed through the app's own HandleClick, opens the
-	// panel (the app.go hook's true branch).
-	if !s.HandleClick(lb.X+lb.W/2, lb.Y+lb.H/2) {
-		t.Fatal("HandleClick did not consume the Git launcher click")
+	for x := 0; x < s.w; x += 8 {
+		y := s.topZoneH + s.toolbarH/2
+		if s.git.handleClick(x, y) {
+			t.Fatalf("the Git view still consumes a toolbar click at x=%d", x)
+		}
 	}
-	if !s.GitActive() {
-		t.Fatal("launcher click via HandleClick did not open the panel")
+	if s.GitActive() {
+		t.Fatal("a toolbar click opened the Git panel")
 	}
 }
 
 func TestGitLayoutEdges(t *testing.T) {
 	s := newTestState(t, false)
 	v := s.git
-	// Before the host's first layout the toolbar height is zero: the launcher
-	// falls back to a default height rather than collapsing.
-	s.toolbarH = 0
-	v.layout()
-	if v.launcher.H <= 0 {
-		t.Fatalf("launcher height with toolbarH==0 = %d", v.launcher.H)
-	}
 	// A surface narrower than the panel clamps the panel to fit.
 	s.w = 120
 	v.open = true
@@ -48,15 +60,16 @@ func TestGitClickRouting(t *testing.T) {
 	v.open = true
 	v.layout()
 
-	// Closed-launcher branch: a click off the launcher while closed is ignored.
+	// Closed branch: with no launcher of its own, the view consumes nothing while
+	// closed, wherever the click lands.
 	v.open = false
 	v.layout()
 	if v.handleClick(-100, -100) {
-		t.Fatal("off-launcher click consumed while closed")
+		t.Fatal("a click was consumed while the panel was closed")
 	}
-	lb := v.launcher
-	if !v.handleClick(lb.X+lb.W/2, lb.Y+lb.H/2) || !v.open {
-		t.Fatal("launcher click did not open the panel")
+	v.openPanel() // what the workspace sidebar's Clone row does
+	if !v.open {
+		t.Fatal("openPanel did not open the panel")
 	}
 
 	// Focus a text field.
@@ -267,4 +280,174 @@ func TestGitDrawNarrowClamped(t *testing.T) {
 	s.git.open = true
 	buf := make([]byte, 360*400*4)
 	s.Draw(buf)
+}
+
+// BootClone opens the sample repository in the workspace as the app starts, and
+// shows the sidebar once it lands.
+func TestBootCloneOpensTheWorkspace(t *testing.T) {
+	s, f, _ := withGit(t)
+	f.files = []string{"article.tex", "gotex-demo.sty"}
+	f.fileData["article.tex"] = `\documentclass{article}\begin{document}cloned\end{document}`
+	if s.SidebarOpen() {
+		t.Fatal("the workspace must start closed")
+	}
+
+	var gotErr error
+	s.BootClone(func(err error) { gotErr = err })
+	if gotErr != nil {
+		t.Fatalf("boot clone: %v", gotErr)
+	}
+	if !s.SidebarOpen() {
+		t.Error("the workspace must open once the repository lands")
+	}
+	if got := s.Source(); !strings.Contains(got, "cloned") {
+		t.Errorf("the repository's primary .tex was not loaded: %q", got)
+	}
+	if s.git.config().URL != DefaultRemoteURL {
+		t.Errorf("boot clone used %q, want the default remote", s.git.config().URL)
+	}
+}
+
+// A reader who starts typing while the clone is in flight keeps what they wrote.
+// The workspace still fills; only the editor is left alone.
+func TestBootCloneKeepsWhatYouWereWriting(t *testing.T) {
+	s, f, _ := withGit(t)
+	f.files = []string{"article.tex"}
+	f.fileData["article.tex"] = `\documentclass{article}\begin{document}cloned\end{document}`
+
+	const typed = `\documentclass{article}\begin{document}mine\end{document}`
+	// The fake backend completes the clone inside the call, so the "meanwhile"
+	// is staged by changing the buffer after BootClone recorded it — which is
+	// exactly the state the guard reads.
+	s.git.bootBuffer = s.Source()
+	s.SetSource(typed)
+	s.GitClone(nil)
+
+	if got := s.Source(); got != typed {
+		t.Errorf("the reader's text was overwritten:\n got %q\nwant %q", got, typed)
+	}
+	if len(s.git.files) == 0 {
+		t.Error("the workspace must still fill with the repository")
+	}
+}
+
+// An explicit Clone always loads — the guard is for the boot path only.
+func TestExplicitCloneStillLoads(t *testing.T) {
+	s, f, _ := withGit(t)
+	f.files = []string{"article.tex"}
+	f.fileData["article.tex"] = `\documentclass{article}\begin{document}cloned\end{document}`
+	s.SetSource(`\documentclass{article}\begin{document}mine\end{document}`)
+	s.GitClone(nil)
+	if got := s.Source(); !strings.Contains(got, "cloned") {
+		t.Errorf("an explicit clone must load the repository's file, got %q", got)
+	}
+}
+
+// BootClone is inert where there is nothing to clone into, or a repository is
+// already open.
+func TestBootCloneIsInertWhenItShouldBe(t *testing.T) {
+	bare := newTestState(t, false) // no backend attached
+	bare.BootClone(nil)
+	if bare.SidebarOpen() {
+		t.Error("no backend: the workspace must stay closed")
+	}
+
+	s, f, _ := withGit(t)
+	f.files = []string{"a.tex"}
+	f.fileData["a.tex"] = "x"
+	s.GitClone(nil) // a repository is now open
+	s.sidebar.open = false
+	s.BootClone(nil)
+	if s.SidebarOpen() {
+		t.Error("a repository is already open: boot clone must not run again")
+	}
+}
+
+// A boot clone must never keep the reader from opening the repository they
+// actually asked for: an explicit Clone supersedes one in flight. This is the
+// failure that showed up as two browser proofs timing out — their own clone was
+// refused while the boot clone held the busy flag.
+func TestExplicitCloneSupersedesTheBootClone(t *testing.T) {
+	s, f, _ := withGit(t)
+	f.files = []string{"boot.tex"}
+	f.fileData["boot.tex"] = "boot"
+
+	// Stage a boot clone that has NOT completed.
+	s.git.busy.Set(true)
+	s.git.bootInFlight = true
+	before := f.cloneCalls
+
+	s.git.url.Set("https://example.invalid/other.git")
+	s.GitClone(nil)
+	if f.cloneCalls != before+1 {
+		t.Fatalf("an explicit clone must supersede a boot clone in flight: calls %d -> %d", before, f.cloneCalls)
+	}
+}
+
+// Two explicit clones are a different matter — a double-click on Clone — and the
+// second is still refused. That guard predates the boot clone and stays.
+func TestSecondExplicitCloneStillRefused(t *testing.T) {
+	s, f, _ := withGit(t)
+	f.files = []string{"a.tex"}
+	f.fileData["a.tex"] = "x"
+
+	s.git.busy.Set(true)
+	s.git.bootInFlight = false
+	before := f.cloneCalls
+	s.GitClone(nil)
+	if f.cloneCalls != before {
+		t.Fatalf("a second explicit clone must be refused: calls %d -> %d", before, f.cloneCalls)
+	}
+}
+
+// A boot clone that lands after an explicit one must not overwrite what the
+// explicit one opened.
+func TestLateBootCloneResultIsDropped(t *testing.T) {
+	s, f, _ := withGit(t)
+	f.files = []string{"explicit.tex"}
+	f.fileData["explicit.tex"] = `\documentclass{article}\begin{document}explicit\end{document}`
+
+	// A boot clone is in flight; capture its generation the way its callback did.
+	s.git.cloneGen++
+	staleGen := s.git.cloneGen
+	s.git.busy.Set(true)
+	s.git.bootInFlight = true
+
+	s.GitClone(nil) // supersedes, and completes inside the fake backend
+	if got := s.Source(); !strings.Contains(got, "explicit") {
+		t.Fatalf("the explicit clone did not load: %q", got)
+	}
+	if staleGen == s.git.cloneGen {
+		t.Fatal("the explicit clone must have taken a new generation")
+	}
+}
+
+// While the git client is on its way the topZone names it, so a reader watching
+// a workspace that has not filled yet knows what is still coming. The playground
+// is interactive and typesetting throughout — only the git panel waits.
+func TestTopZoneNamesTheAssetItIsFetching(t *testing.T) {
+	s, f, _ := withGit(t)
+	f.files = []string{"a.tex"}
+	f.fileData["a.tex"] = "x"
+
+	if got := s.TopZoneStatusText(); got != topZoneStatus {
+		t.Fatalf("at rest the band reads %q", got)
+	}
+
+	// A backend that is a prewarmer (the real worker one) announces its wasm for
+	// the duration of the clone; the fake completes inside the call, so the
+	// announcement is observed from within the backend.
+	var during string
+	f.onClone = func() { during = s.TopZoneStatusText() }
+	s.GitClone(nil)
+
+	if !strings.Contains(during, "git-worker.wasm") {
+		t.Errorf("the band did not name the asset while fetching it: %q", during)
+	}
+	if got := s.TopZoneStatusText(); got != topZoneStatus {
+		t.Errorf("the announcement must clear when the clone lands: %q", got)
+	}
+	if s.AssetLoading() != "" {
+		t.Errorf("AssetLoading not cleared: %q", s.AssetLoading())
+	}
 }

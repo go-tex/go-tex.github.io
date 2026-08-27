@@ -174,6 +174,11 @@ func main() {
 	// the real backend. See package playground (git.go/git_js.go).
 	state.EnableGit(render)
 
+	// Open the sample repository in the workspace. This does not hold the start
+	// up: the app is already running on its built-in document and the repository
+	// arrives when the network delivers it. See State.BootClone.
+	state.BootClone(func(error) { render() })
+
 	// Debounced compile.
 	var timer js.Value
 	schedule := func() {
