@@ -98,3 +98,29 @@ func (s *State) SetLineBands(page int, lines, tops, bots []int) {
 	}
 	s.lineMaps[page-1] = makeLineMap(byLine)
 }
+
+// CanvasOverlays are the rectangles the canvas paints ON TOP of everything —
+// the find-and-replace panel, the Git panel, the Collaborate panel — in the
+// surface's device pixels. Empty when none is open.
+//
+// A host that draws page content as DOM MUST punch these out of it. The canvas
+// and the overlay are siblings in the page, and a DOM element is unconditionally
+// above a canvas: a window painted into the canvas cannot come forward over an
+// element, however the application stacks it internally. Dragging the find modal
+// onto the render pane sliced it off at the page's edge until this existed.
+func (s *State) CanvasOverlays() []toolkit.Rect {
+	var out []toolkit.Rect
+	add := func(r toolkit.Rect) {
+		if r.W > 0 && r.H > 0 {
+			out = append(out, r)
+		}
+	}
+	add(s.findPanelRect())
+	if s.git != nil && s.git.open {
+		add(s.git.panel)
+	}
+	if s.collab != nil && s.collab.open {
+		add(s.collab.panel)
+	}
+	return out
+}

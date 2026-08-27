@@ -124,6 +124,38 @@ const BOUNDARY_PHRASES = [
   console.log("text runs              :", aligned.runs, "outside the card:", aligned.outside);
   console.log("card width (CSS px)    :", aligned.cardW);
 
+  // A window the canvas paints must come forward over the rendered page. Drag
+  // the find modal onto the render pane and check the page overlay has a hole
+  // where the modal is — a DOM element is unconditionally above a <canvas>
+  // sibling, so without the hole the modal is sliced off at the page's edge.
+  const overlap = await page.evaluate(async () => {
+    gotexToggleFindReplace();
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const dpr = window.devicePixelRatio || 1;
+    const cr = document.getElementById("gotex-canvas").getBoundingClientRect();
+    const t = gotexRects()["findTitle"];
+    const gx = cr.x + (t[0] + t[2] / 3) / dpr, gy = cr.y + (t[1] + t[3] / 2) / dpr;
+    return { gx, gy };
+  });
+  await page.mouse.move(overlap.gx, overlap.gy);
+  await page.mouse.down();
+  await page.mouse.move(overlap.gx + 250, overlap.gy);
+  await page.mouse.move(overlap.gx + 500, overlap.gy);
+  await page.mouse.up();
+  await new Promise((r) => setTimeout(r, 300));
+  const clipped = await page.evaluate(() => {
+    const pages = document.getElementById("gotex-pages");
+    const clip = getComputedStyle(pages).clipPath;
+    const panel = gotexRects()["findPanel"];
+    return { clip: String(clip).slice(0, 24), holes: (String(clip).match(/M/g) || []).length, panel };
+  });
+  console.log("page overlay clip-path :", clipped.clip, "subpaths:", clipped.holes);
+  await page.evaluate(() => gotexToggleFindReplace());
+  await new Promise((r) => setTimeout(r, 200));
+  const unclipped = await page.evaluate(() =>
+    String(getComputedStyle(document.getElementById("gotex-pages")).clipPath));
+  console.log("clip after closing     :", unclipped);
+
   // NO REGRESSION: a click on the rendered page must still drive the caret. The
   // overlay is inert to the pointer, so the canvas still receives it.
   const linking = await page.evaluate(async () => {
@@ -157,7 +189,8 @@ const BOUNDARY_PHRASES = [
     found.ok === true && found.text.includes("office") &&
     Object.values(boundaries).every(Boolean) &&
     aligned.runs > 0 && aligned.outside === 0 &&
-    linking.hitTest === "canvas" && linking.after !== linking.before;
+    linking.hitTest === "canvas" && linking.after !== linking.before &&
+    clipped.holes >= 2 && unclipped === "none";
   console.log("RESULT " + JSON.stringify({ ok }));
   process.exit(ok ? 0 : 1);
 })().catch((e) => { console.error("DRIVER_FAIL", e); process.exit(2); });
