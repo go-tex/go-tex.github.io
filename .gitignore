@@ -14,3 +14,10 @@ collab-failure-proof.png
 # before hugo runs. It was committed once, went 35 commits stale, and a CDN
 # fallback served that stale copy to visitors. Never commit it again.
 static/*.wasm
+
+# `go build ./cmd/playground-wasm` with no -o drops a ~21 MB NATIVE binary here,
+# named after the package directory. It was committed that way once (c7dbdd2) and
+# every later build silently re-committed it. It is a build artifact; the wasm the
+# site serves is built by pages.yml.
+playground/playground-wasm
+playground/git-worker

@@ -12,10 +12,10 @@ require (
 	github.com/go-opentype/fonts v0.8.0
 	github.com/go-richdoc/latex v0.2.0
 	github.com/go-richdoc/richdoc v0.2.0
-	github.com/go-tex/engine v0.172.0
+	github.com/go-tex/engine v0.183.0
 	github.com/go-widgets/mvvm v0.7.0
 	github.com/go-widgets/painter v0.11.0
-	github.com/go-widgets/toolkit v0.258.0
+	github.com/go-widgets/toolkit v0.260.0
 	github.com/go-widgets/toolkit/rougelex v0.2.0
 )
 
