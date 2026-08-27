@@ -44,8 +44,74 @@ func (s *State) logCompile(res compileResult) {
 	appendDiagWarn(s.logView, ts, "undefined command(s)", d.Skipped, "\\")
 	appendDiagWarn(s.logView, ts, "undefined environment(s)", d.UndefinedEnvs, "")
 	appendDiagWarn(s.logView, ts, "dropped equation(s)", d.MathDropped, "")
-	// The outcome line closes each compile's block.
-	s.logView.Append(ts, toolkit.LogInfo, "compiled "+pageWord(res.drawnPages))
+	// The verbose outcome block closes each compile's block: how long it took, how
+	// big the input was, and how big the output SVG is — TeX's own logs are chatty
+	// this way ("Output written on doc.pdf (4 pages, 123456 bytes)").
+	s.logView.Append(ts, toolkit.LogInfo, compileOutcome(res))
+}
+
+// compileOutcome renders the verbose, TeXLive-flavoured summary of a clean
+// compile: a headline naming the page count and the wall time, then indented
+// continuation rows (the LogView renders embedded newlines as hanging rows) for
+// the input size / line count and the output SVG size. When some logical pages
+// were undrawable, it says how many of how many were drawn.
+func compileOutcome(res compileResult) string {
+	var b strings.Builder
+	b.WriteString("compiled ")
+	b.WriteString(pageWord(res.drawnPages))
+	b.WriteString(" in ")
+	b.WriteString(formatDuration(res.elapsed))
+	b.WriteString("\n    input   ")
+	b.WriteString(formatBytes(res.srcBytes))
+	b.WriteString(", ")
+	b.WriteString(lineWord(res.srcLines))
+	b.WriteString("\n    output  ")
+	b.WriteString(formatBytes(res.outBytes))
+	b.WriteString(" SVG")
+	if res.pages != res.drawnPages {
+		b.WriteString(", ")
+		b.WriteString(strconv.Itoa(res.drawnPages))
+		b.WriteString(" of ")
+		b.WriteString(strconv.Itoa(res.pages))
+		b.WriteString(" pages drawn")
+	}
+	return b.String()
+}
+
+// formatDuration renders a compile time at a sensible precision: sub-10 ms keeps
+// one decimal (0.4 ms), up to a second is whole milliseconds (37 ms), a second or
+// more switches to seconds (1.28 s).
+func formatDuration(d time.Duration) string {
+	switch {
+	case d < 10*time.Millisecond:
+		return strconv.FormatFloat(float64(d)/float64(time.Millisecond), 'f', 1, 64) + " ms"
+	case d < time.Second:
+		return strconv.Itoa(int(d.Round(time.Millisecond)/time.Millisecond)) + " ms"
+	default:
+		return strconv.FormatFloat(d.Seconds(), 'f', 2, 64) + " s"
+	}
+}
+
+// formatBytes renders a byte count human-readably: bytes under 1 kB, then kB, then
+// MB, decimal (1000-based) with one fractional digit, matching how a reader reads
+// a file size rather than TeX's raw byte figure.
+func formatBytes(n int) string {
+	switch {
+	case n < 1000:
+		return strconv.Itoa(n) + " B"
+	case n < 1000*1000:
+		return strconv.FormatFloat(float64(n)/1000, 'f', 1, 64) + " kB"
+	default:
+		return strconv.FormatFloat(float64(n)/(1000*1000), 'f', 1, 64) + " MB"
+	}
+}
+
+// lineWord renders a line count with the correctly pluralised unit.
+func lineWord(n int) string {
+	if n == 1 {
+		return "1 line"
+	}
+	return strconv.Itoa(n) + " lines"
 }
 
 // appendDiagWarn appends one amber (LogWarn) entry summarising a category of
