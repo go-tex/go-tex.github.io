@@ -310,7 +310,7 @@ func buildFileTree(files []string, badge func(string) (string, toolkit.RGBA)) ([
 		if i := strings.LastIndex(dir, "/"); i >= 0 {
 			name, parent = dir[i+1:], dir[:i]
 		}
-		n := &toolkit.TreeTableNode{Cells: []string{name + "/", ""}, Expanded: true}
+		n := &toolkit.TreeTableNode{Cells: []string{name + "/", ""}, Expanded: true, Icon: folderIcon}
 		dirs[dir] = n
 		if p := dirNode(parent); p != nil {
 			p.Children = append(p.Children, n)
@@ -328,7 +328,7 @@ func buildFileTree(files []string, badge func(string) (string, toolkit.RGBA)) ([
 			dir, name = f[:i], f[i+1:]
 		}
 		glyph, ink := badge(f)
-		leaf := &toolkit.TreeTableNode{Cells: []string{name, glyph}, CellInk: []toolkit.RGBA{{}, ink}}
+		leaf := &toolkit.TreeTableNode{Cells: []string{name, glyph}, CellInk: []toolkit.RGBA{{}, ink}, Icon: fileIcon(name)}
 		nodePaths[leaf] = f
 		if p := dirNode(dir); p != nil {
 			p.Children = append(p.Children, leaf)
