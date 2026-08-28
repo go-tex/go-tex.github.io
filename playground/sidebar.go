@@ -4,6 +4,7 @@
 package playground
 
 import (
+	"path"
 	"sort"
 	"strings"
 
@@ -116,7 +117,6 @@ type sidebar struct {
 
 	// bounds is the whole column; sub-rects are recomputed by layout().
 	bounds       toolkit.Rect
-	headerRect   toolkit.Rect
 	detailRect   toolkit.Rect
 	filesHdrRect toolkit.Rect
 	histHdrRect  toolkit.Rect
@@ -141,10 +141,9 @@ type sidebar struct {
 	logoWord *toolkit.Label    // the "go-tex" wordmark beside the tile
 	logoRect toolkit.Rect
 	wordRect toolkit.Rect
-	header   *toolkit.Label
 	detail   *toolkit.Label
-	filesExp *toolkit.Expander // "Files" accordion header over the tree
-	histExp  *toolkit.Expander // "History" accordion header over the timeline
+	filesExp *toolkit.Expander // "Files" accordion header (labelled with the active file) over the tree
+	histExp  *toolkit.Expander // "History" accordion header (labelled with the branch) over the timeline
 	tree     *toolkit.TreeTable
 	timeline *toolkit.Timeline
 	empty    *toolkit.EmptyState
@@ -175,20 +174,23 @@ func (b *sidebar) ensureWidgets() {
 	b.logoWord = toolkit.NewLabel("go-tex")
 	b.logoWord.Ink = brandIndigo
 	b.logoWord.VAlign = toolkit.VMiddle
-	b.header = toolkit.NewLabel("")
 	b.detail = toolkit.NewLabel("")
+	// The first column carries the file names; its title is left blank because the
+	// "Files" accordion header right above already labels the tree (the standalone
+	// "Workspace" line is gone). The "S" column heads the dirty-status badges.
 	b.tree = toolkit.NewTreeTable(
-		[]toolkit.TreeTableColumn{{Title: "Workspace"}, {Title: "S", Width: toolkit.Scaled(22), Align: toolkit.AlignCenter}},
+		[]toolkit.TreeTableColumn{{Title: ""}, {Title: "S", Width: toolkit.Scaled(22), Align: toolkit.AlignCenter}},
 		nil,
 	)
-	// Accordion headers over the tree and the timeline, so either can be
-	// collapsed to give the other the whole column. Both open by default. The
-	// widgets are header-only (Content nil): the sidebar lays out and draws the
+	// Accordion headers over the tree and the timeline, mutually exclusive: opening
+	// one collapses the other (handleClick enforces it), so only one body shows at a
+	// time and the workspace column stays compact. Files opens first. The widgets
+	// are header-only (Content nil): the sidebar lays out and draws the
 	// tree/timeline itself, gated on each header's Expanded state.
 	b.filesExp = toolkit.NewExpander("Files", nil)
 	b.filesExp.Expanded().Set(true)
 	b.histExp = toolkit.NewExpander("History", nil)
-	b.histExp.Expanded().Set(true)
+	b.histExp.Expanded().Set(false)
 	b.timeline = toolkit.NewTimeline(nil)
 	b.spinner = toolkit.NewSpinner()
 	b.spinner.Active().Set(true)
@@ -435,8 +437,6 @@ func (b *sidebar) layout() {
 	b.logoRect = toolkit.Rect{X: innerX, Y: cur, W: logoH, H: logoH}
 	b.wordRect = toolkit.Rect{X: innerX + logoH + toolkit.Scaled(6), Y: cur, W: innerW - logoH - toolkit.Scaled(6), H: logoH}
 	cur += logoH + gap
-	b.headerRect = toolkit.Rect{X: innerX, Y: cur, W: innerW, H: lineH}
-	cur += lineH + gap
 
 	if !b.hasRepo() {
 		// Empty state: centre the prompt in the remaining column, with a Clone
@@ -484,9 +484,16 @@ func (b *sidebar) layout() {
 		cur += btnH + gap
 	}
 
-	// Detail strip (clicked-commit detail, or the latest git notice/error).
-	b.detailRect = toolkit.Rect{X: innerX, Y: cur, W: innerW, H: lineH}
-	cur += lineH + gap
+	// Detail strip (clicked-commit detail, or the latest git notice/error). It
+	// reserves a line only when it has something to show — an idle column (the
+	// common case while browsing files, since opening a file no longer posts a
+	// notice) gives that height to the tree instead.
+	if text, _ := b.detailText(); text != "" {
+		b.detailRect = toolkit.Rect{X: innerX, Y: cur, W: innerW, H: lineH}
+		cur += lineH + gap
+	} else {
+		b.detailRect = toolkit.Rect{}
+	}
 
 	// Two accordion sections stacked: a "Files" header over the tree, then a
 	// "History" header over the timeline. Either header collapses its body to give
@@ -509,10 +516,8 @@ func (b *sidebar) layout() {
 	}
 	treeH := 0
 	if filesOpen {
+		// tlH is clamped to <= avail above, so avail - tlH is never negative.
 		treeH = avail - tlH
-		if treeH < 0 {
-			treeH = 0
-		}
 	}
 	y := cur
 	b.filesHdrRect = toolkit.Rect{X: innerX, Y: y, W: innerW, H: headerH}
@@ -527,11 +532,25 @@ func (b *sidebar) layout() {
 }
 
 // headerText is the column title, annotated with the branch when a repo is open.
-func (b *sidebar) headerText() string {
-	if b.s.git.statusOK && b.s.git.status.Branch != "" {
-		return "Workspace · " + b.s.git.status.Branch
+// filesHeaderText is the "Files" accordion header: the active file's base name is
+// appended so the workspace shows which document is open without a separate line
+// (opening a file no longer posts a "Loaded …" notice). Just "Files" when nothing
+// is open.
+func (b *sidebar) filesHeaderText() string {
+	if p := b.s.git.loaded.Get(); p != "" {
+		return "Files · " + path.Base(p)
 	}
-	return "Workspace"
+	return "Files"
+}
+
+// histHeaderText is the "History" accordion header: the branch is appended (the
+// git log is per-branch), which is where the branch now lives since the standalone
+// "Workspace · <branch>" line was removed. Just "History" with no open repo.
+func (b *sidebar) histHeaderText() string {
+	if b.s.git.statusOK && b.s.git.status.Branch != "" {
+		return "History · " + b.s.git.status.Branch
+	}
+	return "History"
 }
 
 // detailText is the detail strip's text + ink: a git error (red) wins, then the
@@ -579,12 +598,6 @@ func (b *sidebar) draw(p painter.Painter, theme *toolkit.Theme) {
 	b.logoWord.SetBounds(b.wordRect)
 	b.logoWord.Draw(p, theme)
 
-	b.header.Text().Set(b.headerText())
-	b.header.SetBounds(b.headerRect)
-	b.header.Ink = theme.OnSurface
-	b.header.VAlign = toolkit.VMiddle
-	b.header.Draw(p, theme)
-
 	if !b.hasRepo() {
 		body := b.empty.Bounds()
 		// A clone in flight: the workspace is present but still loading, so show a
@@ -618,21 +631,27 @@ func (b *sidebar) draw(p painter.Painter, theme *toolkit.Theme) {
 		return
 	}
 
-	text, ink := b.detailText()
-	b.detail.Text().Set(text)
-	b.detail.SetBounds(b.detailRect)
-	b.detail.Ink = ink
-	b.detail.VAlign = toolkit.VMiddle
-	b.detail.Draw(p, theme)
+	if b.detailRect.H > 0 {
+		text, ink := b.detailText()
+		b.detail.Text().Set(text)
+		b.detail.SetBounds(b.detailRect)
+		b.detail.Ink = ink
+		b.detail.VAlign = toolkit.VMiddle
+		b.detail.Draw(p, theme)
+	}
 
-	// Files accordion header, then the tree when the section is open; then the
-	// History header and the timeline. A collapsed section has a zero-height body
-	// rect (see layout), so its widget is simply not drawn.
+	// Files accordion header — labelled with the active file so the workspace shows
+	// which document is open without a separate line — then the tree when the
+	// section is open; then the History header (labelled with the branch) and the
+	// timeline. A collapsed section has a zero-height body rect (see layout), so its
+	// widget is simply not drawn.
+	b.filesExp.Label = b.filesHeaderText()
 	b.filesExp.SetBounds(b.filesHdrRect)
 	b.filesExp.Draw(p, theme)
 	if b.treeRect.H > 0 {
 		b.tree.Draw(p, theme)
 	}
+	b.histExp.Label = b.histHeaderText()
 	b.histExp.SetBounds(b.histHdrRect)
 	b.histExp.Draw(p, theme)
 	if b.tlRect.H > 0 {
@@ -672,14 +691,21 @@ func (b *sidebar) handleClick(x, y int) bool {
 		}
 	}
 	// Accordion headers: a click toggles the section, then re-lays out so the
-	// tree/timeline resize immediately.
+	// tree/timeline resize immediately. The two are mutually exclusive — opening one
+	// collapses the other, so at most one body shows and the column stays compact.
 	if b.hasRepo() && b.filesHdrRect.Contains(x, y) {
 		b.filesExp.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - b.filesHdrRect.X, Y: y - b.filesHdrRect.Y})
+		if b.filesExp.Expanded().Get() {
+			b.histExp.Expanded().Set(false)
+		}
 		b.layout()
 		return true
 	}
 	if b.hasRepo() && b.histHdrRect.Contains(x, y) {
 		b.histExp.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - b.histHdrRect.X, Y: y - b.histHdrRect.Y})
+		if b.histExp.Expanded().Get() {
+			b.filesExp.Expanded().Set(false)
+		}
 		b.layout()
 		return true
 	}

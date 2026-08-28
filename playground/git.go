@@ -717,10 +717,13 @@ func (v *gitView) openFile(p string) {
 		return
 	}
 	v.stashActive()
+	// The active file's name shows in the sidebar's "Files" accordion header, so a
+	// switch clears the detail strip rather than restating the file there — no
+	// per-open notice line to crowd the workspace column.
 	if buf, ok := v.buffers[p]; ok {
 		v.loaded.Set(p)
 		v.s.SetSourceCursor(buf.text, buf.cursorLine, buf.cursorCol, buf.scrollLine)
-		v.notice.Set("Opened " + p + ".")
+		v.notice.Set("")
 		return
 	}
 	data, err := v.backend.ReadFile(p)
@@ -731,7 +734,7 @@ func (v *gitView) openFile(p string) {
 	v.buffers[p] = &fileBuffer{text: string(data)}
 	v.loaded.Set(p)
 	v.s.SetSource(string(data))
-	v.notice.Set("Loaded " + p + ".")
+	v.notice.Set("")
 }
 
 // bufferContent returns the current in-memory content of path — the LIVE editor
