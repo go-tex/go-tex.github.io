@@ -130,6 +130,11 @@ type sidebar struct {
 	// persistent toolkit widgets, built once and reused every frame.
 	bg       *toolkit.Backdrop
 	rule     *toolkit.Backdrop
+	logo     *toolkit.Backdrop // brand tile at the top of the column
+	logoT    *toolkit.Label    // the "T" mark inside the tile
+	logoWord *toolkit.Label    // the "go-tex" wordmark beside the tile
+	logoRect toolkit.Rect
+	wordRect toolkit.Rect
 	header   *toolkit.Label
 	detail   *toolkit.Label
 	tree     *toolkit.TreeTable
@@ -153,6 +158,14 @@ func (b *sidebar) ensureWidgets() {
 	}
 	b.bg = &toolkit.Backdrop{}
 	b.rule = &toolkit.Backdrop{}
+	b.logo = &toolkit.Backdrop{Fill: brandIndigo, Radius: toolkit.Scaled(5)}
+	b.logoT = toolkit.NewLabel("T")
+	b.logoT.Ink = toolkit.RGB(0xFF, 0xFF, 0xFF)
+	b.logoT.Align = toolkit.AlignCenter
+	b.logoT.VAlign = toolkit.VMiddle
+	b.logoWord = toolkit.NewLabel("go-tex")
+	b.logoWord.Ink = brandIndigo
+	b.logoWord.VAlign = toolkit.VMiddle
 	b.header = toolkit.NewLabel("")
 	b.detail = toolkit.NewLabel("")
 	b.tree = toolkit.NewTreeTable(
@@ -384,6 +397,12 @@ func (b *sidebar) layout() {
 
 	b.buttons = b.buttons[:0]
 	cur := r.Y + pad
+	// Brand lockup at the very top: a square go-tex tile and the wordmark beside
+	// it, above the workspace/branch header.
+	logoH := toolkit.Scaled(22)
+	b.logoRect = toolkit.Rect{X: innerX, Y: cur, W: logoH, H: logoH}
+	b.wordRect = toolkit.Rect{X: innerX + logoH + toolkit.Scaled(6), Y: cur, W: innerW - logoH - toolkit.Scaled(6), H: logoH}
+	cur += logoH + gap
 	b.headerRect = toolkit.Rect{X: innerX, Y: cur, W: innerW, H: lineH}
 	cur += lineH + gap
 
@@ -502,6 +521,14 @@ func (b *sidebar) draw(p painter.Painter, theme *toolkit.Theme) {
 	b.rule.Fill = theme.Border
 	b.rule.SetBounds(toolkit.Rect{X: r.X + r.W - toolkit.Scaled(1), Y: r.Y, W: toolkit.Scaled(1), H: r.H})
 	b.rule.Draw(p, theme)
+
+	// Brand lockup: the tile with its "T", then the wordmark.
+	b.logo.SetBounds(b.logoRect)
+	b.logo.Draw(p, theme)
+	b.logoT.SetBounds(b.logoRect)
+	b.logoT.Draw(p, theme)
+	b.logoWord.SetBounds(b.wordRect)
+	b.logoWord.Draw(p, theme)
 
 	b.header.Text().Set(b.headerText())
 	b.header.SetBounds(b.headerRect)

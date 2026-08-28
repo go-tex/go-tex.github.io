@@ -25,6 +25,10 @@ var (
 	inkDoc    = toolkit.RGB(0x8A, 0x93, 0x9B) // grey — everything else
 )
 
+// brandIndigo is the go-tex mark colour (the favicon tile), used for the sidebar
+// logo tile and wordmark. It reads on both the light and the dark surface.
+var brandIndigo = toolkit.RGB(0x4F, 0x46, 0xE5)
+
 // folderIcon paints the amber folder glyph a directory row shows. It is a plain
 // function value (not a per-node closure) because every folder looks the same.
 func folderIcon(p painter.Painter, r toolkit.Rect, _ toolkit.RGBA) {

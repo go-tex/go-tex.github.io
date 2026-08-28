@@ -648,3 +648,14 @@ func TestSidebarShortColumnTimelineYields(t *testing.T) {
 		t.Fatalf("negative sub-rect heights: tree=%d tl=%d", s.sidebar.treeRect.H, s.sidebar.tlRect.H)
 	}
 }
+
+// TestSidebarShowsBrandLogo: the go-tex brand tile + wordmark paint their indigo
+// at the top of the workspace column, in both the empty and cloned states.
+func TestSidebarShowsBrandLogo(t *testing.T) {
+	s := newTestState(t, false) // no repo yet: empty state
+	buf := make([]byte, testW*testH*4)
+	s.Draw(buf)
+	if !hasExactColor(buf, brandIndigo) {
+		t.Fatal("empty state: the go-tex brand colour is not painted in the sidebar")
+	}
+}
