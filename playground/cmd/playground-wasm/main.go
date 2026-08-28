@@ -185,6 +185,43 @@ func main() {
 	// arrives when the network delivers it. See State.BootClone.
 	state.BootClone(func(error) { render() })
 
+	// While a repository clone is in flight, run a requestAnimationFrame loop so
+	// the workspace's loading spinner spins. The loop ticks animations + repaints
+	// each frame and self-stops the moment the clone ends; a guard keeps a second
+	// clone from starting a duplicate loop.
+	var animate js.Func
+	var animating bool
+	var lastTS float64
+	animate = js.FuncOf(func(_ js.Value, args []js.Value) any {
+		if !state.Cloning() {
+			animating = false
+			lastTS = 0
+			return nil
+		}
+		ts := 0.0
+		if len(args) > 0 {
+			ts = args[0].Float()
+		}
+		dt := 1.0 / 60
+		if lastTS != 0 && ts > lastTS {
+			dt = (ts - lastTS) / 1000
+		}
+		lastTS = ts
+		state.Tick(dt)
+		render()
+		js.Global().Call("requestAnimationFrame", animate)
+		return nil
+	})
+	startAnim := func() {
+		if animating || !state.Cloning() {
+			return
+		}
+		animating = true
+		js.Global().Call("requestAnimationFrame", animate)
+	}
+	state.SubscribeCloning(startAnim)
+	startAnim() // the boot clone may already be in flight
+
 	// Debounced compile.
 	var timer js.Value
 	schedule := func() {
