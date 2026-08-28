@@ -4,12 +4,10 @@
 package playground
 
 // This file adds the playground's WYSIWYG editing mode. The go-tex playground is
-// TeX-specific, so the mode is deliberately LaTeX-only: a "Source | WYSIWYG" tab
-// strip and a formatting toolbar pinned to the top of the editor pane, a toolkit
-// RichEditor shown in place of the CodeEditor on the WYSIWYG tab, and the
-// LaTeX-source<->document round-trip through the go-richdoc/latex converter.
-// app.go and the wasm driver carry only a handful of one-line additive hooks
-// (s.wysiwyg*(...)).
+// TeX-specific, so the mode is deliberately LaTeX-only: a toolkit RichEditor shown
+// in place of the CodeEditor while WYSIWYG is on, and the LaTeX-source<->document
+// round-trip through the go-richdoc/latex converter. app.go and the wasm driver
+// carry only a handful of one-line additive hooks (s.wysiwyg*(...)).
 //
 // The multi-format machinery (a registry over many go-richdoc converters, ODT/RTF
 // import/export) lives in the SHARED components — the toolkit RichEditor and the
@@ -17,26 +15,34 @@ package playground
 // exactly one converter, LaTeX, because that is what the go-tex compile -> render
 // pipeline consumes.
 //
-// The strip is the shared [toolkit.FolderTabs] — the SAME widget the render pane
-// uses for its Rendered│Log tabs — placed at the top of the editor (left) pane so
-// the two panes read consistently. The active editor tab is the single source of
-// truth (an [mvvm.Observable] on the strip, mirroring the render pane's tab
-// state): there is no shadow "active" bool. Selecting WYSIWYG parses the source
-// into the RichEditor; selecting Source writes the edited document back.
+// Source⇄WYSIWYG is a toolbar TOGGLE BUTTON (app.go), whose state is the reactive
+// [wysiwyg.mode] boolean — the single source of truth (mirroring the render pane's
+// Rendered│Log split): there is no shadow "active" bool. Turning WYSIWYG on parses
+// the source into the RichEditor; turning it off writes the edited document back.
+//
+// The editor-pane strip at the top is the shared [toolkit.FolderTabs] — the SAME
+// widget the render pane uses for its Rendered│Log tabs — but here it hosts the
+// open FILE tabs (closable), kept in sync with git's open-tab list. A tab click
+// opens that file; its × closes the tab. See syncFileTabs and git.go's openTabs.
 
 import (
+	"path"
 	"strings"
 
 	"github.com/go-richdoc/richdoc"
+	"github.com/go-widgets/mvvm"
 	"github.com/go-widgets/painter"
 	"github.com/go-widgets/toolkit"
 
 	latex "github.com/go-richdoc/latex"
 )
 
-// Editor-pane tab indices. Source shows the CodeEditor (LaTeX source, completion,
-// minimap, compile-on-edit); WYSIWYG shows the RichEditor. The strip's reactive
-// selection IS the mode's active state — see [wysiwyg.active].
+// Editor-view indices, kept for the headless API ([State.SetEditorTab] /
+// [State.ActiveEditorTab]): Source shows the CodeEditor (LaTeX source,
+// completion, minimap, compile-on-edit); WYSIWYG shows the RichEditor. The view
+// is no longer a tab strip — it is a toolbar toggle button, and its state is the
+// [wysiwyg.mode] boolean (the tab strip now hosts the open FILE tabs) — but the
+// two indices stay as the stable Source/WYSIWYG identifiers the API speaks.
 const (
 	tabSource  = 0
 	tabWysiwyg = 1
@@ -51,18 +57,24 @@ var (
 	writeLaTeX = latex.Write
 )
 
-// wysiwyg is the mode's whole state: the editor-pane tab strip and the formatting
-// toolbar (both pinned to the top of the editor pane), the RichEditor shown on the
-// WYSIWYG tab, a parse-error string (shown while it bounces back to Source), a
-// pointer-capture flag for a drag inside the RichEditor, the strip rect for click
-// routing and a "bouncing" flag raised while a failed enter() reverts the strip to
-// Source, so the resulting leave() keeps the parse error instead of writing back.
+// wysiwyg is the mode's whole state: the editor-pane FILE-tab strip and the
+// formatting toolbar (both pinned to the top of the editor pane), the RichEditor
+// shown in WYSIWYG mode, a parse-error string (shown while it bounces back to
+// Source), a pointer-capture flag for a drag inside the RichEditor, the strip rect
+// for click routing and a "bouncing" flag raised while a failed enter() reverts
+// the mode to Source, so the resulting leave() keeps the parse error instead of
+// writing back.
 type wysiwyg struct {
 	s *State
 
 	editor  *toolkit.RichEditor
 	toolbar *toolkit.RichEditorToolbar
-	tabs    *toolkit.FolderTabs
+	tabs    *toolkit.FolderTabs // the open FILE tabs (closable), NOT Source/WYSIWYG
+
+	// mode is the Source⇄WYSIWYG state (true = WYSIWYG), driven by the toolbar
+	// toggle button rather than a tab. Its subscriber runs the enter()/leave()
+	// document round-trip; active() reads it.
+	mode *mvvm.Observable[bool]
 
 	// parseErrBand is the ground of the parse-error strip: a persistent Backdrop
 	// rather than a hand-filled rect (so it passes bricolint like every other
@@ -87,14 +99,30 @@ func newWysiwyg(s *State) *wysiwyg {
 	// in force at the caret (it subscribes to the editor's Caret/Selection/Doc). It
 	// is shown only on the WYSIWYG tab, laid out directly under the tab strip.
 	w.toolbar = toolkit.NewRichEditorToolbar(w.editor)
-	w.tabs = toolkit.NewFolderTabs([]string{"Source", "WYSIWYG"}, tabSource)
-	// The active editor tab is the single source of truth (mirrors the render
-	// pane's Rendered│Log strip): selecting WYSIWYG parses the source into the
-	// RichEditor, selecting Source writes the edited document back. A parse failure
-	// bounces the strip back to Source (see enter/leave and the bouncing flag). The
-	// strip lives for the whole app, so the unsubscribe handle is dropped.
-	w.tabs.Selected().Subscribe(func(idx int) {
-		if idx == tabWysiwyg {
+	// The editor-pane strip now hosts the open FILE tabs (closable), labelled with
+	// each open file's base name and kept in sync with git's open-tab list in
+	// wysiwygLayout. A tab click opens that file; its × closes the tab. FolderTabs
+	// never mutates its own Labels, so both callbacks route to the git model.
+	w.tabs = toolkit.NewFolderTabs(nil, 0)
+	w.tabs.Closable = true
+	w.tabs.OnSelect = func(i int) {
+		if tabs := w.s.GitOpenTabs(); i >= 0 && i < len(tabs) {
+			w.s.GitOpenFile(tabs[i])
+		}
+	}
+	w.tabs.OnClose = func(i int) {
+		if tabs := w.s.GitOpenTabs(); i >= 0 && i < len(tabs) {
+			w.s.GitCloseTab(tabs[i])
+		}
+	}
+	// mode is the Source⇄WYSIWYG state, the single source of truth (mirrors the
+	// render pane's Rendered│Log split): switching to WYSIWYG parses the source into
+	// the RichEditor, switching to Source writes the edited document back. A parse
+	// failure bounces the mode back to Source (see enter/leave and the bouncing
+	// flag). It lives for the whole app, so the unsubscribe handle is dropped.
+	w.mode = mvvm.NewObservable(false)
+	w.mode.Subscribe(func(on bool) {
+		if on {
 			w.enter()
 		} else {
 			w.leave()
@@ -111,26 +139,20 @@ func (s *State) wysiwyg() *wysiwyg {
 	return s.wys
 }
 
-// active reports whether the WYSIWYG tab is selected — read straight from the
-// strip's reactive Observable (the single source of truth, mirroring
-// [rightPane.isLog]); there is no shadow copy of the mode to keep in sync.
-func (w *wysiwyg) active() bool { return w.tabs.Selected().Get() == tabWysiwyg }
+// active reports whether WYSIWYG mode is on — read straight from the mode's
+// reactive Observable (the single source of truth, mirroring [rightPane.isLog]);
+// there is no shadow copy of the mode to keep in sync.
+func (w *wysiwyg) active() bool { return w.mode.Get() }
 
-// selectTab drives the strip's reactive selection, firing the enter/leave
-// transition through the strip subscriber — the single mutate path a host toggle
-// and a strip click both take.
-func (w *wysiwyg) selectTab(tab int) { w.tabs.Selected().Set(tab) }
+// setMode drives the mode's reactive state, firing the enter/leave transition
+// through the mode subscriber — the single mutate path the toolbar toggle button
+// and the headless [State.SetEditorTab] both take.
+func (w *wysiwyg) setMode(wysiwygOn bool) { w.mode.Set(wysiwygOn) }
 
-// toggle_ flips the active editor tab: Source <-> WYSIWYG. It Sets the strip's
-// reactive selection, so the enter/leave side effects run through the subscriber
-// exactly as a strip click would.
-func (w *wysiwyg) toggle_() {
-	if w.active() {
-		w.selectTab(tabSource)
-	} else {
-		w.selectTab(tabWysiwyg)
-	}
-}
+// toggle_ flips the mode: Source <-> WYSIWYG. It Sets the mode's reactive state,
+// so the enter/leave side effects run through the subscriber exactly as the
+// toolbar toggle would.
+func (w *wysiwyg) toggle_() { w.setMode(!w.active()) }
 
 // enter is run when the WYSIWYG tab becomes active: it parses the current LaTeX
 // source into the RichEditor. A parse failure records the error and bounces the
@@ -178,13 +200,13 @@ func (w *wysiwyg) leave() {
 	w.s.dirty = true
 }
 
-// bounceToSource reverts the strip to the Source tab after a failed enter(). The
+// bounceToSource reverts the mode to Source after a failed enter(). The
 // [mvvm.Observable] is mid-notification here (enter runs from its subscriber), so
-// the Set is deferred and re-notifies the subscriber with tabSource; the bouncing
+// the Set is deferred and re-notifies the subscriber with false; the bouncing
 // flag makes that re-entrant leave() a no-op so the parse error survives.
 func (w *wysiwyg) bounceToSource() {
 	w.bouncing = true
-	w.tabs.Selected().Set(tabSource)
+	w.mode.Set(false)
 }
 
 // --- layout ---------------------------------------------------------------
@@ -210,7 +232,7 @@ func (w *wysiwyg) toolbarHeight() int {
 	return h
 }
 
-// layoutBounds splits the editor pane (below the Source│WYSIWYG tab strip) into
+// layoutBounds splits the editor pane (below the file-tab strip) into
 // the toolbar strip pinned at the top and the RichEditor region below it. The
 // toolbar spans the full editor width (its Surface fill reads as a strip, like the
 // tab strip above it); the RichEditor takes the remainder. With the toolbar hidden
@@ -238,7 +260,26 @@ func (w *wysiwyg) applyWysiwygBounds() {
 	w.editor.SetBounds(ed)
 }
 
-// wysiwygLayout pins the Source│WYSIWYG strip to the top of the editor (left)
+// syncFileTabs mirrors git's open-tab list onto the FolderTabs: one tab per open
+// file, labelled with its base name, the active file selected. Setting Labels and
+// Selected directly is side-effect-free (FolderTabs fires OnSelect only on a
+// click/key, never on a host Set), so this just keeps the strip in step with the
+// model each layout. With no open file the strip shows no tabs.
+func (w *wysiwyg) syncFileTabs() {
+	tabs := w.s.GitOpenTabs()
+	labels := make([]string, len(tabs))
+	for i, p := range tabs {
+		labels[i] = path.Base(p)
+	}
+	w.tabs.Labels = labels
+	idx := w.s.GitActiveTabIndex()
+	if idx < 0 {
+		idx = 0
+	}
+	w.tabs.Selected().Set(idx)
+}
+
+// wysiwygLayout pins the file-tab strip to the top of the editor (left)
 // pane; while the WYSIWYG tab is active it sizes the RichEditor to the editor
 // region (below the strip). Called at the tail of State.layout (and after a
 // divider drag), so the strip tracks the left pane's current width.
@@ -262,12 +303,16 @@ func (s *State) wysiwygLayout() {
 
 // --- draw -----------------------------------------------------------------
 
-// wysiwygDraw paints the editor-pane tab strip, then, on the WYSIWYG tab, the
+// wysiwygDraw paints the editor-pane file-tab strip, then, in WYSIWYG mode, the
 // formatting toolbar strip and the RichEditor over the editor region. A pending
-// parse error is shown as a band over the source editor while the strip bounces
+// parse error is shown as a band over the source editor while the mode bounces
 // back to Source. Called from State.Draw.
 func (s *State) wysiwygDraw(p painter.Painter) {
 	w := s.wysiwyg()
+	// Opening/closing a file repaints (git.refresh) but does not re-layout, so the
+	// file tabs are re-synced here — as the sidebar re-syncs its model in draw — so
+	// the strip always reflects the current open-tab list.
+	w.syncFileTabs()
 	w.tabs.Draw(p, s.theme)
 	if w.active() {
 		// Re-establish the toolbar + RichEditor bounds every frame (the editor pane
@@ -289,8 +334,8 @@ func (s *State) wysiwygDraw(p painter.Painter) {
 
 // --- input ----------------------------------------------------------------
 
-// wysiwygClick routes a pointer press: the editor-pane tab strip (the
-// Source│WYSIWYG tabs) or (while the WYSIWYG tab is active) the formatting toolbar
+// wysiwygClick routes a pointer press: the editor-pane file-tab strip
+// (open files) or (while WYSIWYG is active) the formatting toolbar
 // or the RichEditor. It returns true when it consumed the press so
 // State.HandleClick stops. Called before the generic toolbar/editor routing.
 func (s *State) wysiwygClick(x, y int) bool {
@@ -389,24 +434,30 @@ func (s *State) wysiwygKey(code string) bool {
 
 // --- host / test introspection -------------------------------------------
 
-// ToggleWysiwyg flips the active editor tab (Source <-> WYSIWYG) from the host
-// (the wasm driver and the headless harness), driving the same enter/leave path a
-// strip click takes.
+// ToggleWysiwyg flips the editor view (Source <-> WYSIWYG) from the host (the
+// wasm driver and the headless harness), driving the same enter/leave path the
+// toolbar toggle button takes.
 func (s *State) ToggleWysiwyg() { s.wysiwyg().toggle_() }
 
-// SetEditorTab selects the editor pane's tab (0 = Source, 1 = WYSIWYG) directly,
-// driving the same enter/leave path a strip click takes — the host/headless hook
-// for the reactive active-tab state.
-func (s *State) SetEditorTab(idx int) { s.wysiwyg().selectTab(idx) }
+// SetEditorTab selects the editor view (0 = Source, 1 = WYSIWYG) directly,
+// driving the same enter/leave path the toolbar toggle takes — the host/headless
+// hook for the reactive view state. Any non-WYSIWYG index means Source.
+func (s *State) SetEditorTab(idx int) { s.wysiwyg().setMode(idx == tabWysiwyg) }
 
-// ActiveEditorTab is the selected editor-pane tab index (0 = Source, 1 = WYSIWYG),
-// read from the strip's reactive Observable. Host/headless introspection.
-func (s *State) ActiveEditorTab() int { return s.wysiwyg().tabs.Selected().Get() }
+// ActiveEditorTab is the selected editor view index (0 = Source, 1 = WYSIWYG),
+// derived from the mode boolean. Host/headless introspection.
+func (s *State) ActiveEditorTab() int {
+	if s.wysiwyg().active() {
+		return tabWysiwyg
+	}
+	return tabSource
+}
 
-// EditorTabRect is the device rectangle of editor tab i (0 = Source, 1 = WYSIWYG)
-// in surface coordinates, so a headless harness can click a tab precisely.
+// EditorTabRect is the device rectangle (surface coordinates) of the Source⇄WYSIWYG
+// control, so a headless harness can click it precisely. The view is now one
+// toolbar toggle button, so both indices return that button's rect.
 func (s *State) EditorTabRect(i int) [4]int {
-	r := s.wysiwyg().tabs.TabRect(i)
+	r := s.wysiwygBtnRect
 	return [4]int{r.X, r.Y, r.W, r.H}
 }
 
