@@ -487,10 +487,10 @@ func TestSidebarScroll(t *testing.T) {
 	if !s.HandleScroll(tl.X+2, tl.Y+tl.H/2, 0, 2) {
 		t.Fatal("scroll over the timeline should be consumed")
 	}
-	// Scroll over the brand/button band (inside the column, neither tree nor
+	// Scroll over the Files accordion header (inside the column, neither tree nor
 	// timeline) is NOT consumed by the sidebar.
-	if s.HandleScroll(s.sidebar.logoRect.X+1, s.sidebar.logoRect.Y+1, 0, 2) {
-		t.Fatal("scroll over the brand band should not be consumed by the sidebar")
+	if s.HandleScroll(s.sidebar.filesHdrRect.X+1, s.sidebar.filesHdrRect.Y+1, 0, 2) {
+		t.Fatal("scroll over the Files header should not be consumed by the sidebar")
 	}
 	// Scroll outside the column, and while closed, is not consumed.
 	if s.sidebar.handleScroll(testW-1, 0, 2) {
