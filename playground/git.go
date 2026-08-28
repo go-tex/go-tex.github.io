@@ -1296,12 +1296,19 @@ func (v *gitView) resolveWorkspace() func(string) ([]byte, bool) {
 	}
 }
 
-// compileSource is the LaTeX the render pane compiles: the primary .tex's LIVE
-// buffer when a repo with a primary .tex is open — its editor content when that
-// file is active, else its stashed buffer — so the render tracks the primary's
-// edits even while another file is being edited. With no repo (or no primary
-// .tex) it falls back to the editor's own buffer (the sample document).
+// compileSource is the LaTeX the render pane compiles: the ACTIVE .tex's LIVE
+// buffer — the document the reader is looking at — so a workspace holding several
+// .tex renders whichever one is open, not one hardwired file. openFile recompiles
+// on every switch, so opening another .tex re-renders it. When the active file is
+// not a .tex (a .bib, a .sty, the README) it falls back to the primary .tex so
+// the preview does not blank out, then to the editor's own buffer (the sample
+// document) when there is no repo or no primary.
 func (v *gitView) compileSource() string {
+	if p := v.loaded.Get(); strings.EqualFold(path.Ext(p), ".tex") {
+		if c, ok := v.bufferContent(p); ok {
+			return c
+		}
+	}
 	if v.primaryPath != "" {
 		if c, ok := v.bufferContent(v.primaryPath); ok {
 			return c
