@@ -4,8 +4,10 @@
 package playground
 
 import (
+	"github.com/go-icons/devicon"
 	"github.com/go-icons/material"
 	"github.com/go-icons/seti"
+	vscodeicons "github.com/go-icons/vscode-icons"
 	"github.com/go-widgets/painter"
 	"github.com/go-widgets/toolkit"
 )
@@ -27,6 +29,8 @@ type iconPack struct {
 var iconPacks = []iconPack{
 	{seti.Name, seti.Icon, seti.Folder},
 	{material.Name, material.Icon, material.Folder},
+	{vscodeicons.Name, vscodeicons.Icon, vscodeicons.Folder},
+	{devicon.Name, devicon.Icon, devicon.Folder},
 }
 
 // iconPackNames is the picker's option list, parallel to iconPacks.

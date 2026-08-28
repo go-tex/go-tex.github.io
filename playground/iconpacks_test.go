@@ -37,8 +37,27 @@ func TestPackDrawersRender(t *testing.T) {
 		if !paints(p.fileIconDrawer("paper.tex")) {
 			t.Errorf("%s: .tex file drawer painted nothing", p.name)
 		}
+		if !paints(p.fileIconDrawer("pkg.sty")) {
+			t.Errorf("%s: .sty file drawer painted nothing", p.name)
+		}
 		if !paints(p.folderIconDrawer()) {
 			t.Errorf("%s: folder drawer painted nothing", p.name)
+		}
+	}
+}
+
+// TestTeXStyDistinctGlyphs: the packs that carry a config/settings glyph give a
+// LaTeX package (.sty) a different icon than a LaTeX document (.tex), so the tree
+// reads a .sty apart from the document it supports. Devicon has no config glyph
+// and is exempt.
+func TestTeXStyDistinctGlyphs(t *testing.T) {
+	distinguishes := map[string]bool{"Seti UI": true, "Material": true, "VSCode Icons": true}
+	for _, p := range iconPacks {
+		if !distinguishes[p.name] {
+			continue
+		}
+		if tex, sty := p.file("paper.tex"), p.file("pkg.sty"); tex == "" || sty == "" || tex == sty {
+			t.Errorf("%s: .tex and .sty should be distinct glyphs", p.name)
 		}
 	}
 }
