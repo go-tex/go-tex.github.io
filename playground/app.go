@@ -150,8 +150,9 @@ type State struct {
 	paned      *toolkit.Paned
 	status     *toolkit.Statusbar
 
-	schemePicker *toolkit.DropDown
-	minimapBtn   *toolkit.Button
+	schemePicker   *toolkit.DropDown
+	iconPackPicker *toolkit.DropDown
+	minimapBtn     *toolkit.Button
 
 	// buildInfo is the immutable "which build is this" string shown in the last
 	// status-bar segment: a git short SHA + a UTC build timestamp, baked into the
@@ -352,6 +353,14 @@ func NewState(w, h int, dark bool) *State {
 	// initial scheme is applied by the first compile, not here). The picker lives
 	// for the whole app, so the unsubscribe handle is intentionally dropped.
 	s.schemePicker.Selected().Subscribe(func(idx int) { s.applyScheme(idx) })
+	// The file-type icon pack the workspace tree draws from (Seti UI / Material),
+	// chosen like the syntax theme. A change rebuilds the tree so every row's icon
+	// re-renders from the new pack.
+	s.iconPackPicker = toolkit.NewDropDown(iconPackNames(), 0)
+	s.iconPackPicker.Selected().Subscribe(func(int) {
+		s.sidebar.forceRebuild()
+		s.dirty = true
+	})
 	s.minimapBtn = toolkit.NewButton("Minimap", func() {
 		s.showMinimap = !s.showMinimap
 		s.layout()
@@ -672,6 +681,16 @@ func (s *State) ActiveTab() int      { return s.rightPane.activeTab() }
 func (s *State) ZoomPercent() int    { return s.renderView.Zoom().Get() }
 func (s *State) SelectedScheme() int { return s.schemePicker.Selected().Get() }
 
+// iconPackIdx is the index into iconPacks of the workspace tree's chosen icon
+// pack (clamped defensively, since the picker owns the value).
+func (s *State) iconPackIdx() int {
+	i := s.iconPackPicker.Selected().Get()
+	if i < 0 || i >= len(iconPacks) {
+		return 0
+	}
+	return i
+}
+
 // PageCount is the engine's logical page count; DrawnPages the number actually
 // rasterized and fed to the render pane. They let a headless test assert a
 // multi-page document reached the viewer.
@@ -870,6 +889,9 @@ func (s *State) layoutToolbar() {
 	pw := toolkit.Scaled(150)
 	s.schemePicker.SetBounds(toolkit.Rect{X: x, Y: yy, W: pw, H: h})
 	x += pw + gap
+	ipw := toolkit.Scaled(110)
+	s.iconPackPicker.SetBounds(toolkit.Rect{X: x, Y: yy, W: ipw, H: h})
+	x += ipw + gap
 	bw := toolkit.Scaled(84)
 	s.minimapBtn.SetBounds(toolkit.Rect{X: x, Y: yy, W: bw, H: h})
 	x += bw + gap
@@ -1010,6 +1032,7 @@ func (s *State) Draw(buf []byte) {
 	s.toolbarRule.SetBounds(toolkit.Rect{X: 0, Y: tbY + s.toolbarH - toolkit.Scaled(1), W: s.w, H: toolkit.Scaled(1)})
 	s.toolbarRule.Draw(p, s.theme)
 	s.schemePicker.Draw(p, s.theme)
+	s.iconPackPicker.Draw(p, s.theme)
 	s.minimapBtn.Draw(p, s.theme)
 	s.sidebarBtn.Selected().Set(s.sidebar.open)
 	s.sidebarBtn.Draw(p, s.theme)
@@ -1044,6 +1067,9 @@ func (s *State) Draw(buf []byte) {
 	// Popover floats above everything.
 	if s.schemePicker.Open().Get() {
 		s.schemePicker.DrawPopover(p, s.theme)
+	}
+	if s.iconPackPicker.Open().Get() {
+		s.iconPackPicker.DrawPopover(p, s.theme)
 	}
 	// The Collaborate + Git launchers and their modal panels float above the whole
 	// scene.
@@ -1118,6 +1144,12 @@ func (s *State) HandleClick(x, y int) bool {
 		s.dirty = true
 		return true
 	}
+	// So does an open icon-pack popover.
+	if s.iconPackPicker.Open().Get() {
+		s.iconPackPicker.PopoverClick(x, y)
+		s.dirty = true
+		return true
+	}
 
 	// WYSIWYG controls / RichEditor claim the press first (wysiwyg.go).
 	if s.wysiwygClick(x, y) {
@@ -1126,7 +1158,7 @@ func (s *State) HandleClick(x, y int) bool {
 
 	// Toolbar controls (the row between the topZone band and the body).
 	if y >= s.topZoneH && y < s.bodyTop() {
-		for _, w := range []toolkit.Widget{s.schemePicker, s.minimapBtn, s.sidebarBtn, s.findBtn} {
+		for _, w := range []toolkit.Widget{s.schemePicker, s.iconPackPicker, s.minimapBtn, s.sidebarBtn, s.findBtn} {
 			r := w.Bounds()
 			if r.Contains(x, y) {
 				w.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - r.X, Y: y - r.Y})
