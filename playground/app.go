@@ -230,6 +230,12 @@ type State struct {
 	// rather than left to wonder why a panel is not ready yet.
 	assetLoading string
 
+	// bootNotice is what the topZone says when the sample repository could not be
+	// opened. A boot clone that fails leaves the workspace closed, which looks
+	// exactly like a workspace nobody asked for — so the reason is said out loud
+	// and stays said until a clone succeeds.
+	bootNotice string
+
 	// topZoneH / bottomZoneH are the two moved-in HTML bands' reserved heights (the
 	// bottom one grows with its wrapped prose); the toolbar + body + status sit
 	// between them.
@@ -1709,3 +1715,17 @@ func (s *State) SetAssetLoading(name string) {
 
 // AssetLoading is what the topZone is currently announcing (host introspection).
 func (s *State) AssetLoading() string { return s.assetLoading }
+
+// SetBootNotice records why the sample repository is not there ("" clears it).
+// The topZone shows it in place of the ready line, so a reader is told rather
+// than left with a workspace that never opened.
+func (s *State) SetBootNotice(msg string) {
+	if s.bootNotice == msg {
+		return
+	}
+	s.bootNotice = msg
+	s.dirty = true
+}
+
+// BootNotice is what the topZone is currently reporting (host introspection).
+func (s *State) BootNotice() string { return s.bootNotice }

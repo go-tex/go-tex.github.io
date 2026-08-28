@@ -427,6 +427,11 @@ func (s *State) gitClone(boot bool, done func(err error)) {
 			// A fresh clone is a new repository: drop every prior edit buffer so no
 			// stale dirtiness leaks across repos.
 			v.buffers = map[string]*fileBuffer{}
+			// Any repository opening makes the boot notice stale: it says the
+			// SAMPLES did not arrive, and once something is open that is no longer
+			// the interesting truth. Cleared here rather than in BootClone's own
+			// callback, which only ever sees its own attempt.
+			s.SetBootNotice("")
 			v.primaryPath = primaryTeX(files)
 			v.log = v.backend.Log(gitLogLimit)
 			v.refreshStatus()
@@ -1415,9 +1420,15 @@ func (s *State) BootClone(done func(err error)) {
 	v.bootBuffer = s.Source()
 	s.gitClone(true, func(err error) {
 		if err == nil {
+			// The sidebar has been open from the start since #67; this keeps
+			// BootClone correct on its own terms rather than resting on that.
 			s.sidebar.open = true
 			s.layout()
 			s.dirty = true
+		} else {
+			// The workspace stays closed, which on its own is indistinguishable
+			// from a workspace nobody asked for. Say why.
+			s.SetBootNotice(gitErrorMessage(err))
 		}
 		if done != nil {
 			done(err)

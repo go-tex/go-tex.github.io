@@ -535,3 +535,48 @@ func dropTags(s string) string {
 		s = s[i+j+1:]
 	}
 }
+
+// A boot clone that fails leaves an EMPTY workspace — since #67 the sidebar is
+// open from the start, so what a reader sees is "No repository open", which
+// reads as "nothing was ever asked for" rather than "it was asked for and did
+// not arrive".
+//
+// The reason is said BESIDE what is missing, not in the global status band: a
+// band notice would sit there for as long as the page is open and crowd out the
+// line saying the engine is ready — which the zones proof caught by waiting for
+// that line and never seeing it again.
+func TestBootCloneFailureIsSaidOutLoud(t *testing.T) {
+	s, f, _ := withGit(t)
+	f.cloneErr = errGitTransport
+
+	s.BootClone(nil)
+	notice := s.BootNotice()
+	if notice == "" {
+		t.Fatal("the failure was silent")
+	}
+	if !strings.Contains(notice, "CORS") {
+		t.Errorf("the notice must name the trouble: %q", notice)
+	}
+	// The band is NOT where it goes.
+	if got := s.TopZoneStatusText(); got != topZoneStatus {
+		t.Errorf("the band must stay on the ready line, got %q", got)
+	}
+	// The workspace carries it, in place of "clone one to browse its files".
+	buf := make([]byte, testW*testH*4)
+	s.Draw(buf)
+	if got := s.sidebar.empty.Message().Get(); got != "Sample documents unavailable" {
+		t.Errorf("the empty workspace reads %q", got)
+	}
+	if got := s.sidebar.empty.Caption().Get(); got != notice {
+		t.Errorf("the caption reads %q, want the reason", got)
+	}
+
+	// Any repository opening makes it stale, not just a second boot attempt.
+	f.cloneErr = nil
+	f.files = []string{"a.tex"}
+	f.fileData["a.tex"] = "x"
+	s.GitClone(nil)
+	if s.BootNotice() != "" {
+		t.Errorf("a successful clone must clear the notice: %q", s.BootNotice())
+	}
+}
