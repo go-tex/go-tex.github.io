@@ -202,7 +202,7 @@ func TestGitErrorMessage(t *testing.T) {
 		{errGitAuth, "Authentication failed — check your access token."},
 		{errGitNonFastForward, "Push rejected: the remote moved on. Pull, then push again."},
 		{errGitRepoNotFound, "Repository not found — check the remote URL."},
-		{errGitTransport, "Network/CORS error reaching the remote — is it CORS-enabled?"},
+		{errGitTransport, "Couldn't reach the remote — a network error, CORS, or a browser extension / privacy setting blocking it: git: transport error"},
 		{errNoGitRepo, "Clone a repository first."},
 		{errNoGitFile, "Open a file before committing."},
 		{errors.New("weird"), "weird"},
