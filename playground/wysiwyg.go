@@ -35,6 +35,7 @@ import (
 	"github.com/go-widgets/toolkit"
 
 	latex "github.com/go-richdoc/latex"
+	markdown "github.com/go-richdoc/markdown"
 )
 
 // Editor-view indices, kept for the headless API ([State.SetEditorTab] /
@@ -49,13 +50,31 @@ const (
 )
 
 // parseLaTeX / writeLaTeX are the mode's LaTeX codec: the neutral richdoc model
-// in and out through go-richdoc/latex. They are named indirections so the single
-// place the converter is wired is obvious and the enter/leave paths read the same
-// whichever way the document is flowing.
+// in and out through go-richdoc/latex. parseMarkdown reads Markdown into the same
+// neutral model. They are named indirections so the single place each converter is
+// wired is obvious and the enter/leave paths read the same whichever way the
+// document is flowing.
 var (
-	parseLaTeX = latex.Parse
-	writeLaTeX = latex.Write
+	parseLaTeX    = latex.Parse
+	writeLaTeX    = latex.Write
+	parseMarkdown = markdown.Parse
 )
+
+// markdownLaTeX converts a Markdown source into the LaTeX the go-tex engine
+// renders, via the go-richdoc model (Markdown -> richdoc -> LaTeX). It returns ""
+// when the Markdown does not parse (or does not convert), so a README that cannot
+// be turned into a document simply blanks the render pane rather than erroring.
+func markdownLaTeX(src string) string {
+	doc, err := parseMarkdown([]byte(src))
+	if err != nil {
+		return ""
+	}
+	out, err := writeLaTeX(doc)
+	if err != nil {
+		return ""
+	}
+	return string(out)
+}
 
 // wysiwyg is the mode's whole state: the editor-pane FILE-tab strip and the
 // formatting toolbar (both pinned to the top of the editor pane), the RichEditor
