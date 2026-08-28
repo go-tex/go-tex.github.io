@@ -243,9 +243,12 @@ func TestSidebarEmptyState(t *testing.T) {
 	if s.sidebar.hasRepo() {
 		t.Fatal("no repo should be open")
 	}
-	// The header reads the plain title when no repo is open.
-	if s.sidebar.headerText() != "Workspace" {
-		t.Fatalf("empty header = %q", s.sidebar.headerText())
+	// With no repo open the accordion headers read their plain titles.
+	if s.sidebar.filesHeaderText() != "Files" {
+		t.Fatalf("empty files header = %q", s.sidebar.filesHeaderText())
+	}
+	if s.sidebar.histHeaderText() != "History" {
+		t.Fatalf("empty history header = %q", s.sidebar.histHeaderText())
 	}
 	// A Clone button is laid out; clicking it opens the Remote-Git panel.
 	var clone sidebarButton
@@ -271,9 +274,12 @@ func TestSidebarFileTreeAndBadges(t *testing.T) {
 	if strings.Join(rows, "|") != strings.Join(want, "|") {
 		t.Fatalf("file rows = %v, want %v", rows, want)
 	}
-	// The header now annotates the branch.
-	if s.sidebar.headerText() != "Workspace · main" {
-		t.Fatalf("header = %q", s.sidebar.headerText())
+	// The Files header names the active file; the History header carries the branch.
+	if s.sidebar.filesHeaderText() != "Files · main.tex" {
+		t.Fatalf("files header = %q", s.sidebar.filesHeaderText())
+	}
+	if s.sidebar.histHeaderText() != "History · main" {
+		t.Fatalf("history header = %q", s.sidebar.histHeaderText())
 	}
 	// The timeline carries the commits, newest first.
 	titles := s.SidebarTimelineTitles()
@@ -424,6 +430,9 @@ func TestSidebarButtonsDispatch(t *testing.T) {
 
 func TestSidebarTimelineClickShowsDetail(t *testing.T) {
 	s, _ := withClonedSidebar(t)
+	// History starts collapsed (Files opens first); open it to reveal the timeline.
+	hh := s.sidebar.histHdrRect
+	s.HandleClick(hh.X+hh.W/2, hh.Y+hh.H/2)
 	tl := s.sidebar.tlRect
 	x := tl.X + toolkit.Scaled(4)
 	y := tl.Y + toolkit.Scaled(toolkit.TimelinePadY) + 1 // first event
@@ -466,18 +475,22 @@ func TestSidebarDetailPriority(t *testing.T) {
 
 func TestSidebarScroll(t *testing.T) {
 	s, _ := withClonedSidebar(t)
+	// Files opens first, so the tree is scrollable.
 	tr := s.sidebar.treeRect
-	tl := s.sidebar.tlRect
 	if !s.HandleScroll(tr.X+2, tr.Y+tr.H/2, 0, 2) {
 		t.Fatal("scroll over the tree should be consumed")
 	}
+	// Open History (exclusive: this collapses Files) to reveal the timeline.
+	hh := s.sidebar.histHdrRect
+	s.HandleClick(hh.X+hh.W/2, hh.Y+hh.H/2)
+	tl := s.sidebar.tlRect
 	if !s.HandleScroll(tl.X+2, tl.Y+tl.H/2, 0, 2) {
 		t.Fatal("scroll over the timeline should be consumed")
 	}
-	// Scroll over the header/button band (inside the column, neither tree nor
+	// Scroll over the brand/button band (inside the column, neither tree nor
 	// timeline) is NOT consumed by the sidebar.
-	if s.HandleScroll(s.sidebar.headerRect.X+1, s.sidebar.headerRect.Y+1, 0, 2) {
-		t.Fatal("scroll over the header band should not be consumed by the sidebar")
+	if s.HandleScroll(s.sidebar.logoRect.X+1, s.sidebar.logoRect.Y+1, 0, 2) {
+		t.Fatal("scroll over the brand band should not be consumed by the sidebar")
 	}
 	// Scroll outside the column, and while closed, is not consumed.
 	if s.sidebar.handleScroll(testW-1, 0, 2) {
@@ -660,37 +673,76 @@ func TestSidebarShowsBrandLogo(t *testing.T) {
 	}
 }
 
-// TestSidebarAccordionCollapses: collapsing the History section frees its band
-// to the tree; collapsing Files zeroes the tree body. Both start open.
-func TestSidebarAccordionCollapses(t *testing.T) {
+// TestSidebarAccordionExclusive: the two sections are mutually exclusive. Files
+// opens first (History collapsed); opening one collapses the other, and collapsing
+// the open one leaves both closed.
+func TestSidebarAccordionExclusive(t *testing.T) {
 	s, _ := withClonedSidebar(t)
 	b := s.sidebar
 	buf := make([]byte, testW*testH*4)
-	s.Draw(buf) // lay out with both sections open
-	if !b.filesExp.Expanded().Get() || !b.histExp.Expanded().Get() {
-		t.Fatal("both accordion sections should start open")
+	s.Draw(buf) // lay out
+	if !b.filesExp.Expanded().Get() || b.histExp.Expanded().Get() {
+		t.Fatal("Files should start open and History collapsed")
 	}
-	treeOpen, tlOpen := b.treeRect.H, b.tlRect.H
-	if treeOpen <= 0 || tlOpen <= 0 {
-		t.Fatalf("open: tree=%d tl=%d, want both > 0", treeOpen, tlOpen)
+	if b.treeRect.H <= 0 || b.tlRect.H != 0 {
+		t.Fatalf("Files open: tree=%d tl=%d, want tree>0 tl=0", b.treeRect.H, b.tlRect.H)
 	}
-	// Collapse History via a click on its header.
+	// Open History via its header click: exclusivity collapses Files.
 	if !s.HandleClick(b.histHdrRect.X+10, b.histHdrRect.Y+2) {
 		t.Fatal("click on the History header was not consumed")
 	}
-	if b.histExp.Expanded().Get() {
-		t.Fatal("History should be collapsed after the header click")
+	if !b.histExp.Expanded().Get() || b.filesExp.Expanded().Get() {
+		t.Fatal("opening History should collapse Files")
 	}
-	if b.tlRect.H != 0 {
-		t.Errorf("collapsed History timeline should have zero height, got %d", b.tlRect.H)
+	if b.tlRect.H <= 0 || b.treeRect.H != 0 {
+		t.Errorf("History open: tree=%d tl=%d, want tl>0 tree=0", b.treeRect.H, b.tlRect.H)
 	}
-	if b.treeRect.H <= treeOpen {
-		t.Errorf("tree should grow when History collapses: %d -> %d", treeOpen, b.treeRect.H)
-	}
-	// Collapse Files too: its tree body zeroes.
+	// Open Files again: exclusivity collapses History.
 	s.HandleClick(b.filesHdrRect.X+10, b.filesHdrRect.Y+2)
-	if b.treeRect.H != 0 {
-		t.Errorf("collapsed Files tree should have zero height, got %d", b.treeRect.H)
+	if !b.filesExp.Expanded().Get() || b.histExp.Expanded().Get() {
+		t.Fatal("opening Files should collapse History")
+	}
+	// Collapse the open Files: both end closed.
+	s.HandleClick(b.filesHdrRect.X+10, b.filesHdrRect.Y+2)
+	if b.filesExp.Expanded().Get() || b.histExp.Expanded().Get() {
+		t.Fatal("collapsing the open section should leave both closed")
+	}
+	if b.treeRect.H != 0 || b.tlRect.H != 0 {
+		t.Errorf("both collapsed: tree=%d tl=%d, want both 0", b.treeRect.H, b.tlRect.H)
+	}
+}
+
+// TestSidebarCompactColumn: opening a file clears the detail strip (the file's
+// name shows in the Files header instead of a notice line), so with no error or
+// clicked-commit detail the strip collapses to zero height; and drawing with
+// History open paints the timeline body.
+func TestSidebarCompactColumn(t *testing.T) {
+	s, _ := withClonedSidebar(t)
+	b := s.sidebar
+	buf := make([]byte, testW*testH*4)
+	s.Draw(buf) // initial layout
+
+	// Open a second file: the "Loaded/Opened" notice is gone, so with no error or
+	// clicked-commit detail the strip collapses.
+	if !s.GitOpenFile("chapters/intro.tex") {
+		t.Fatal("open intro.tex")
+	}
+	b.commitDetail = ""
+	s.git.errMsg.Set("")
+	b.layout()
+	if b.detailRect.H != 0 {
+		t.Errorf("idle detail strip should collapse to zero height, got %d", b.detailRect.H)
+	}
+	if got := b.filesHeaderText(); got != "Files · intro.tex" {
+		t.Errorf("files header = %q, want Files · intro.tex", got)
+	}
+
+	// Open History (exclusive) and draw: the timeline body paints (tlRect.H > 0).
+	hh := b.histHdrRect
+	s.HandleClick(hh.X+hh.W/2, hh.Y+hh.H/2)
+	s.Draw(buf)
+	if b.tlRect.H <= 0 {
+		t.Fatal("History open should give the timeline a body")
 	}
 }
 
