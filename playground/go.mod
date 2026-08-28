@@ -9,8 +9,10 @@ require (
 	github.com/go-gfx/qr v0.1.0
 	github.com/go-git/go-billy/v5 v5.9.0
 	github.com/go-git/go-git/v5 v5.19.2
-	github.com/go-icons/material v0.1.0
-	github.com/go-icons/seti v0.1.0
+	github.com/go-icons/devicon v0.1.0
+	github.com/go-icons/material v0.1.1
+	github.com/go-icons/seti v0.1.1
+	github.com/go-icons/vscode-icons v0.1.2
 	github.com/go-opentype/fonts v0.8.0
 	github.com/go-richdoc/latex v0.2.0
 	github.com/go-richdoc/richdoc v0.2.0
