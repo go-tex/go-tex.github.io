@@ -274,7 +274,8 @@ func (b *sidebar) signature() string {
 // rebuild regenerates the file tree + timeline from the current git snapshot and
 // re-selects the active file's node. Called only when signature() changes.
 func (b *sidebar) rebuild() {
-	roots, nodePaths := buildFileTree(b.s.git.files, b.fileBadge)
+	pack := iconPacks[b.s.iconPackIdx()]
+	roots, nodePaths := buildFileTree(b.s.git.files, b.fileBadge, pack.fileIconDrawer, pack.folderIconDrawer())
 	setTreeRoot(b.tree, roots) // widget-state write isolated in sidebar_binding.go
 	b.nodePaths = nodePaths
 	// Re-select the active file's node so the highlight follows the open file.
@@ -308,7 +309,7 @@ func timelineEvents(log []GitCommitInfo) []toolkit.TimelineEvent {
 // carrying a name cell + a status-badge cell tinted via CellInk) and the leaf →
 // path map a click resolves through. Pure + testable: the badge lookup is passed
 // in so the tree build has no dependency on the live git state.
-func buildFileTree(files []string, badge func(string) (string, toolkit.RGBA)) ([]*toolkit.TreeTableNode, map[*toolkit.TreeTableNode]string) {
+func buildFileTree(files []string, badge func(string) (string, toolkit.RGBA), fileIcon func(string) iconDrawer, folderIcon iconDrawer) ([]*toolkit.TreeTableNode, map[*toolkit.TreeTableNode]string) {
 	var roots []*toolkit.TreeTableNode
 	dirs := map[string]*toolkit.TreeTableNode{}
 	nodePaths := map[*toolkit.TreeTableNode]string{}
@@ -327,7 +328,7 @@ func buildFileTree(files []string, badge func(string) (string, toolkit.RGBA)) ([
 		if i := strings.LastIndex(dir, "/"); i >= 0 {
 			name, parent = dir[i+1:], dir[:i]
 		}
-		n := &toolkit.TreeTableNode{Cells: []string{name + "/", ""}, Expanded: true}
+		n := &toolkit.TreeTableNode{Cells: []string{name + "/", ""}, Expanded: true, Icon: folderIcon}
 		dirs[dir] = n
 		if p := dirNode(parent); p != nil {
 			p.Children = append(p.Children, n)
@@ -345,7 +346,7 @@ func buildFileTree(files []string, badge func(string) (string, toolkit.RGBA)) ([
 			dir, name = f[:i], f[i+1:]
 		}
 		glyph, ink := badge(f)
-		leaf := &toolkit.TreeTableNode{Cells: []string{name, glyph}, CellInk: []toolkit.RGBA{{}, ink}}
+		leaf := &toolkit.TreeTableNode{Cells: []string{name, glyph}, CellInk: []toolkit.RGBA{{}, ink}, Icon: fileIcon(name)}
 		nodePaths[leaf] = f
 		if p := dirNode(dir); p != nil {
 			p.Children = append(p.Children, leaf)
@@ -376,6 +377,11 @@ func (b *sidebar) syncModel() {
 		b.rebuild()
 	}
 }
+
+// forceRebuild makes the next syncModel rebuild the tree even when the git
+// snapshot is unchanged — used when the icon pack changes, which re-renders every
+// row's icon without touching the file list.
+func (b *sidebar) forceRebuild() { b.sig = "" }
 
 // setBounds records the column rect and recomputes the sub-region layout,
 // rebuilding the tree/timeline when the signature changed.

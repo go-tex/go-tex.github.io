@@ -43,7 +43,7 @@ func TestBuildFileTree(t *testing.T) {
 		}
 		return "", toolkit.RGBA{}
 	}
-	roots, nodePaths := buildFileTree(files, badge)
+	roots, nodePaths := buildFileTree(files, badge, func(string) iconDrawer { return nil }, nil)
 
 	// Two top-level directories (chapters/, img/) come before the top-level files
 	// (main.tex, refs.bib) in sorted order, each dir expanded with its children.
