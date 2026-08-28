@@ -28,7 +28,12 @@ a{color:var(--to);text-decoration:none}
 .btn-ghost{border:2px solid rgba(255,255,255,.7);color:#fff}
 .theme{position:absolute;top:16px;right:18px;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.35);
   color:#fff;border-radius:9px;padding:7px 12px;font-size:13px;cursor:pointer;font-weight:600}
-.wrap{max-width:1040px;margin:-50px auto 64px;padding:0 24px}
+/* position+z-index so the -50px card floats ABOVE the hero. The hero is
+   position:relative (for its theme button), which makes it a positioned element
+   that paints over later STATIC siblings — so a static .wrap has its top 50px
+   (the panel heading) covered by the blue band. A positioned .wrap with a
+   higher z-index paints on top instead. */
+.wrap{max-width:1040px;margin:-50px auto 64px;padding:0 24px;position:relative;z-index:1}
 .panel{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px 26px;box-shadow:0 10px 30px var(--shadow)}
 .panel h2{color:var(--to);margin:0 0 8px}
 .panel p{margin:0 0 8px}
