@@ -64,26 +64,40 @@ const (
 // [State.SetSiteRoot]; a native build keeps this canonical default.
 const defaultSiteRoot = "https://go-tex.github.io/"
 
-// topZone is the status band above the toolbar. It is passive (no interactive
-// controls), so it only lays out and draws.
+// topZone is the status band above the toolbar. It carries the app's brand
+// lockup (the go-tex tile + wordmark, moved here from the workspace sidebar so it
+// sits at the very top of the app) on the left and the passive status line on the
+// right; it has no interactive controls, so it only lays out and draws.
 type topZone struct {
-	s      *State
-	bg     *toolkit.Backdrop // the band's ground
-	rule   *toolkit.Backdrop // the bottom hairline separating it from the toolbar
-	dot    *toolkit.Backdrop // the small "ready" indicator
-	lbl    *toolkit.Label
-	bounds toolkit.Rect
+	s        *State
+	bg       *toolkit.Backdrop // the band's ground
+	rule     *toolkit.Backdrop // the bottom hairline separating it from the toolbar
+	logo     *toolkit.Backdrop // the brand tile
+	logoT    *toolkit.Label    // the "T" mark inside the tile
+	logoWord *toolkit.Label    // the "go-tex" wordmark beside the tile
+	dot      *toolkit.Backdrop // the small "ready" indicator
+	lbl      *toolkit.Label
+	bounds   toolkit.Rect
 }
 
 // newTopZone builds the band's persistent widgets.
 func newTopZone(s *State) *topZone {
-	return &topZone{
-		s:    s,
-		bg:   &toolkit.Backdrop{},
-		rule: &toolkit.Backdrop{},
-		dot:  &toolkit.Backdrop{},
-		lbl:  toolkit.NewLabel(topZoneStatus),
+	z := &topZone{
+		s:     s,
+		bg:    &toolkit.Backdrop{},
+		rule:  &toolkit.Backdrop{},
+		logo:  &toolkit.Backdrop{Fill: brandIndigo, Radius: toolkit.Scaled(4)},
+		logoT: toolkit.NewLabel("T"),
+		dot:   &toolkit.Backdrop{},
+		lbl:   toolkit.NewLabel(topZoneStatus),
 	}
+	z.logoT.Ink = toolkit.RGB(0xFF, 0xFF, 0xFF)
+	z.logoT.Align = toolkit.AlignCenter
+	z.logoT.VAlign = toolkit.VMiddle
+	z.logoWord = toolkit.NewLabel("go-tex")
+	z.logoWord.Ink = brandIndigo
+	z.logoWord.VAlign = toolkit.VMiddle
+	return z
 }
 
 // height is the band's fixed device height (one text line plus padding), scaled
@@ -109,15 +123,29 @@ func (z *topZone) draw(p painter.Painter, theme *toolkit.Theme) {
 	z.rule.Draw(p, theme)
 
 	pad := toolkit.Scaled(10)
+	gap := toolkit.Scaled(8)
+
+	// Brand lockup on the left: the go-tex tile with its "T", then the wordmark.
+	tile := toolkit.Scaled(16)
+	logoRect := toolkit.Rect{X: r.X + pad, Y: r.Y + (r.H-tile)/2, W: tile, H: tile}
+	z.logo.SetBounds(logoRect)
+	z.logo.Draw(p, theme)
+	z.logoT.SetBounds(logoRect)
+	z.logoT.Draw(p, theme)
+	wordW := toolkit.Scaled(46)
+	z.logoWord.SetBounds(toolkit.Rect{X: logoRect.X + tile + toolkit.Scaled(6), Y: r.Y, W: wordW, H: r.H})
+	z.logoWord.Draw(p, theme)
+
+	// Status line to the right of the brand: the ready dot, then the label.
 	d := toolkit.Scaled(8)
 	line, dot := z.statusLine()
 	z.lbl.Text().Set(line)
+	dx := logoRect.X + tile + toolkit.Scaled(6) + wordW + toolkit.Scaled(14)
 	z.dot.Fill = dot
-	z.dot.SetBounds(toolkit.Rect{X: r.X + pad, Y: r.Y + (r.H-d)/2, W: d, H: d})
+	z.dot.SetBounds(toolkit.Rect{X: dx, Y: r.Y + (r.H-d)/2, W: d, H: d})
 	z.dot.Draw(p, theme)
 
-	gap := toolkit.Scaled(8)
-	lx := r.X + pad + d + gap
+	lx := dx + d + gap
 	z.lbl.SetBounds(toolkit.Rect{X: lx, Y: r.Y, W: r.X + r.W - pad - lx, H: r.H})
 	z.lbl.Ink = theme.OnSurface
 	z.lbl.VAlign = toolkit.VMiddle

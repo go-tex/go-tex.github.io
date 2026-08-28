@@ -12,8 +12,8 @@ import (
 	"github.com/go-widgets/toolkit"
 )
 
-// brandIndigo is the go-tex mark colour (the favicon tile), used for the sidebar
-// logo tile and wordmark. It reads on both the light and the dark surface.
+// brandIndigo is the go-tex mark colour (the favicon tile), used for the topZone
+// logo tile and wordmark (zones.go). It reads on both the light and dark surface.
 var brandIndigo = toolkit.RGB(0x4F, 0x46, 0xE5)
 
 // This file is the Git WORKSPACE SIDEBAR: a toggleable left column, disjoint
@@ -136,11 +136,6 @@ type sidebar struct {
 	// persistent toolkit widgets, built once and reused every frame.
 	bg       *toolkit.Backdrop
 	rule     *toolkit.Backdrop
-	logo     *toolkit.Backdrop // brand tile at the top of the column
-	logoT    *toolkit.Label    // the "T" mark inside the tile
-	logoWord *toolkit.Label    // the "go-tex" wordmark beside the tile
-	logoRect toolkit.Rect
-	wordRect toolkit.Rect
 	detail   *toolkit.Label
 	filesExp *toolkit.Expander // "Files" accordion header (labelled with the active file) over the tree
 	histExp  *toolkit.Expander // "History" accordion header (labelled with the branch) over the timeline
@@ -166,14 +161,6 @@ func (b *sidebar) ensureWidgets() {
 	}
 	b.bg = &toolkit.Backdrop{}
 	b.rule = &toolkit.Backdrop{}
-	b.logo = &toolkit.Backdrop{Fill: brandIndigo, Radius: toolkit.Scaled(5)}
-	b.logoT = toolkit.NewLabel("T")
-	b.logoT.Ink = toolkit.RGB(0xFF, 0xFF, 0xFF)
-	b.logoT.Align = toolkit.AlignCenter
-	b.logoT.VAlign = toolkit.VMiddle
-	b.logoWord = toolkit.NewLabel("go-tex")
-	b.logoWord.Ink = brandIndigo
-	b.logoWord.VAlign = toolkit.VMiddle
 	b.detail = toolkit.NewLabel("")
 	// The first column carries the file names; its title is left blank because the
 	// "Files" accordion header right above already labels the tree (the standalone
@@ -430,13 +417,9 @@ func (b *sidebar) layout() {
 	}
 
 	b.buttons = b.buttons[:0]
+	// The brand lockup now lives at the very top of the app (the topZone), not in
+	// this column, so the workspace content starts right at the top padding.
 	cur := r.Y + pad
-	// Brand lockup at the very top: a square go-tex tile and the wordmark beside
-	// it, above the workspace/branch header.
-	logoH := toolkit.Scaled(22)
-	b.logoRect = toolkit.Rect{X: innerX, Y: cur, W: logoH, H: logoH}
-	b.wordRect = toolkit.Rect{X: innerX + logoH + toolkit.Scaled(6), Y: cur, W: innerW - logoH - toolkit.Scaled(6), H: logoH}
-	cur += logoH + gap
 
 	if !b.hasRepo() {
 		// Empty state: centre the prompt in the remaining column, with a Clone
@@ -589,14 +572,6 @@ func (b *sidebar) draw(p painter.Painter, theme *toolkit.Theme) {
 	b.rule.Fill = theme.Border
 	b.rule.SetBounds(toolkit.Rect{X: r.X + r.W - toolkit.Scaled(1), Y: r.Y, W: toolkit.Scaled(1), H: r.H})
 	b.rule.Draw(p, theme)
-
-	// Brand lockup: the tile with its "T", then the wordmark.
-	b.logo.SetBounds(b.logoRect)
-	b.logo.Draw(p, theme)
-	b.logoT.SetBounds(b.logoRect)
-	b.logoT.Draw(p, theme)
-	b.logoWord.SetBounds(b.wordRect)
-	b.logoWord.Draw(p, theme)
 
 	if !b.hasRepo() {
 		body := b.empty.Bounds()

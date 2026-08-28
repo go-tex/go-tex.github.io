@@ -149,19 +149,30 @@ func TestSetSiteRootUpdatesBackLink(t *testing.T) {
 	}
 }
 
-// TestTopZoneStatusLinePaints proves the topZone status band and its ready dot
-// paint over the surface (not left blank).
+// TestTopZoneStatusLinePaints proves the topZone status band paints its brand
+// lockup (left) and its ready dot (right of the brand) over the surface.
 func TestTopZoneStatusLinePaints(t *testing.T) {
 	s := newTestState(t, false)
 	buf := make([]byte, testW*testH*4)
 	s.Draw(buf)
 
-	// The ready dot's green must appear somewhere in the topZone band.
-	sawDot := false
+	// The brand tile's indigo must appear near the left edge of the band.
+	sawBrand := false
 	for y := 0; y < s.topZoneH; y++ {
 		for x := 0; x < 40; x++ {
-			px := samplePixel(buf, x, y)
-			if px == readyDotColor {
+			if samplePixel(buf, x, y) == brandIndigo {
+				sawBrand = true
+			}
+		}
+	}
+	if !sawBrand {
+		t.Fatal("the topZone brand tile did not paint")
+	}
+	// The ready dot's green must appear in the band, to the right of the brand.
+	sawDot := false
+	for y := 0; y < s.topZoneH; y++ {
+		for x := 0; x < testW; x++ {
+			if samplePixel(buf, x, y) == readyDotColor {
 				sawDot = true
 			}
 		}
