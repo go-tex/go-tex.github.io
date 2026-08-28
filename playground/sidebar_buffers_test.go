@@ -11,8 +11,8 @@ import (
 // This file proves the independent per-file edit-buffer model (git.go): opening
 // another file no longer discards the current file's unsaved edits, several files
 // can be dirty at once (their tree badges reflect it), stage/commit flush every
-// dirty buffer to the working tree, and the render compiles the primary .tex's
-// live buffer.
+// dirty buffer to the working tree, and the render compiles the ACTIVE .tex's
+// live buffer (falling back to the primary for a non-.tex active file).
 
 // The typeInto helper (real HandleChar input, caret-advancing) lives in
 // latexcomplete_test.go and is reused here.
@@ -214,9 +214,10 @@ func TestGitCommitFlushError(t *testing.T) {
 	}
 }
 
-// TestPrimaryTeXCompiles proves item 4: the render compiles the primary .tex's LIVE
-// buffer, tracking its edits even while another file (a .sty/.bib) is being edited.
-func TestPrimaryTeXCompiles(t *testing.T) {
+// TestActiveTeXCompiles proves the render follows the ACTIVE .tex: a workspace
+// with several .tex renders whichever one is open, tracking its live edits, and
+// falls back to the primary when the active file is not a .tex.
+func TestActiveTeXCompiles(t *testing.T) {
 	// No repo: the editor's own buffer (the sample document) compiles.
 	s0 := newTestState(t, false)
 	if got := s0.git.compileSource(); got != s0.Source() {
@@ -232,15 +233,26 @@ func TestPrimaryTeXCompiles(t *testing.T) {
 	if got := s.git.compileSource(); got != "QMAIN BODY" {
 		t.Fatalf("compileSource (primary active) = %q, want QMAIN BODY", got)
 	}
-	// Switch to a non-primary file: the render still compiles the primary's stashed
-	// (edited) buffer.
+	// Switch to ANOTHER .tex: the render follows it, not the primary.
+	if !s.GitOpenFile("chapters/ch1.tex") {
+		t.Fatal("open chapters/ch1.tex")
+	}
+	if got := s.git.compileSource(); got != "CH1" {
+		t.Fatalf("compileSource (chapters/ch1.tex active) = %q, want CH1", got)
+	}
+	// Its live edits compile too.
+	typeInto(s, "Z") // ch1.tex -> "ZCH1"
+	if got := s.git.compileSource(); got != "ZCH1" {
+		t.Fatalf("compileSource (editing ch1.tex) = %q, want ZCH1", got)
+	}
+	// Switch to a non-.tex file: the render falls back to the primary's stashed edits.
 	if !s.GitOpenFile("refs.bib") {
 		t.Fatal("open refs.bib")
 	}
 	if got := s.git.compileSource(); got != "QMAIN BODY" {
 		t.Fatalf("compileSource (editing refs.bib) = %q, want the primary's edits", got)
 	}
-	// A primary path with no buffer (and not active) falls back to the editor buffer.
+	// A missing primary (and a non-.tex active) falls back to the editor buffer.
 	s.git.primaryPath = "ghost.tex"
 	delete(s.git.buffers, "ghost.tex")
 	if got := s.git.compileSource(); got != s.editor.Text().Get() {
