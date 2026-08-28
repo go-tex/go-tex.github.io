@@ -992,7 +992,16 @@ func (s *State) applyLeftSplit() {
 // render pane's PagedView, updates the diagnostics Log and the status bar. A
 // hard error (or an empty document) yields no bitmaps, which clears the viewer.
 func (s *State) Compile() {
-	res := compileLaTeX(s.git.compileSource(), s.theme, s.git.resolveWorkspace())
+	src := s.git.compileSource()
+	if strings.TrimSpace(src) == "" {
+		// Nothing to render: a non-document tab (a .sty/.bib/.md), an empty editor,
+		// or all tabs closed. Blank the render pane completely — no pages, no error
+		// band, no diagnostics — rather than typesetting nothing into a "compile
+		// error". The render window shows nothing.
+		s.clearRender()
+		return
+	}
+	res := compileLaTeX(src, s.theme, s.git.resolveWorkspace())
 	s.errText = res.errText
 	s.pages = res.pages
 	s.drawnPages = res.drawnPages
@@ -1010,6 +1019,23 @@ func (s *State) Compile() {
 	// The pane lays the pages out and paints their paper; the host draws the
 	// content over them, reading where from PagedView.PageRect.
 	s.renderView.SetPageSizes(res.sizes)
+	s.updateStatus()
+	s.dirty = true
+}
+
+// clearRender blanks the render pane: no pages, no diagnostics, no error band —
+// the state for a tab that is not a renderable LaTeX document (a .sty, .cls, .bib,
+// .md, …) or an empty editor. The status bar reads "0 pages" and the render window
+// shows nothing; nothing is appended to the compile Log.
+func (s *State) clearRender() {
+	s.errText = ""
+	s.pages = 0
+	s.drawnPages = 0
+	s.diag = engine.Diagnostics{}
+	s.svgs = nil
+	s.pageSizes = nil
+	s.lineMaps = nil
+	s.renderView.SetPageSizes(nil)
 	s.updateStatus()
 	s.dirty = true
 }
