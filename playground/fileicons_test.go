@@ -6,6 +6,7 @@ package playground
 import (
 	"testing"
 
+	"github.com/go-widgets/painter"
 	"github.com/go-widgets/toolkit"
 )
 
@@ -60,5 +61,29 @@ func TestBuildFileTreeSetsIcons(t *testing.T) {
 	}
 	if !sawDir || !sawFile {
 		t.Fatalf("expected both a dir and a file node (dir=%v file=%v)", sawDir, sawFile)
+	}
+}
+
+// TestFileIconsPaint invokes the icon drawers with a real pixel painter so the
+// folder and file glyphs are exercised end to end (they run only when the tree
+// draws a row).
+func TestFileIconsPaint(t *testing.T) {
+	box := toolkit.Rect{X: 0, Y: 0, W: 16, H: 16}
+	ink := toolkit.RGB(0, 0, 0)
+	paint := func(draw func(painter.Painter, toolkit.Rect, toolkit.RGBA)) bool {
+		buf := make([]byte, 16*16*4)
+		draw(painter.NewPixelPainter(buf, 16, 16), box, ink)
+		for _, b := range buf {
+			if b != 0 {
+				return true
+			}
+		}
+		return false
+	}
+	if !paint(folderIcon) {
+		t.Error("folderIcon painted nothing")
+	}
+	if !paint(fileIcon("paper.tex")) {
+		t.Error("fileIcon painted nothing")
 	}
 }
