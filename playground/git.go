@@ -793,7 +793,13 @@ func gitErrorMessage(err error) string {
 	case errors.Is(err, errGitRepoNotFound):
 		return "Repository not found — check the remote URL."
 	case errors.Is(err, errGitTransport):
-		return "Network/CORS error reaching the remote — is it CORS-enabled?"
+		// The fetch failed before any HTTP status. That is a real network error,
+		// a CORS rejection, or — since the sample remote IS CORS-enabled for this
+		// origin — very often a browser EXTENSION (an ad/tracker blocker) or
+		// private-mode / tracking-protection blocking the cross-origin request.
+		// The browser hides the specific reason from JS (it is only in the
+		// devtools console), so append whatever the client did report.
+		return "Couldn't reach the remote — a network error, CORS, or a browser extension / privacy setting blocking it: " + err.Error()
 	case errors.Is(err, errNoGitRepo):
 		return "Clone a repository first."
 	case errors.Is(err, errNoGitFile):
