@@ -22,6 +22,7 @@ package playground
 
 import (
 	"image"
+	"path"
 	"strconv"
 	"strings"
 
@@ -629,10 +630,31 @@ func (s *State) Source() string { return s.editor.Text().Get() }
 
 // SetSource replaces the editor buffer (restoring a persisted document), resets
 // the caret and recompiles. It does NOT fire OnEdit.
+// highlightLang is the rouge lexer name for the active file's syntax colouring:
+// the LaTeX family (.tex/.sty/.cls/.bib/.dtx/.ins/.ltx) and the sample document
+// use "latex"; Markdown (.md/.markdown/.mkd) uses "markdown"; anything else falls
+// back to "plaintext". It follows the file the editor currently holds, so opening
+// the README highlights as Markdown while the .tex documents stay LaTeX.
+func (s *State) highlightLang() string {
+	p := s.git.loaded.Get()
+	if p == "" {
+		return "latex" // the sample document (and an empty editor) is LaTeX
+	}
+	switch strings.ToLower(path.Ext(p)) {
+	case ".md", ".markdown", ".mkd":
+		return "markdown"
+	case ".tex", ".sty", ".cls", ".bib", ".dtx", ".ins", ".ltx":
+		return "latex"
+	default:
+		return "plaintext"
+	}
+}
+
 func (s *State) SetSource(text string) {
 	// SetText publishes onto Text(), which would otherwise wake the edit
 	// subscriber (OnEdit + a debounced compile); loadingSource gates that so a
 	// restore drives only the explicit Compile below.
+	s.editor.Language = s.highlightLang()
 	s.loadingSource = true
 	s.editor.SetText(text)
 	s.loadingSource = false
@@ -645,6 +667,7 @@ func (s *State) SetSource(text string) {
 // its independent edit buffer (git.go's openFile) so the unsaved edits AND the
 // place the user left off both come back. Like SetSource it recompiles.
 func (s *State) SetSourceCursor(text string, line, col, scroll int) {
+	s.editor.Language = s.highlightLang()
 	s.loadingSource = true
 	s.editor.SetText(text) // parks the caret at (0,0); restore it below
 	s.editor.CursorLine().Set(line)
@@ -1067,7 +1090,7 @@ func (s *State) Draw(buf []byte) {
 	s.paned.Draw(p, s.theme)
 	if s.showMinimap && s.minimap.Bounds().W > 0 {
 		lines := s.editorLines()
-		spans := s.hl.Highlight("latex", lines, s.theme)
+		spans := s.hl.Highlight(s.editor.Language, lines, s.theme)
 		s.minimap.Update(lines, spans, s.editor.ScrollLine().Get(), s.visibleEditorLines())
 		s.minimap.Draw(p, s.theme)
 	}
