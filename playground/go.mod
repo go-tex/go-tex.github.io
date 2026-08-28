@@ -9,6 +9,8 @@ require (
 	github.com/go-gfx/qr v0.1.0
 	github.com/go-git/go-billy/v5 v5.9.0
 	github.com/go-git/go-git/v5 v5.19.2
+	github.com/go-icons/material v0.1.0
+	github.com/go-icons/seti v0.1.0
 	github.com/go-opentype/fonts v0.8.0
 	github.com/go-richdoc/latex v0.2.0
 	github.com/go-richdoc/richdoc v0.2.0
@@ -30,8 +32,6 @@ require (
 	github.com/go-gfx/gfx v0.11.0 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-iconoir/iconoir v0.2.0 // indirect
-	github.com/go-icons/material-icons v0.1.0 // indirect
-	github.com/go-icons/seti-icons v0.1.0 // indirect
 	github.com/go-images/images v0.0.0-20260815210351-4a50ef5ab734 // indirect
 	github.com/go-opentype/opentype v0.6.0 // indirect
 	github.com/go-opentype/shape v0.5.0 // indirect
