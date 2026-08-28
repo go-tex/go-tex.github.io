@@ -8,31 +8,25 @@
 <script src="{{ "js/theme.js" | relURL }}"></script>
 <style>
 /* Playground-only styles — kept off every other page. */
-/* The page is a full-height flex column: the blue header keeps its natural
-   height and the canvas stage flexes to fill the whole remaining viewport, so
-   the one go-widgets WebAssembly app runs edge-to-edge below the header. The
-   status line that used to sit above the canvas and the description/footer that
-   sat below it now live INSIDE the wasm (its topZone / bottomZone), painted by
-   the toolkit — see playground/zones.go. */
-html,body{height:100%}
-body{display:flex;flex-direction:column;min-height:100vh;min-height:100dvh}
-.hero.mini{flex:0 0 auto;padding:48px 24px 40px}
-.hero.mini h1{font-size:40px}
-.hero .caption{font-size:14px;opacity:.9;max-width:680px;margin:14px auto 0}
-.hero .caption code{background:rgba(255,255,255,.16);padding:1px 6px;border-radius:5px}
-/* margin is "16px 0", NOT "16px auto": body is a flex column, and auto cross-axis
-   margins on a flex item cancel align-items:stretch — the pg column would shrink to
-   its content width and centre, leaving the canvas narrower than the window (and
-   breaking the full-height flex chain). With no auto margins it stretches to the
-   full width and flex:1 fills the height. */
-.pg{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;max-width:none;margin:16px 0;padding:0 16px}
-/* The whole playground is ONE go-widgets canvas: editor on the left, the live
-   gotex render on the right, its own status bar plus the moved-in topZone /
-   bottomZone — all painted by the toolkit in WebAssembly. It flexes to fill the
-   viewport below the blue header (with a sensible floor on short screens). */
-.stage{position:relative;background:var(--card);border:1px solid var(--line);border-radius:16px;
-  box-shadow:0 10px 30px var(--shadow);overflow:hidden;flex:1 1 auto;min-height:520px}
+/* The playground is ONE go-widgets canvas run TRUE fullscreen: the .stage is
+   fixed to the whole viewport (no hero, no margins, no border) so the canvas
+   fills 100vw x 100vh. The only HTML chrome is a floating Theme toggle and the
+   load-failure banner, both painted OVER the canvas. Everything else — the
+   status line, the description and the footer that used to be HTML — now lives
+   INSIDE the wasm (its topZone / bottomZone), painted by the toolkit; see
+   playground/zones.go. */
+html,body{height:100%;margin:0}
+body{overflow:hidden;background:var(--bg)}
+/* The stage IS the window; the canvas fills it edge to edge. */
+.stage{position:fixed;inset:0;background:var(--bg);overflow:hidden}
 #gotex-canvas{display:block;width:100%;height:100%;background:var(--bg);opacity:0;transition:opacity .25s}
+/* Floating Theme toggle over the canvas (top-right). The shared .theme rule is
+   built for the coloured hero — white text on translucent white — which vanishes
+   over the app surface, so the playground overrides it with a legible card pill
+   that reads in both themes. */
+#themebtn{position:fixed;top:10px;right:12px;z-index:5;background:var(--card);color:var(--ink);
+  border:1px solid var(--line);border-radius:8px;padding:6px 11px;font-size:12px;font-weight:600;
+  cursor:pointer;box-shadow:0 2px 10px var(--shadow2)}
 /* The rendered pages themselves. The render pane lays them out and paints their
    paper on the canvas; the BROWSER draws the pages, as SVG — 2.7x faster than
    rasterising them in wasm, crisp at any zoom, and searchable. The container
@@ -66,7 +60,7 @@ body{display:flex;flex-direction:column;min-height:100vh;min-height:100dvh}
 .pg-track{width:min(440px,72%);height:8px;border-radius:6px;background:var(--line);overflow:hidden}
 .pg-fill{height:100%;width:0;background:var(--from);transition:width .15s ease}
 #pg-pct{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
-#err{display:none;margin:0 0 14px;padding:11px 13px;border-radius:10px;
+#err{display:none;position:fixed;top:12px;left:12px;right:12px;z-index:6;margin:0;padding:11px 13px;border-radius:10px;
   background:#fdecec;color:#9b1c1c;white-space:pre-wrap;
   font:12.5px/1.45 ui-monospace,Menlo,monospace}
 :root[data-theme="dark"] #err{background:#3a1113;color:#f7b4b4}
@@ -74,25 +68,16 @@ body{display:flex;flex-direction:column;min-height:100vh;min-height:100dvh}
 #err.show{display:block}
 </style>
 </head><body>
-<section class="hero mini">
-  <button id="themebtn" class="theme" type="button">Theme: System</button>
-  <img src="{{ "img/go-tex-white.png" | relURL }}" alt="go-tex" style="width:76px;height:76px">
-  <h1>Try it in your browser</h1>
-  <p>Type LaTeX on the left, watch the pure-Go engine typeset it on the right.</p>
-  <p class="caption">One <code>go-widgets</code> canvas app — editor and renderer — executed in WebAssembly. No TeXLive, no server.</p>
-</section>
-
-<div class="pg">
-  <div id="err"></div>
-  <div class="stage">
-    <canvas id="gotex-canvas"></canvas>
-    <div id="pg-placeholder">
-      <div class="pg-skel"><div class="pg-skel-side"></div><div></div><div></div></div>
-      <div class="pg-load">
-        <div id="pg-msg">Downloading playground.wasm…</div>
-        <div class="pg-track"><div class="pg-fill" id="pg-fill"></div></div>
-        <div id="pg-pct">0%</div>
-      </div>
+<button id="themebtn" class="theme" type="button">Theme: System</button>
+<div id="err"></div>
+<div class="stage">
+  <canvas id="gotex-canvas"></canvas>
+  <div id="pg-placeholder">
+    <div class="pg-skel"><div class="pg-skel-side"></div><div></div><div></div></div>
+    <div class="pg-load">
+      <div id="pg-msg">Downloading playground.wasm…</div>
+      <div class="pg-track"><div class="pg-fill" id="pg-fill"></div></div>
+      <div id="pg-pct">0%</div>
     </div>
   </div>
 </div>
