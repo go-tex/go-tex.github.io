@@ -11,8 +11,8 @@ import (
 // This file proves the independent per-file edit-buffer model (git.go): opening
 // another file no longer discards the current file's unsaved edits, several files
 // can be dirty at once (their tree badges reflect it), stage/commit flush every
-// dirty buffer to the working tree, and the render compiles the primary .tex's
-// live buffer.
+// dirty buffer to the working tree, and the render compiles the ACTIVE .tex's
+// live buffer (falling back to the primary for a non-.tex active file).
 
 // The typeInto helper (real HandleChar input, caret-advancing) lives in
 // latexcomplete_test.go and is reused here.
