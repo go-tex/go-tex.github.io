@@ -222,6 +222,12 @@ type gitView struct {
 	// so the live editor stays the single source of truth for the active file and
 	// bufferContent reads it directly. Cleared on a fresh clone (a new repo).
 	buffers map[string]*fileBuffer
+	// openTabs is the ordered list of files open as editor tabs (the file-tab
+	// strip). Opening a file appends it (if not already open) and makes it active;
+	// the active tab is the one in loaded. Closing a tab removes it and activates a
+	// neighbour. Distinct from buffers, which retains an edited file even after its
+	// tab is closed (so re-opening restores the edits). Cleared on a fresh clone.
+	openTabs []string
 	// primaryPath is the .tex the render pane compiles (item 4): the primary .tex
 	// chosen on clone, or the last one picked in the panel's file picker. Its LIVE
 	// buffer compiles, so the render tracks its edits even while another file (a
@@ -427,6 +433,7 @@ func (s *State) gitClone(boot bool, done func(err error)) {
 			// A fresh clone is a new repository: drop every prior edit buffer so no
 			// stale dirtiness leaks across repos.
 			v.buffers = map[string]*fileBuffer{}
+			v.openTabs = nil
 			// Any repository opening makes the boot notice stale: it says the
 			// SAMPLES did not arrive, and once something is open that is no longer
 			// the interesting truth. Cleared here rather than in BootClone's own
@@ -682,6 +689,7 @@ func (v *gitView) loadFresh(p string) {
 		return
 	}
 	v.loaded.Set(p)
+	v.addTab(p)
 	v.buffers[p] = &fileBuffer{text: string(data)}
 	v.s.SetSource(string(data))
 	v.notice.Set("Loaded " + p + ".")
@@ -717,11 +725,12 @@ func (v *gitView) openFile(p string) {
 		return
 	}
 	v.stashActive()
-	// The active file's name shows in the sidebar's "Files" accordion header, so a
-	// switch clears the detail strip rather than restating the file there — no
-	// per-open notice line to crowd the workspace column.
+	// The active file's name shows in the sidebar's "Files" accordion header and on
+	// its editor tab, so a switch clears the detail strip rather than restating the
+	// file there — no per-open notice line to crowd the workspace column.
 	if buf, ok := v.buffers[p]; ok {
 		v.loaded.Set(p)
+		v.addTab(p)
 		v.s.SetSourceCursor(buf.text, buf.cursorLine, buf.cursorCol, buf.scrollLine)
 		v.notice.Set("")
 		return
@@ -733,8 +742,60 @@ func (v *gitView) openFile(p string) {
 	}
 	v.buffers[p] = &fileBuffer{text: string(data)}
 	v.loaded.Set(p)
+	v.addTab(p)
 	v.s.SetSource(string(data))
 	v.notice.Set("")
+}
+
+// addTab appends p to the open editor tabs when it is not already open. The
+// caller has already made p the active file (loaded); this only maintains the
+// tab strip's ordered list.
+func (v *gitView) addTab(p string) {
+	if p == "" {
+		return
+	}
+	for _, t := range v.openTabs {
+		if t == p {
+			return
+		}
+	}
+	v.openTabs = append(v.openTabs, p)
+}
+
+// closeTab removes p from the open editor tabs. When p was the active file, the
+// neighbour to its left (or the new first tab) becomes active and is opened; with
+// no tab left the editor is cleared to an empty, path-less buffer. The file's
+// edit buffer is retained, so re-opening it from the tree restores its edits.
+func (v *gitView) closeTab(p string) {
+	idx := -1
+	for i, t := range v.openTabs {
+		if t == p {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return
+	}
+	v.openTabs = append(v.openTabs[:idx], v.openTabs[idx+1:]...)
+	if v.loaded.Get() != p {
+		return // closed an inactive tab; the active file is unchanged
+	}
+	// Closing the active tab: activate a neighbour (the one now at idx-1, or the new
+	// first tab), or clear the editor when nothing is left open.
+	if len(v.openTabs) == 0 {
+		v.loaded.Set("")
+		v.s.SetSource("")
+		return
+	}
+	next := idx - 1
+	if next < 0 {
+		next = 0
+	}
+	target := v.openTabs[next]
+	// openFile early-returns on the already-active path; the active file is p (being
+	// closed), so target differs and the switch runs.
+	v.openFile(target)
 }
 
 // bufferContent returns the current in-memory content of path — the LIVE editor
@@ -780,6 +841,34 @@ func (s *State) GitOpenFile(path string) bool {
 	v.openFile(path)
 	v.refresh()
 	return v.loaded.Get() == path
+}
+
+// GitOpenTabs is the ordered list of files open as editor tabs (the file-tab
+// strip reads it). Empty with no repo / nothing opened.
+func (s *State) GitOpenTabs() []string { return s.git.openTabs }
+
+// GitActiveTabIndex is the index of the active file within GitOpenTabs, or -1
+// when no open tab is active (no repo, or the editor was cleared).
+func (s *State) GitActiveTabIndex() int {
+	active := s.git.loaded.Get()
+	for i, p := range s.git.openTabs {
+		if p == active {
+			return i
+		}
+	}
+	return -1
+}
+
+// GitCloseTab closes the editor tab for path (the file-tab strip's × drives it),
+// activating a neighbour when the active tab is closed. A no-op while a network
+// op is in flight. It keeps the file's edit buffer, so re-opening restores edits.
+func (s *State) GitCloseTab(path string) {
+	v := s.git
+	if v.busy.Get() || path == "" {
+		return
+	}
+	v.closeTab(path)
+	v.refresh()
 }
 
 // refreshStatus snapshots the backend's branch/divergence for the status area.

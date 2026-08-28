@@ -165,13 +165,13 @@ func TestWysiwygEventRouting(t *testing.T) {
 	s := newWysState(t)
 	s.SetSource(wysSnippet)
 
-	// Click the "WYSIWYG" tab in the editor-pane strip to activate the mode.
-	tb := s.wysiwyg().tabs.TabRect(tabWysiwyg)
-	if !s.HandleClick(tb.X+tb.W/2, tb.Y+tb.H/2) {
-		t.Fatal("WYSIWYG tab click not consumed")
+	// Click the Source⇄WYSIWYG toggle in the toolbar to activate the mode.
+	vb := s.EditorTabRect(tabWysiwyg)
+	if !s.HandleClick(vb[0]+vb[2]/2, vb[1]+vb[3]/2) {
+		t.Fatal("view toggle click not consumed")
 	}
 	if !s.WysiwygActive() {
-		t.Fatal("clicking the WYSIWYG tab did not activate")
+		t.Fatal("clicking the view toggle did not activate WYSIWYG")
 	}
 
 	// Click on the formatting toolbar strip (a one-shot verb, no drag capture).

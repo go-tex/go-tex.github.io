@@ -195,6 +195,12 @@ type State struct {
 	fr      *findReplace
 	findBtn *toolkit.Button
 
+	// wysiwygBtn is the toolbar toggle between the Source (CodeEditor) and WYSIWYG
+	// (RichEditor) views of the active file; wysiwygBtnRect is its laid-out rect,
+	// exposed to the headless harness via [State.EditorTabRect].
+	wysiwygBtn     *toolkit.Button
+	wysiwygBtnRect toolkit.Rect
+
 	// clip is the toolkit-wide clipboard the editor's copy/cut/paste go through;
 	// installed process-wide in NewState. Its onWrite hook lets the wasm host push
 	// copies to the real OS clipboard (navigator.clipboard).
@@ -293,10 +299,10 @@ type State struct {
 	// native build/test still gets non-empty timestamps.
 	now func() string
 
-	// wys is the WYSIWYG multi-format mode (format registry + a Source│WYSIWYG tab
-	// strip atop the editor pane + a RichEditor shown on the WYSIWYG tab). Lazily
-	// built via s.wysiwyg(); its whole implementation, and every hook this file
-	// calls into it, lives in wysiwyg.go so this mode stays an isolated, additive
+	// wys is the WYSIWYG multi-format mode (a toolbar Source⇄WYSIWYG toggle + a
+	// file-tab strip atop the editor pane + a RichEditor shown while WYSIWYG is on).
+	// Lazily built via s.wysiwyg(); its whole implementation, and every hook this
+	// file calls into it, lives in wysiwyg.go so this mode stays an isolated, additive
 	// feature.
 	wys *wysiwyg
 }
@@ -405,6 +411,14 @@ func NewState(w, h int, dark bool) *State {
 	s.fr = newFindReplace(s)
 	s.findBtn = toolkit.NewButton("Find", func() {
 		s.fr.toggle()
+		s.layout()
+		s.dirty = true
+	})
+
+	// Source⇄WYSIWYG view toggle for the active file (wysiwyg.go). Lit while the
+	// WYSIWYG RichEditor is shown; the label states the CURRENT view.
+	s.wysiwygBtn = toolkit.NewButton("Source", func() {
+		s.wysiwyg().toggle_()
 		s.layout()
 		s.dirty = true
 	})
@@ -916,7 +930,7 @@ func (s *State) layout() {
 	s.bottomZone.place(toolkit.Rect{X: 0, Y: top + bodyH + s.statusH, W: s.w, H: s.bottomZoneH})
 	s.layoutToolbar()
 	s.applyLeftSplit()
-	s.wysiwygLayout() // editor-pane Source│WYSIWYG tab strip + RichEditor bounds (wysiwyg.go)
+	s.wysiwygLayout() // editor-pane file-tab strip + RichEditor bounds (wysiwyg.go)
 	s.fr.layout()     // find-and-replace modal: scrim + panel over the editor pane (findreplace.go)
 }
 
@@ -943,16 +957,20 @@ func (s *State) layoutToolbar() {
 	x += sbw + gap
 	fbw := toolkit.Scaled(56)
 	s.findBtn.SetBounds(toolkit.Rect{X: x, Y: yy, W: fbw, H: h})
+	x += fbw + gap
+	wbw := toolkit.Scaled(96)
+	s.wysiwygBtnRect = toolkit.Rect{X: x, Y: yy, W: wbw, H: h}
+	s.wysiwygBtn.SetBounds(s.wysiwygBtnRect)
 }
 
 // applyLeftSplit reserves the top strip of the left pane for the editor's
-// Source│WYSIWYG tabs (wysiwyg.go) and a strip on its right for the minimap (when
+// the editor-pane file-tab strip (wysiwyg.go) and a strip on its right for the minimap (when
 // shown), shrinking the CodeEditor to the remaining area below the tabs.
 // Recomputed after every layout AND after a divider drag, because Paned re-lays
 // its First child to the full left region.
 func (s *State) applyLeftSplit() {
 	pr := s.paned.Bounds()
-	stripH := s.wysiwyg().stripHeight() // Source│WYSIWYG tabs sit above the editor
+	stripH := s.wysiwyg().stripHeight() // the file-tab strip sits above the editor
 	ey := pr.Y + stripH
 	eh := pr.H - stripH
 	if eh < 0 {
@@ -1081,6 +1099,15 @@ func (s *State) Draw(buf []byte) {
 	s.sidebarBtn.Draw(p, s.theme)
 	s.findBtn.Selected().Set(s.fr.visible())
 	s.findBtn.Draw(p, s.theme)
+	// The view toggle: lit while WYSIWYG is shown; its label names the CURRENT view.
+	wys := s.wysiwyg().active()
+	if wys {
+		s.wysiwygBtn.Label().Set("WYSIWYG")
+	} else {
+		s.wysiwygBtn.Label().Set("Source")
+	}
+	s.wysiwygBtn.Selected().Set(wys)
+	s.wysiwygBtn.Draw(p, s.theme)
 
 	// The workspace sidebar (left column of the body band), when open.
 	s.sidebar.draw(p, s.theme)
@@ -1201,7 +1228,7 @@ func (s *State) HandleClick(x, y int) bool {
 
 	// Toolbar controls (the row between the topZone band and the body).
 	if y >= s.topZoneH && y < s.bodyTop() {
-		for _, w := range []toolkit.Widget{s.schemePicker, s.iconPackPicker, s.minimapBtn, s.sidebarBtn, s.findBtn} {
+		for _, w := range []toolkit.Widget{s.schemePicker, s.iconPackPicker, s.minimapBtn, s.sidebarBtn, s.findBtn, s.wysiwygBtn} {
 			r := w.Bounds()
 			if r.Contains(x, y) {
 				w.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - r.X, Y: y - r.Y})
