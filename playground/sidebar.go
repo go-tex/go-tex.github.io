@@ -134,9 +134,9 @@ type sidebar struct {
 	commitDetail string
 
 	// persistent toolkit widgets, built once and reused every frame.
-	bg     *toolkit.Backdrop
-	rule   *toolkit.Backdrop
-	detail *toolkit.Label
+	bg       *toolkit.Backdrop
+	rule     *toolkit.Backdrop
+	detail   *toolkit.Label
 	filesExp *toolkit.Expander // "Files" accordion header (labelled with the active file) over the tree
 	histExp  *toolkit.Expander // "History" accordion header (labelled with the branch) over the timeline
 	tree     *toolkit.TreeTable
