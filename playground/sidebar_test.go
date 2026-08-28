@@ -659,3 +659,37 @@ func TestSidebarShowsBrandLogo(t *testing.T) {
 		t.Fatal("empty state: the go-tex brand colour is not painted in the sidebar")
 	}
 }
+
+// TestSidebarAccordionCollapses: collapsing the History section frees its band
+// to the tree; collapsing Files zeroes the tree body. Both start open.
+func TestSidebarAccordionCollapses(t *testing.T) {
+	s, _ := withClonedSidebar(t)
+	b := s.sidebar
+	buf := make([]byte, testW*testH*4)
+	s.Draw(buf) // lay out with both sections open
+	if !b.filesExp.Expanded().Get() || !b.histExp.Expanded().Get() {
+		t.Fatal("both accordion sections should start open")
+	}
+	treeOpen, tlOpen := b.treeRect.H, b.tlRect.H
+	if treeOpen <= 0 || tlOpen <= 0 {
+		t.Fatalf("open: tree=%d tl=%d, want both > 0", treeOpen, tlOpen)
+	}
+	// Collapse History via a click on its header.
+	if !s.HandleClick(b.histHdrRect.X+10, b.histHdrRect.Y+2) {
+		t.Fatal("click on the History header was not consumed")
+	}
+	if b.histExp.Expanded().Get() {
+		t.Fatal("History should be collapsed after the header click")
+	}
+	if b.tlRect.H != 0 {
+		t.Errorf("collapsed History timeline should have zero height, got %d", b.tlRect.H)
+	}
+	if b.treeRect.H <= treeOpen {
+		t.Errorf("tree should grow when History collapses: %d -> %d", treeOpen, b.treeRect.H)
+	}
+	// Collapse Files too: its tree body zeroes.
+	s.HandleClick(b.filesHdrRect.X+10, b.filesHdrRect.Y+2)
+	if b.treeRect.H != 0 {
+		t.Errorf("collapsed Files tree should have zero height, got %d", b.treeRect.H)
+	}
+}

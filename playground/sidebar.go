@@ -115,12 +115,14 @@ type sidebar struct {
 	open bool
 
 	// bounds is the whole column; sub-rects are recomputed by layout().
-	bounds     toolkit.Rect
-	headerRect toolkit.Rect
-	detailRect toolkit.Rect
-	treeRect   toolkit.Rect
-	tlRect     toolkit.Rect
-	buttons    []sidebarButton
+	bounds       toolkit.Rect
+	headerRect   toolkit.Rect
+	detailRect   toolkit.Rect
+	filesHdrRect toolkit.Rect
+	histHdrRect  toolkit.Rect
+	treeRect     toolkit.Rect
+	tlRect       toolkit.Rect
+	buttons      []sidebarButton
 
 	// nodePaths maps a file leaf node to its working-tree path (dir nodes absent),
 	// so a tree click resolves to the file to open. Rebuilt with the tree.
@@ -141,6 +143,8 @@ type sidebar struct {
 	wordRect toolkit.Rect
 	header   *toolkit.Label
 	detail   *toolkit.Label
+	filesExp *toolkit.Expander // "Files" accordion header over the tree
+	histExp  *toolkit.Expander // "History" accordion header over the timeline
 	tree     *toolkit.TreeTable
 	timeline *toolkit.Timeline
 	empty    *toolkit.EmptyState
@@ -176,6 +180,14 @@ func (b *sidebar) ensureWidgets() {
 		[]toolkit.TreeTableColumn{{Title: "Workspace"}, {Title: "S", Width: toolkit.Scaled(22), Align: toolkit.AlignCenter}},
 		nil,
 	)
+	// Accordion headers over the tree and the timeline, so either can be
+	// collapsed to give the other the whole column. Both open by default. The
+	// widgets are header-only (Content nil): the sidebar lays out and draws the
+	// tree/timeline itself, gated on each header's Expanded state.
+	b.filesExp = toolkit.NewExpander("Files", nil)
+	b.filesExp.Expanded().Set(true)
+	b.histExp = toolkit.NewExpander("History", nil)
+	b.histExp.Expanded().Set(true)
 	b.timeline = toolkit.NewTimeline(nil)
 	b.empty = toolkit.NewEmptyState("No repository open").
 		SetCaption("Clone one to browse its files here")
@@ -466,23 +478,40 @@ func (b *sidebar) layout() {
 	b.detailRect = toolkit.Rect{X: innerX, Y: cur, W: innerW, H: lineH}
 	cur += lineH + gap
 
-	// Timeline claims a fixed band at the bottom; the tree fills what is left.
-	tlH := toolkit.Scaled(sidebarTimelineH)
+	// Two accordion sections stacked: a "Files" header over the tree, then a
+	// "History" header over the timeline. Either header collapses its body to give
+	// the column to the other; the timeline body is a fixed band when open, the
+	// tree fills the rest.
+	headerH := toolkit.ExpanderHeaderHeight()
 	bottom := r.Y + r.H - pad
-	treeTop := cur
-	minTree := toolkit.Scaled(sidebarMinTreeH)
-	if bottom-treeTop-tlH < minTree {
-		tlH = bottom - treeTop - minTree // yield the timeline first on a short column
-		if tlH < 0 {
-			tlH = 0
+	avail := bottom - cur - 2*headerH // room the two bodies share
+	if avail < 0 {
+		avail = 0
+	}
+	filesOpen := b.filesExp.Expanded().Get()
+	histOpen := b.histExp.Expanded().Get()
+	tlH := 0
+	if histOpen {
+		tlH = toolkit.Scaled(sidebarTimelineH)
+		if !filesOpen || tlH > avail {
+			tlH = avail // a collapsed tree (or a short column) yields the rest to history
 		}
 	}
-	treeH := bottom - treeTop - tlH
-	if treeH < 0 {
-		treeH = 0
+	treeH := 0
+	if filesOpen {
+		treeH = avail - tlH
+		if treeH < 0 {
+			treeH = 0
+		}
 	}
-	b.treeRect = toolkit.Rect{X: innerX, Y: treeTop, W: innerW, H: treeH}
-	b.tlRect = toolkit.Rect{X: innerX, Y: treeTop + treeH, W: innerW, H: tlH}
+	y := cur
+	b.filesHdrRect = toolkit.Rect{X: innerX, Y: y, W: innerW, H: headerH}
+	y += headerH
+	b.treeRect = toolkit.Rect{X: innerX, Y: y, W: innerW, H: treeH}
+	y += treeH
+	b.histHdrRect = toolkit.Rect{X: innerX, Y: y, W: innerW, H: headerH}
+	y += headerH
+	b.tlRect = toolkit.Rect{X: innerX, Y: y, W: innerW, H: tlH}
 	b.tree.SetBounds(b.treeRect)
 	b.timeline.SetBounds(b.tlRect)
 }
@@ -571,8 +600,19 @@ func (b *sidebar) draw(p painter.Painter, theme *toolkit.Theme) {
 	b.detail.VAlign = toolkit.VMiddle
 	b.detail.Draw(p, theme)
 
-	b.tree.Draw(p, theme)
-	b.timeline.Draw(p, theme)
+	// Files accordion header, then the tree when the section is open; then the
+	// History header and the timeline. A collapsed section has a zero-height body
+	// rect (see layout), so its widget is simply not drawn.
+	b.filesExp.SetBounds(b.filesHdrRect)
+	b.filesExp.Draw(p, theme)
+	if b.treeRect.H > 0 {
+		b.tree.Draw(p, theme)
+	}
+	b.histExp.SetBounds(b.histHdrRect)
+	b.histExp.Draw(p, theme)
+	if b.tlRect.H > 0 {
+		b.timeline.Draw(p, theme)
+	}
 	b.drawButtons(p, theme)
 }
 
@@ -605,6 +645,18 @@ func (b *sidebar) handleClick(x, y int) bool {
 			bt.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - sbBtn.rect.X, Y: y - sbBtn.rect.Y})
 			return true
 		}
+	}
+	// Accordion headers: a click toggles the section, then re-lays out so the
+	// tree/timeline resize immediately.
+	if b.hasRepo() && b.filesHdrRect.Contains(x, y) {
+		b.filesExp.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - b.filesHdrRect.X, Y: y - b.filesHdrRect.Y})
+		b.layout()
+		return true
+	}
+	if b.hasRepo() && b.histHdrRect.Contains(x, y) {
+		b.histExp.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - b.histHdrRect.X, Y: y - b.histHdrRect.Y})
+		b.layout()
+		return true
 	}
 	// File tree: route the click, then open the newly selected file (if any).
 	if b.hasRepo() && b.treeRect.Contains(x, y) {
