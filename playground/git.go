@@ -1393,30 +1393,46 @@ func (v *gitView) resolveWorkspace() func(string) ([]byte, bool) {
 // .tex renders whichever one is open, not one hardwired file. openFile recompiles
 // on every switch, so opening another .tex re-renders it.
 //
-// A file that is NOT a LaTeX document — a .sty package, a .cls class, a .bib
-// database, a Markdown README — renders NOTHING: compileSource returns "" so the
-// render pane blanks, rather than compiling package/database code into garbage or
-// falling back to some other file. With no repo open (the sample document) or no
-// active file, the editor's own buffer compiles.
+// A LaTeX document (.tex/.ltx) compiles as-is; a Markdown file (.md/.markdown/.mkd)
+// is converted to LaTeX first (markdownLaTeX), so a README renders as a document.
+// Any other file — a .sty package, a .cls class, a .bib database — renders NOTHING:
+// compileSource returns "" so the render pane blanks, rather than compiling
+// package/database code into garbage or falling back to some other file. With no
+// repo open (the sample document) or no active file, the editor's own buffer
+// compiles.
 func (v *gitView) compileSource() string {
 	p := v.loaded.Get()
 	if p == "" {
 		return v.s.editor.Text().Get() // the sample document, or an empty editor
 	}
-	if isRenderableDoc(p) {
-		if c, ok := v.bufferContent(p); ok {
-			return c
-		}
+	// The active file is always buffered — its live content is the editor — so
+	// bufferContent never misses here.
+	c, _ := v.bufferContent(p)
+	switch {
+	case isRenderableDoc(p):
+		return c
+	case isMarkdownDoc(p):
+		return markdownLaTeX(c)
 	}
 	return "" // a non-document file → nothing to render
 }
 
 // isRenderableDoc reports whether path names a LaTeX document the engine should
-// typeset (a .tex or .ltx), as opposed to a package/class/database/prose file that
-// is not a standalone document.
+// typeset directly (a .tex or .ltx), as opposed to a package/class/database file
+// that is not a standalone document.
 func isRenderableDoc(p string) bool {
 	switch strings.ToLower(path.Ext(p)) {
 	case ".tex", ".ltx":
+		return true
+	}
+	return false
+}
+
+// isMarkdownDoc reports whether path names a Markdown file (rendered as a document
+// after conversion to LaTeX).
+func isMarkdownDoc(p string) bool {
+	switch strings.ToLower(path.Ext(p)) {
+	case ".md", ".markdown", ".mkd":
 		return true
 	}
 	return false

@@ -72,6 +72,8 @@ github.com/go-regexp/engine v0.1.0 h1:DnQjXFwUldJOcyau/0TAjhl244xC5nFfWy6YJ5aUlV
 github.com/go-regexp/engine v0.1.0/go.mod h1:8rju5lq5OkskQh9+m+FjBP6965giMPUdIOdrvFrbqn4=
 github.com/go-richdoc/latex v0.2.0 h1:vQA361VwUZE+Ia4ttzfjpFt8PqOxa31Moc7cyKqrm0M=
 github.com/go-richdoc/latex v0.2.0/go.mod h1:s/tsouspNCsvL0B6nYg01vbDjVQDhxq6Nw+mJOCbDWM=
+github.com/go-richdoc/markdown v0.2.0 h1:Wluf+zS6FKTkIwcKY7b/GmmjqLILLtSQdMNO9fd+axA=
+github.com/go-richdoc/markdown v0.2.0/go.mod h1:p33VvYADNvo3ykH+O1UowTe4dMkMFU0yVE2LEm571+g=
 github.com/go-richdoc/richdoc v0.2.0 h1:z9cLox9MoInZL6fIlweMzgDT/VqgnB2ZucSIEaRFglY=
 github.com/go-richdoc/richdoc v0.2.0/go.mod h1:aCX8ulqg5CoKqSWgWeEWul1Oj0d2VxQeaQNI0+jsm7c=
 github.com/go-rouge/rouge v0.2.0 h1:1oF+L8ROB7Ru9W23jr3trBPgcug0Y9FIFayH6T8vS14=
@@ -147,6 +149,8 @@ github.com/xanzy/ssh-agent v0.3.3 h1:+/15pJfg/RsTxqYcX6fHqOXZwwMP+2VyYWJeWM2qQFM
 github.com/xanzy/ssh-agent v0.3.3/go.mod h1:6dzNDKs0J9rVPHPhaGCukekBHKqfl+L3KghI1Bc68Uw=
 github.com/xyproto/randomstring v1.0.5 h1:YtlWPoRdgMu3NZtP45drfy1GKoojuR7hmRcnhZqKjWU=
 github.com/xyproto/randomstring v1.0.5/go.mod h1:rgmS5DeNXLivK7YprL0pY+lTuhNQW3iGxZ18UQApw/E=
+github.com/yuin/goldmark v1.8.5 h1:r6N5afV5qj/5S4UTch8agZHJ8UxNCMwX7WjkkJam2NA=
+github.com/yuin/goldmark v1.8.5/go.mod h1:ip/1k0VRfGynBgxOz0yCqHrbZXhcjxyuS66Brc7iBKg=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
 go.opentelemetry.io/auto/sdk v1.2.1/go.mod h1:KRTj+aOaElaLi+wW1kO/DZRXwkF4C5xPbEe3ZiIhN7Y=
 go.opentelemetry.io/otel v1.39.0 h1:8yPrr/S0ND9QEfTfdP9V+SiwT4E0G7Y5MO7p85nis48=
