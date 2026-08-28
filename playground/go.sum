@@ -44,8 +44,8 @@ github.com/go-git/go-git-fixtures/v4 v4.3.2-0.20231010084843-55a94097c399 h1:eMj
 github.com/go-git/go-git-fixtures/v4 v4.3.2-0.20231010084843-55a94097c399/go.mod h1:1OCfN199q1Jm3HZlxleg+Dw/mwps2Wbk9frAWm+4FII=
 github.com/go-git/go-git/v5 v5.19.2 h1:wkfn7vOlUBu8ivAWKBWisTiwJK4jYHzTF8Ndv1LyGqY=
 github.com/go-git/go-git/v5 v5.19.2/go.mod h1:QqCBE1EFN5ddFmrliLQ3/ntRCUjZU3EJuwuB/jWEHjk=
-github.com/go-iconoir/iconoir v0.2.0 h1:2ANqG6gkvHMoCtpNgNhSeOsuGMnlWQ+Sl43EndujIC0=
-github.com/go-iconoir/iconoir v0.2.0/go.mod h1:BrOQ68YO5BMsF7y+/nht4shbgjVfh9CxBoQF35eNosw=
+github.com/go-icons/iconoir v0.2.0 h1:I5AnDEIPgYfawTmwzemDRJjlYCUbFHuS8GJXrjADhXc=
+github.com/go-icons/iconoir v0.2.0/go.mod h1:Td/M2vy4xdVv4aOudAskV0nXR9Wv0MlhWvyRIzPBz5U=
 github.com/go-icons/material v0.1.0 h1:m37RsZAvySRcctDlWLiW9z8nARNml8VW7WXT6nWMBW8=
 github.com/go-icons/material v0.1.0/go.mod h1:EOK+CA4J6PZsnEAQarAnpTJIJgJEF6F/M7sIzcJGZ6w=
 github.com/go-icons/seti v0.1.0 h1:Ih4OPP1eIN6uAF7yy3mCI/fneMUSUwnhhwfyUluAFEw=
@@ -88,8 +88,8 @@ github.com/go-widgets/mvvm v0.7.0 h1:I7E2Kd9H8K/vJfZClifBRCqnk0kQTjTnhjnuIdORAVk
 github.com/go-widgets/mvvm v0.7.0/go.mod h1:BBgSa7vTeNtYCo28qeowez9RlSSvViU73CcFj5vCvJ8=
 github.com/go-widgets/painter v0.11.0 h1:xsj4zTz8B43rOZnWrx7ZsaUBMgJyvgaE/Pq2FfcG2Sw=
 github.com/go-widgets/painter v0.11.0/go.mod h1:IPRLqdUJuJX8sfuHeYLZCzjoLvA0ApbOlyIAVmguJDQ=
-github.com/go-widgets/toolkit v0.278.0 h1:FZvf9pPcUGz0DN7w5bjJUxz16kspXu4LKnnxzd0T764=
-github.com/go-widgets/toolkit v0.278.0/go.mod h1:H0dOToRvaCtWq0w0nCUO2JS5DAQzuKbJN6l0vddRxSM=
+github.com/go-widgets/toolkit v0.279.0 h1:x1huERYaOB3OH6BJuviNHE1bTxhKQ/vOEi9ow79QB00=
+github.com/go-widgets/toolkit v0.279.0/go.mod h1:IaRQFcV6FjxwzGXpHd3dpEoWZ+82f7dMPwtEZSH4nIg=
 github.com/go-widgets/toolkit/rougelex v0.2.0 h1:7EZ0sqD5ldLoRJAFktrz1gQovrv8pu2Spi8o0XROmAM=
 github.com/go-widgets/toolkit/rougelex v0.2.0/go.mod h1:L5tohfJJv2JBPg9qXOy9wyyVCJfeg+FPCoMPXVM+qKg=
 github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 h1:f+oWsMOmNPc8JmEHVZIycC7hBoQxHH9pNKQORJNozsQ=
