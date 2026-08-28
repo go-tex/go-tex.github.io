@@ -11,6 +11,10 @@ import (
 	"github.com/go-widgets/toolkit"
 )
 
+// brandIndigo is the go-tex mark colour (the favicon tile), used for the sidebar
+// logo tile and wordmark. It reads on both the light and the dark surface.
+var brandIndigo = toolkit.RGB(0x4F, 0x46, 0xE5)
+
 // This file is the Git WORKSPACE SIDEBAR: a toggleable left column, disjoint
 // from the editor+render body, that surfaces the cloned repository as a file
 // tree, a row of git command buttons and a commit timeline. It is the read/act
@@ -323,7 +327,7 @@ func buildFileTree(files []string, badge func(string) (string, toolkit.RGBA)) ([
 		if i := strings.LastIndex(dir, "/"); i >= 0 {
 			name, parent = dir[i+1:], dir[:i]
 		}
-		n := &toolkit.TreeTableNode{Cells: []string{name + "/", ""}, Expanded: true, Icon: folderIcon}
+		n := &toolkit.TreeTableNode{Cells: []string{name + "/", ""}, Expanded: true}
 		dirs[dir] = n
 		if p := dirNode(parent); p != nil {
 			p.Children = append(p.Children, n)
@@ -341,7 +345,7 @@ func buildFileTree(files []string, badge func(string) (string, toolkit.RGBA)) ([
 			dir, name = f[:i], f[i+1:]
 		}
 		glyph, ink := badge(f)
-		leaf := &toolkit.TreeTableNode{Cells: []string{name, glyph}, CellInk: []toolkit.RGBA{{}, ink}, Icon: fileIcon(name)}
+		leaf := &toolkit.TreeTableNode{Cells: []string{name, glyph}, CellInk: []toolkit.RGBA{{}, ink}}
 		nodePaths[leaf] = f
 		if p := dirNode(dir); p != nil {
 			p.Children = append(p.Children, leaf)
