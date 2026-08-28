@@ -687,6 +687,20 @@ func (s *State) ActiveTab() int      { return s.rightPane.activeTab() }
 func (s *State) ZoomPercent() int    { return s.renderView.Zoom().Get() }
 func (s *State) SelectedScheme() int { return s.schemePicker.Selected().Get() }
 
+// Cloning reports whether a repository clone is in flight with no repo open yet —
+// the state the workspace sidebar shows a loading spinner for. The host drives an
+// animation frame loop while this is true (see SubscribeCloning + Tick).
+func (s *State) Cloning() bool { return s.git.busy.Get() && !s.git.backend.HasRepo() }
+
+// Tick advances time-based animations (the workspace loading spinner) by dt
+// seconds. The host calls it once per animation frame while Cloning.
+func (s *State) Tick(dt float64) { s.sidebar.tick(dt) }
+
+// SubscribeCloning registers cb to run whenever the clone-in-flight state may
+// have changed, so the host can start its animation frame loop when a clone
+// begins. cb should check Cloning and (re)start the loop when it becomes true.
+func (s *State) SubscribeCloning(cb func()) { s.git.busy.Subscribe(func(bool) { cb() }) }
+
 // iconPackIdx is the index into iconPacks of the workspace tree's chosen icon
 // pack (clamped defensively, since the picker owns the value).
 func (s *State) iconPackIdx() int {

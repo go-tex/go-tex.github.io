@@ -148,6 +148,7 @@ type sidebar struct {
 	tree     *toolkit.TreeTable
 	timeline *toolkit.Timeline
 	empty    *toolkit.EmptyState
+	spinner  *toolkit.Spinner // shown while a clone is in flight (no repo yet)
 	btns     map[sidebarRole]*toolkit.Button
 }
 
@@ -189,6 +190,8 @@ func (b *sidebar) ensureWidgets() {
 	b.histExp = toolkit.NewExpander("History", nil)
 	b.histExp.Expanded().Set(true)
 	b.timeline = toolkit.NewTimeline(nil)
+	b.spinner = toolkit.NewSpinner()
+	b.spinner.Active().Set(true)
 	b.empty = toolkit.NewEmptyState("No repository open").
 		SetCaption("Clone one to browse its files here")
 	b.btns = map[sidebarRole]*toolkit.Button{}
@@ -208,6 +211,13 @@ func (b *sidebar) btn(role sidebarRole, label string) *toolkit.Button {
 
 // hasRepo reports whether a repository is open (a clone has succeeded).
 func (b *sidebar) hasRepo() bool { return b.s.git.backend.HasRepo() }
+
+// tick advances the loading spinner's animation by dt seconds. The host frame
+// loop calls it (via State.Tick) while a clone is in flight.
+func (b *sidebar) tick(dt float64) {
+	b.ensureWidgets()
+	b.spinner.Tick(dt)
+}
 
 // toggle flips the sidebar open/closed and repaints. Opening or closing the
 // column changes the width left for the editor+render Paned by exactly the
@@ -576,6 +586,21 @@ func (b *sidebar) draw(p painter.Painter, theme *toolkit.Theme) {
 	b.header.Draw(p, theme)
 
 	if !b.hasRepo() {
+		body := b.empty.Bounds()
+		// A clone in flight: the workspace is present but still loading, so show a
+		// spinner (ticked by the host frame loop) rather than the empty-or-failed
+		// prompt. This is the "workspace shows before the clone finishes" state.
+		if b.s.git.busy.Get() {
+			sz := toolkit.Scaled(28)
+			b.spinner.SetBounds(toolkit.Rect{X: body.X + (body.W-sz)/2, Y: body.Y + body.H/3 - sz/2, W: sz, H: sz})
+			b.spinner.Draw(p, theme)
+			b.empty.Message().Set("Cloning…")
+			b.empty.Caption().Set("Fetching the sample repository")
+			b.empty.SetBounds(toolkit.Rect{X: body.X, Y: body.Y + body.H/3 + sz, W: body.W, H: body.H*2/3 - sz})
+			b.empty.Draw(p, theme)
+			b.drawButtons(p, theme)
+			return
+		}
 		// An empty workspace after a FAILED boot clone is not the same thing as
 		// one nobody asked for, and it looks identical. Say which it is, here —
 		// beside what is missing — rather than in the global status band, where

@@ -693,3 +693,32 @@ func TestSidebarAccordionCollapses(t *testing.T) {
 		t.Errorf("collapsed Files tree should have zero height, got %d", b.treeRect.H)
 	}
 }
+
+// TestSidebarCloningSpinner: a clone in flight (busy, no repo) reports Cloning,
+// draws the spinner branch, ticks it, and SubscribeCloning fires on the change.
+func TestSidebarCloningSpinner(t *testing.T) {
+	s := newTestState(t, false) // nopGitBackend: no repo
+	s.git.busy.Set(true)
+	if !s.Cloning() {
+		t.Fatal("busy + no repo should report Cloning")
+	}
+	fired := 0
+	s.SubscribeCloning(func() { fired++ })
+
+	buf := make([]byte, testW*testH*4)
+	s.Draw(buf) // exercises the cloning empty-state (spinner) draw branch
+
+	before := s.sidebar.spinner.Phase
+	s.Tick(0.1)
+	if s.sidebar.spinner.Phase == before {
+		t.Errorf("Tick did not advance the spinner phase (%v)", before)
+	}
+
+	s.git.busy.Set(false) // clone finished
+	if fired == 0 {
+		t.Error("SubscribeCloning did not fire on the busy change")
+	}
+	if s.Cloning() {
+		t.Error("not busy → not Cloning")
+	}
+}
