@@ -4,8 +4,8 @@
 package playground
 
 import (
-	materialicons "github.com/go-icons/material-icons"
-	seticons "github.com/go-icons/seti-icons"
+	"github.com/go-icons/material"
+	"github.com/go-icons/seti"
 	"github.com/go-widgets/painter"
 	"github.com/go-widgets/toolkit"
 )
@@ -25,8 +25,8 @@ type iconPack struct {
 // iconPacks are the packs the reader can choose between, in picker order. The
 // first is the default.
 var iconPacks = []iconPack{
-	{seticons.Name, seticons.Icon, seticons.Folder},
-	{materialicons.Name, materialicons.Icon, materialicons.Folder},
+	{seti.Name, seti.Icon, seti.Folder},
+	{material.Name, material.Icon, material.Folder},
 }
 
 // iconPackNames is the picker's option list, parallel to iconPacks.
