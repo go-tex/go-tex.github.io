@@ -17,7 +17,7 @@ require (
 	github.com/go-tex/engine v0.183.0
 	github.com/go-widgets/mvvm v0.7.0
 	github.com/go-widgets/painter v0.11.0
-	github.com/go-widgets/toolkit v0.278.0
+	github.com/go-widgets/toolkit v0.279.0
 	github.com/go-widgets/toolkit/rougelex v0.2.0
 )
 
@@ -31,7 +31,7 @@ require (
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/go-gfx/gfx v0.11.0 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
-	github.com/go-iconoir/iconoir v0.2.0 // indirect
+	github.com/go-icons/iconoir v0.2.0 // indirect
 	github.com/go-images/images v0.0.0-20260815210351-4a50ef5ab734 // indirect
 	github.com/go-opentype/opentype v0.6.0 // indirect
 	github.com/go-opentype/shape v0.5.0 // indirect
