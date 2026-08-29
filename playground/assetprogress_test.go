@@ -143,3 +143,43 @@ func TestGitOpNameClearsWithBusy(t *testing.T) {
 		t.Fatalf("endOp left busy=%v op=%q — a finished op must stop announcing itself", s.git.busy.Get(), s.git.op.Get())
 	}
 }
+
+// TestSidebarBusyDrawIsStableAcrossFrames is the regression test for a blank
+// workspace. The busy branch moves the empty state down and shrinks it to seat
+// the spinner above it; layout only runs on a resize, so a draw that read the
+// widget's own bounds back each frame compounded its offset and walked the whole
+// prompt off the bottom of the column. On screen that looked like a sidebar that
+// simply said nothing while it cloned — the very state it exists to explain.
+func TestSidebarBusyDrawIsStableAcrossFrames(t *testing.T) {
+	s := newTestState(t, false)
+	buf := make([]byte, testW*testH*4)
+	p := painter.NewPixelPainter(buf, testW, testH)
+
+	s.git.busy.Set(true)
+	s.git.op.Set("Cloning")
+	s.SetAssetLoading("git-worker.wasm")
+	s.SetAssetProgress(0.3)
+
+	s.sidebar.draw(p, s.theme)
+	first, firstSpin, firstBar := s.sidebar.empty.Bounds(), s.sidebar.spinner.Bounds(), s.sidebar.assetBar.Bounds()
+	if first.H <= 0 {
+		t.Fatal("the empty state was given no height on the first frame")
+	}
+	for frame := 2; frame <= 30; frame++ {
+		s.sidebar.draw(p, s.theme)
+		if got := s.sidebar.empty.Bounds(); got != first {
+			t.Fatalf("frame %d moved the prompt to %+v, want it to stay at %+v", frame, got, first)
+		}
+		if got := s.sidebar.spinner.Bounds(); got != firstSpin {
+			t.Fatalf("frame %d moved the spinner to %+v, want %+v", frame, got, firstSpin)
+		}
+		if got := s.sidebar.assetBar.Bounds(); got != firstBar {
+			t.Fatalf("frame %d moved the progress bar to %+v, want %+v", frame, got, firstBar)
+		}
+	}
+	// And the prompt must still be inside the column, not below it.
+	col := s.sidebar.bounds
+	if e := s.sidebar.empty.Bounds(); e.Y+e.H > col.Y+col.H {
+		t.Fatalf("the prompt ends at %d, past the column bottom %d", e.Y+e.H, col.Y+col.H)
+	}
+}

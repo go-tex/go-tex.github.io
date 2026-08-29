@@ -142,9 +142,16 @@ type sidebar struct {
 	tree     *toolkit.TreeTable
 	timeline *toolkit.Timeline
 	empty    *toolkit.EmptyState
-	spinner  *toolkit.Spinner     // shown while a clone is in flight (no repo yet)
-	assetBar *toolkit.ProgressBar // the git client's download, under the spinner
-	btns     map[sidebarRole]*toolkit.Button
+	// emptyRect is where layout put the empty state. draw MUST work from this
+	// and never from b.empty.Bounds(): the busy branch moves the widget down and
+	// shrinks it to make room for the spinner, and layout only runs on a resize —
+	// so reading the widget back each frame compounds its own offset and walks
+	// the whole prompt off the bottom of the column within a few frames. That is
+	// what made a cloning workspace look simply blank.
+	emptyRect toolkit.Rect
+	spinner   *toolkit.Spinner     // shown while a clone is in flight (no repo yet)
+	assetBar  *toolkit.ProgressBar // the git client's download, under the spinner
+	btns      map[sidebarRole]*toolkit.Button
 }
 
 // newSidebar builds the affordance for s (OPEN by default, so the workspace is
@@ -431,7 +438,8 @@ func (b *sidebar) layout() {
 		if bodyH < 0 {
 			bodyH = 0
 		}
-		b.empty.SetBounds(toolkit.Rect{X: innerX, Y: bodyY, W: innerW, H: bodyH})
+		b.emptyRect = toolkit.Rect{X: innerX, Y: bodyY, W: innerW, H: bodyH}
+		b.empty.SetBounds(b.emptyRect)
 		cw := toolkit.Scaled(120)
 		if cw > innerW {
 			cw = innerW
@@ -599,7 +607,7 @@ func (b *sidebar) draw(p painter.Painter, theme *toolkit.Theme) {
 	b.rule.Draw(p, theme)
 
 	if !b.hasRepo() {
-		body := b.empty.Bounds()
+		body := b.emptyRect
 		// A clone in flight: the workspace is present but still loading, so show a
 		// spinner (ticked by the host frame loop) rather than the empty-or-failed
 		// prompt. This is the "workspace shows before the clone finishes" state.
