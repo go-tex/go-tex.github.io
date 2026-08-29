@@ -1126,6 +1126,8 @@ func (s *State) Draw(buf []byte) {
 	s.findBtn.Selected().Set(s.fr.visible())
 	s.findBtn.Draw(p, s.theme)
 	// The view toggle: lit while WYSIWYG is shown; its label names the CURRENT view.
+	// Disabled for a document WYSIWYG cannot round-trip (a Markdown/.sty/.bib tab),
+	// since WYSIWYG is LaTeX-only — see wysiwyg.available.
 	wys := s.wysiwyg().active()
 	if wys {
 		s.wysiwygBtn.Label().Set("WYSIWYG")
@@ -1133,6 +1135,7 @@ func (s *State) Draw(buf []byte) {
 		s.wysiwygBtn.Label().Set("Source")
 	}
 	s.wysiwygBtn.Selected().Set(wys)
+	s.wysiwygBtn.Disabled().Set(!s.wysiwyg().available())
 	s.wysiwygBtn.Draw(p, s.theme)
 
 	// The workspace sidebar (left column of the body band), when open.

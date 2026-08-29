@@ -168,10 +168,36 @@ func (w *wysiwyg) active() bool { return w.mode.Get() }
 // and the headless [State.SetEditorTab] both take.
 func (w *wysiwyg) setMode(wysiwygOn bool) { w.mode.Set(wysiwygOn) }
 
+// available reports whether WYSIWYG can edit the active document. It is LaTeX-only
+// by design (enter/leave round-trip through the LaTeX codec), so it is offered for
+// a .tex/.ltx document and the built-in sample (no active file), and withheld for
+// a Markdown/.sty/.bib tab — toggling on those would parse non-LaTeX source AS
+// LaTeX and write LaTeX back, corrupting it.
+func (w *wysiwyg) available() bool {
+	p := w.s.git.loaded.Get()
+	return p == "" || isRenderableDoc(p)
+}
+
 // toggle_ flips the mode: Source <-> WYSIWYG. It Sets the mode's reactive state,
 // so the enter/leave side effects run through the subscriber exactly as the
-// toolbar toggle would.
-func (w *wysiwyg) toggle_() { w.setMode(!w.active()) }
+// toolbar toggle would. A no-op when WYSIWYG is not available for the active file.
+func (w *wysiwyg) toggle_() {
+	if !w.available() {
+		return
+	}
+	w.setMode(!w.active())
+}
+
+// exitWysiwyg drops WYSIWYG back to Source if it is on, writing the RichEditor's
+// edits back to the CURRENT file through leave() first. openFile calls it before
+// switching files so a switch never leaves a stale RichEditor over the new file,
+// never loses the current file's WYSIWYG edits, and never writes one file's LaTeX
+// into another (WYSIWYG is a per-file editing session). A no-op in Source mode.
+func (w *wysiwyg) exitWysiwyg() {
+	if w.mode.Get() {
+		w.setMode(false)
+	}
+}
 
 // enter is run when the WYSIWYG tab becomes active: it parses the current LaTeX
 // source into the RichEditor. A parse failure records the error and bounces the
