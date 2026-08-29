@@ -724,6 +724,11 @@ func (v *gitView) openFile(p string) {
 	if p == "" || p == v.loaded.Get() {
 		return
 	}
+	// Leaving a file drops WYSIWYG back to Source FIRST, writing the RichEditor's
+	// edits back to the CURRENT (LaTeX) file, so the new file opens in Source and
+	// one file's LaTeX is never written into another (WYSIWYG is LaTeX-only and
+	// per-file). Runs before stashActive so those edits reach the current buffer.
+	v.s.wysiwyg().exitWysiwyg()
 	v.stashActive()
 	// The active file's name shows in the sidebar's "Files" accordion header and on
 	// its editor tab, so a switch clears the detail strip rather than restating the
