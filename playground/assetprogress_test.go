@@ -65,8 +65,8 @@ func TestSidebarLoadingTextNamesThePhase(t *testing.T) {
 	if !strings.Contains(msg, "git client") {
 		t.Fatalf("while the asset downloads the workspace says %q, want it to name the git client", msg)
 	}
-	if !strings.Contains(caption, "git-worker.wasm") {
-		t.Fatalf("caption %q should name the asset on its way", caption)
+	if caption != "git-worker.wasm" {
+		t.Fatalf("caption is %q, want the bare asset name: the 264 px column does not wrap, so a longer caption is clipped mid-word", caption)
 	}
 
 	// Phase 2: the client landed, so the wait now belongs to the operation.

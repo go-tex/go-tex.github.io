@@ -576,7 +576,11 @@ func (b *sidebar) detailText() (string, toolkit.RGBA) {
 // it is, and the operation's own name takes over once the binary has landed.
 func (b *sidebar) loadingText() (msg, caption string) {
 	if a := b.s.AssetLoading(); a != "" {
-		return "Downloading the git client…", a + " - the workspace fills once it lands"
+		// The asset name ALONE. The column is 264 px and the caption does not
+		// wrap: anything longer is clipped mid-word at the edge, which reads as
+		// a rendering fault rather than as information. The message above
+		// already says what the wait is for.
+		return "Downloading the git client…", a
 	}
 	if op := b.s.git.op.Get(); op != "" {
 		return op + "…", "Fetching the sample repository"
