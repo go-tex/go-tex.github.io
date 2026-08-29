@@ -121,8 +121,14 @@ body{overflow:hidden;background:var(--bg)}
   // base download never pays for go-git). Publish the cache-busted worker
   // bootstrap URL for the wasm to spawn; the ?v=<sha> is inherited by the worker's
   // own git-worker.wasm fetch, the same anti-stale trick as the main wasm above.
+  // &n=<decompressed bytes> rides along so the worker can drive a real progress
+  // bar: it reads DECOMPRESSED bytes off the stream while Content-Length is the
+  // COMPRESSED length, exactly as the main wasm above does. Zero (an unbuilt
+  // asset) means "unknown", and the workspace shows a sliding bar instead.
+  {{ $workerBytes := 0 }}{{ with (os.Stat "static/git-worker.wasm") }}{{ $workerBytes = .Size }}{{ end }}
   {{ $gitWorker := "git-worker.js" | absURL }}
   {{ with $sha }}{{ $gitWorker = printf "%s?v=%s" $gitWorker . }}{{ end }}
+  {{ if $workerBytes }}{{ $gitWorker = printf "%s%sn=%d" $gitWorker (cond (strings.Contains $gitWorker "?") "&" "?") $workerBytes }}{{ end }}
   globalThis.gotexGitWorkerURL={{ $gitWorker }};
 
   // Resolve the host page's theme (data-theme, else prefers-color-scheme) to a
@@ -177,7 +183,14 @@ body{overflow:hidden;background:var(--bg)}
     // magic number and instantiates. It replaces instantiateStreaming precisely so
     // the multi-megabyte download shows real progress instead of a blank gap.
     function streamFetch(url){
-      return fetch(url,{cache:"reload"}).then(function(r){
+      // NOT {cache:"reload"}. That flag forced a full re-download on EVERY visit
+      // — measured against the live site: 6.51 MB over the wire on the first load
+      // and 6.51 MB again on the second, in the same browser profile. It dates
+      // from the jsDelivr era, when a stale cached copy could be a genuinely
+      // different build; since the URL carries the deploy sha (?v=…), a cached
+      // entry can only ever be the bytes this deploy asked for, so revalidating
+      // is free and re-downloading is pure waste.
+      return fetch(url).then(function(r){
         if(!r.ok) throw new Error("HTTP "+r.status+" fetching the engine at "+url);
         // Prefer the build-time DECOMPRESSED size: the reader below yields
         // decompressed bytes, so a compressed Content-Length would make the bar
