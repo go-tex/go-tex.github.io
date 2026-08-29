@@ -212,6 +212,11 @@ type gitView struct {
 	busy   *mvvm.Observable[bool]
 	errMsg *mvvm.Observable[string]
 	notice *mvvm.Observable[string]
+	// op names the git operation in flight ("Cloning", "Pulling", …), or is
+	// empty. busy alone says only THAT something is happening; a workspace that
+	// freezes its buttons without saying which of five operations is running
+	// leaves the reader to guess, so the name is carried and shown.
+	op     *mvvm.Observable[string]
 	loaded *mvvm.Observable[string] // the ACTIVE working-tree path bound to the editor
 
 	// Independent per-file edit buffers. Opening a file no longer discards the
@@ -313,6 +318,7 @@ func newGitView(s *State) *gitView {
 		busy:    mvvm.NewObservable(false),
 		errMsg:  mvvm.NewObservable(""),
 		notice:  mvvm.NewObservable(""),
+		op:      mvvm.NewObservable(""),
 		loaded:  mvvm.NewObservable(""),
 		buffers: map[string]*fileBuffer{},
 	}
@@ -403,7 +409,7 @@ func (s *State) gitClone(boot bool, done func(err error)) {
 	v.cloneGen++
 	gen := v.cloneGen
 	v.bootInFlight = boot
-	v.busy.Set(true)
+	v.beginOp("Cloning")
 	// The git client is a separate binary — 4.2 MB gzip of go-git — that only
 	// downloads when a repository is opened. Name it while it is on its way: the
 	// playground is already interactive and typesetting, and a reader watching a
@@ -424,7 +430,7 @@ func (s *State) gitClone(boot bool, done func(err error)) {
 			}
 			return
 		}
-		v.busy.Set(false)
+		v.endOp()
 		s.SetAssetLoading("")
 		if err != nil {
 			v.errMsg.Set(gitErrorMessage(err))
@@ -473,12 +479,12 @@ func (s *State) GitPull(done func(err error)) {
 		v.fail(errNoGitRepo, done)
 		return
 	}
-	v.busy.Set(true)
+	v.beginOp("Pulling")
 	v.errMsg.Set("")
 	v.notice.Set("")
 	v.refresh()
 	v.backend.Pull(func(err error) {
-		v.busy.Set(false)
+		v.endOp()
 		s.SetAssetLoading("")
 		if err != nil {
 			v.errMsg.Set(gitErrorMessage(err))
@@ -518,7 +524,7 @@ func (s *State) GitCommit(done func(err error)) {
 		v.fail(errNoGitFile, done)
 		return
 	}
-	v.busy.Set(true)
+	v.beginOp("Committing")
 	v.errMsg.Set("")
 	v.notice.Set("")
 	v.refresh()
@@ -530,7 +536,7 @@ func (s *State) GitCommit(done func(err error)) {
 			return
 		}
 		v.backend.Commit(path, content, v.msg.Get(), func(err error) {
-			v.busy.Set(false)
+			v.endOp()
 			if err != nil {
 				v.errMsg.Set(gitErrorMessage(err))
 			} else {
@@ -563,7 +569,7 @@ func (s *State) GitStage(done func(err error)) {
 		v.fail(errNoGitFile, done)
 		return
 	}
-	v.busy.Set(true)
+	v.beginOp("Staging")
 	v.errMsg.Set("")
 	v.notice.Set("")
 	v.refresh()
@@ -575,7 +581,7 @@ func (s *State) GitStage(done func(err error)) {
 			return
 		}
 		v.backend.Stage(path, content, func(err error) {
-			v.busy.Set(false)
+			v.endOp()
 			if err != nil {
 				v.errMsg.Set(gitErrorMessage(err))
 			} else {
@@ -592,10 +598,24 @@ func (s *State) GitStage(done func(err error)) {
 	})
 }
 
+// beginOp marks a git operation in flight and names it, so the workspace can say
+// which one rather than only that it is busy. endOp is its counterpart: every
+// path that clears busy clears the name with it, or a finished operation would
+// keep announcing itself.
+func (v *gitView) beginOp(name string) {
+	v.busy.Set(true)
+	v.op.Set(name)
+}
+
+func (v *gitView) endOp() {
+	v.busy.Set(false)
+	v.op.Set("")
+}
+
 // finishOp ends a git op that failed before its main step (a flush error):
 // clears busy, surfaces the error and reports it.
 func (v *gitView) finishOp(err error, done func(error)) {
-	v.busy.Set(false)
+	v.endOp()
 	v.errMsg.Set(gitErrorMessage(err))
 	if done != nil {
 		done(err)
@@ -642,12 +662,12 @@ func (s *State) GitPush(done func(err error)) {
 		v.fail(errNoGitRepo, done)
 		return
 	}
-	v.busy.Set(true)
+	v.beginOp("Pushing")
 	v.errMsg.Set("")
 	v.notice.Set("")
 	v.refresh()
 	v.backend.Push(func(err error) {
-		v.busy.Set(false)
+		v.endOp()
 		s.SetAssetLoading("")
 		if err != nil {
 			v.errMsg.Set(gitErrorMessage(err))

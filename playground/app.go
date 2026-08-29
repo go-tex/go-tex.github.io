@@ -237,6 +237,13 @@ type State struct {
 	// rather than left to wonder why a panel is not ready yet.
 	assetLoading string
 
+	// assetProgress is how far that asset has come, in [0,1], or -1 when the
+	// host cannot tell (no Content-Length, or a build that never published the
+	// decompressed size). A named asset with no progress still deserves an
+	// indeterminate bar: "something is coming" is the part the reader needs,
+	// and a bar that cannot say how far is honest about it.
+	assetProgress float64
+
 	// bootNotice is what the topZone says when the sample repository could not be
 	// opened. A boot clone that fails leaves the workspace closed, which looks
 	// exactly like a workspace nobody asked for — so the reason is said out loud
@@ -1803,11 +1810,35 @@ func (s *State) SetAssetLoading(name string) {
 		return
 	}
 	s.assetLoading = name
+	// A new asset (or none) starts with no measurement of its own; leaving the
+	// previous one's fraction behind would show a bar already part-full.
+	s.assetProgress = -1
 	s.dirty = true
 }
 
 // AssetLoading is what the topZone is currently announcing (host introspection).
 func (s *State) AssetLoading() string { return s.assetLoading }
+
+// SetAssetProgress records how far the named background asset has downloaded.
+// frac is clamped to [0,1]; pass a negative value for "cannot tell", which the
+// workspace renders as an indeterminate bar rather than a dishonest 0%.
+func (s *State) SetAssetProgress(frac float64) {
+	switch {
+	case frac < 0:
+		frac = -1
+	case frac > 1:
+		frac = 1
+	}
+	if s.assetProgress == frac {
+		return
+	}
+	s.assetProgress = frac
+	s.dirty = true
+}
+
+// AssetProgress is the fraction downloaded of the asset named by
+// [State.AssetLoading], or -1 when it is not known.
+func (s *State) AssetProgress() float64 { return s.assetProgress }
 
 // SetBootNotice records why the sample repository is not there ("" clears it).
 // The topZone shows it in place of the ready line, so a reader is told rather

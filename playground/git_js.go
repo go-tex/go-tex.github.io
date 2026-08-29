@@ -39,7 +39,27 @@ import (
 // The wasm driver calls it once, after building the State, passing its repaint
 // function.
 func (s *State) EnableGit(repaint func()) {
-	s.git.attach(newWorkerGitBackend(newJSWorkerTransport()), repaint)
+	t := newJSWorkerTransport()
+	// The worker's own wasm download reports its progress back to the page (see
+	// static/git-worker.js). Route it into the State the workspace reads, and
+	// repaint: without this the sidebar sits blank through a multi-megabyte
+	// download with nothing to explain the wait.
+	t.onProgress = func(frac float64) {
+		s.SetAssetProgress(frac)
+		if repaint != nil {
+			repaint()
+		}
+	}
+	// Landed: the git client is instantiated, so the wait that follows belongs to
+	// the network operation, not to the download. Clearing the asset name hands
+	// the workspace message over to the operation's own name.
+	t.onReady = func() {
+		s.SetAssetLoading("")
+		if repaint != nil {
+			repaint()
+		}
+	}
+	s.git.attach(newWorkerGitBackend(t), repaint)
 }
 
 // jsWorkerTransport owns the Web Worker and correlates replies to the
@@ -56,8 +76,14 @@ type jsWorkerTransport struct {
 
 	readyOnce sync.Once
 	readyCh   chan struct{}
-	onmessage js.Func
-	onerror   js.Func
+	// onProgress / onReady report the worker's wasm download to the host so the
+	// workspace can say what it is waiting for. Both are nil in the native tests
+	// (which never build a real Worker) and are only ever called from the
+	// event-loop goroutine, inside the message handler.
+	onProgress func(frac float64)
+	onReady    func()
+	onmessage  js.Func
+	onerror    js.Func
 }
 
 // newJSWorkerTransport builds an unspawned transport; the Worker is created lazily
@@ -91,6 +117,18 @@ func (w *jsWorkerTransport) Spawn() {
 
 	w.onmessage = js.FuncOf(func(_ js.Value, args []js.Value) any {
 		data := args[0].Get("data")
+		// The bootstrap posts its download progress as an OBJECT, before any Go
+		// code exists in the worker to speak the gitrpc protocol; RPC replies are
+		// strings. Splitting on the type keeps the two channels apart without a
+		// protocol change.
+		if data.Type() == js.TypeObject {
+			if data.Get("t").Type() == js.TypeString && data.Get("t").String() == gitAssetProgressMessage {
+				if w.onProgress != nil {
+					w.onProgress(assetFraction(data.Get("got"), data.Get("total")))
+				}
+			}
+			return nil
+		}
 		if data.Type() != js.TypeString {
 			return nil
 		}
@@ -100,6 +138,9 @@ func (w *jsWorkerTransport) Spawn() {
 		}
 		if reply.Ready {
 			w.readyOnce.Do(func() { close(w.readyCh) })
+			if w.onReady != nil {
+				w.onReady()
+			}
 			return nil
 		}
 		w.mu.Lock()
@@ -169,4 +210,24 @@ func workerDeadReply(id int) gitrpc.Reply {
 		Code:  "worker",
 		Error: "the git client (git-worker.wasm) did not load",
 	}
+}
+
+// gitAssetProgressMessage tags the bootstrap's download-progress messages. It is
+// deliberately namespaced: the page and the worker share no other object
+// messages, and a bare "progress" would collide with anything added later.
+const gitAssetProgressMessage = "gotex-asset-progress"
+
+// assetFraction turns the bootstrap's (got, total) pair into a fraction, or -1
+// when the total is unusable — a host that sent no length, or a build with no
+// published decompressed size. A bar that cannot measure says so by sliding
+// rather than by claiming 0%.
+func assetFraction(got, total js.Value) float64 {
+	if got.Type() != js.TypeNumber || total.Type() != js.TypeNumber {
+		return -1
+	}
+	t := total.Float()
+	if t <= 0 {
+		return -1
+	}
+	return got.Float() / t
 }

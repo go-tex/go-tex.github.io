@@ -142,7 +142,8 @@ type sidebar struct {
 	tree     *toolkit.TreeTable
 	timeline *toolkit.Timeline
 	empty    *toolkit.EmptyState
-	spinner  *toolkit.Spinner // shown while a clone is in flight (no repo yet)
+	spinner  *toolkit.Spinner     // shown while a clone is in flight (no repo yet)
+	assetBar *toolkit.ProgressBar // the git client's download, under the spinner
 	btns     map[sidebarRole]*toolkit.Button
 }
 
@@ -181,6 +182,7 @@ func (b *sidebar) ensureWidgets() {
 	b.timeline = toolkit.NewTimeline(nil)
 	b.spinner = toolkit.NewSpinner()
 	b.spinner.Active().Set(true)
+	b.assetBar = toolkit.NewProgressBar()
 	b.empty = toolkit.NewEmptyState("No repository open").
 		SetCaption("Clone one to browse its files here")
 	b.btns = map[sidebarRole]*toolkit.Button{}
@@ -548,7 +550,30 @@ func (b *sidebar) detailText() (string, toolkit.RGBA) {
 	if n := b.s.git.notice.Get(); n != "" {
 		return n, toolkit.RGBA{}
 	}
+	// With a repository already open the workspace keeps showing its tree during
+	// an operation, so the only sign anything is happening is that the buttons
+	// went flat. Name the operation instead.
+	if b.s.git.busy.Get() {
+		if op := b.s.git.op.Get(); op != "" {
+			return op + "…", toolkit.RGBA{}
+		}
+	}
 	return "", toolkit.RGBA{}
+}
+
+// loadingText is what the empty workspace says while an operation is in flight.
+// A clone that is still DOWNLOADING its git client is not yet talking to any
+// remote, and saying "Cloning…" for the tens of seconds that download can take
+// misattributes the wait to a slow server. So the asset phase is named for what
+// it is, and the operation's own name takes over once the binary has landed.
+func (b *sidebar) loadingText() (msg, caption string) {
+	if a := b.s.AssetLoading(); a != "" {
+		return "Downloading the git client…", a + " - the workspace fills once it lands"
+	}
+	if op := b.s.git.op.Get(); op != "" {
+		return op + "…", "Fetching the sample repository"
+	}
+	return "Working…", ""
 }
 
 // draw paints the column ground + rule, the header, and either the repo view
@@ -582,10 +607,31 @@ func (b *sidebar) draw(p painter.Painter, theme *toolkit.Theme) {
 			sz := toolkit.Scaled(28)
 			b.spinner.SetBounds(toolkit.Rect{X: body.X + (body.W-sz)/2, Y: body.Y + body.H/3 - sz/2, W: sz, H: sz})
 			b.spinner.Draw(p, theme)
-			b.empty.Message().Set("Cloning…")
-			b.empty.Caption().Set("Fetching the sample repository")
+			msg, caption := b.loadingText()
+			b.empty.Message().Set(msg)
+			b.empty.Caption().Set(caption)
 			b.empty.SetBounds(toolkit.Rect{X: body.X, Y: body.Y + body.H/3 + sz, W: body.W, H: body.H*2/3 - sz})
 			b.empty.Draw(p, theme)
+			// The git client is a separate multi-megabyte binary. While it is on
+			// its way the workspace is empty for a reason the reader cannot see,
+			// so the download draws its own bar under the message — determinate
+			// when the host can measure it, sliding when it cannot.
+			if b.s.AssetLoading() != "" {
+				w := min(body.W-2*toolkit.Scaled(16), toolkit.Scaled(220))
+				if w > 0 {
+					frac := b.s.AssetProgress()
+					b.assetBar.Indeterminate = frac < 0
+					if frac >= 0 {
+						b.assetBar.SetFraction(frac)
+					}
+					b.assetBar.SetBounds(toolkit.Rect{
+						X: body.X + (body.W-w)/2,
+						Y: body.Y + body.H/3 + sz + toolkit.Scaled(64),
+						W: w, H: toolkit.Scaled(6),
+					})
+					b.assetBar.Draw(p, theme)
+				}
+			}
 			b.drawButtons(p, theme)
 			return
 		}
