@@ -165,3 +165,54 @@ func TestARejectedTokenIsNotCalledOffline(t *testing.T) {
 		t.Fatalf("notice = %q — a rejected token is not a network failure", n)
 	}
 }
+
+// Forgetting is about the NEXT visit. A reader asking to drop a stored copy is
+// not asking to lose the document they are editing, so this must never behave
+// like a destructive action wearing a harmless label.
+func TestForgetLeavesTheOpenWorkspaceAlone(t *testing.T) {
+	s, f, _ := withGit(t)
+	f.restoreFound = true
+	f.files = []string{"article.tex"}
+	f.fileData["article.tex"] = `\documentclass{article}\begin{document}restored\end{document}`
+	s.BootClone(nil)
+
+	before := s.Source()
+	if !strings.Contains(before, "restored") {
+		t.Fatalf("setup: the workspace never opened (%q)", before)
+	}
+
+	forgot := false
+	s.GitForget(func() { forgot = true })
+	if !forgot {
+		t.Fatal("GitForget never called back")
+	}
+	if f.forgetCalls != 1 {
+		t.Fatalf("the backend was asked to forget %d times, want once", f.forgetCalls)
+	}
+	if !s.SidebarOpen() {
+		t.Error("forgetting closed the workspace")
+	}
+	if got := s.Source(); got != before {
+		t.Errorf("forgetting changed the open document:\n got %q\nwant %q", got, before)
+	}
+	if !f.hasRepo {
+		t.Error("forgetting closed the repository")
+	}
+	if n := s.git.notice.Get(); !strings.Contains(strings.ToLower(n), "saved copy") {
+		t.Errorf("notice = %q, want it to say the saved copy was dropped", n)
+	}
+	// It is not a git operation against the remote.
+	if f.cloneCalls != 0 {
+		t.Errorf("forgetting re-cloned %d times; it must only affect the next visit", f.cloneCalls)
+	}
+}
+
+// A native build has no browser storage, so there is nothing saved to drop —
+// but the call must still complete rather than leaving a caller waiting.
+func TestForgetOnABuildWithoutBrowserGit(t *testing.T) {
+	called := false
+	nopGitBackend{}.Forget(gitConfig{}, func() { called = true })
+	if !called {
+		t.Fatal("the no-op backend never reported back")
+	}
+}

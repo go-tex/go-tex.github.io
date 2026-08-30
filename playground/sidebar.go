@@ -97,6 +97,7 @@ const (
 	sbRoleCommit
 	sbRolePull
 	sbRolePush
+	sbRoleForget
 	sbRoleClone // empty-state action: open the Remote-Git panel to clone
 )
 
@@ -462,6 +463,9 @@ func (b *sidebar) layout() {
 		{role: sbRoleCommit, label: "Commit"},
 		{role: sbRolePull, label: "Pull"},
 		{role: sbRolePush, label: "Push"},
+		// Drops the copy this browser keeps, so the next visit clones afresh.
+		// It leaves the open workspace alone — see [State.GitForget].
+		{role: sbRoleForget, label: "Forget"},
 	}
 	for start := 0; start < len(cmds); start += 3 {
 		end := start + 3
@@ -826,6 +830,8 @@ func (b *sidebar) dispatch(role sidebarRole) {
 		b.s.GitStage(nil)
 	case sbRoleCommit:
 		b.s.GitCommit(nil)
+	case sbRoleForget:
+		b.s.GitForget(nil)
 	case sbRolePull:
 		b.s.GitPull(nil)
 	case sbRolePush:

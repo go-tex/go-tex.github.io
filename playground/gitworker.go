@@ -192,6 +192,16 @@ func (b *workerGitBackend) Restore(cfg gitConfig, done func([]string, bool, erro
 	}()
 }
 
+// Forget asks the worker to drop the saved copy. It reports back whatever
+// happened: there being nothing stored is the same outcome as having dropped it,
+// so there is no error to surface.
+func (b *workerGitBackend) Forget(cfg gitConfig, done func()) {
+	go func() {
+		b.t.Call(gitrpc.Request{Op: gitrpc.OpForget, Args: argsFromConfig(cfg)})
+		done()
+	}()
+}
+
 // Pull fast-forwards the open repo in the worker and refreshes the cache.
 func (b *workerGitBackend) Pull(done func(error)) {
 	go func() {

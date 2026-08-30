@@ -35,6 +35,10 @@ type gitSession interface {
 	// without contacting the remote, and reports whether one was found. A false
 	// with no error means nothing was stored for this url@branch.
 	Restore(url, branch, token, author, email string) (bool, error)
+	// Forget drops the saved copy for url@branch. The OPEN repository is left
+	// exactly as it is: forgetting is about the next visit, so it can never cost
+	// the reader work they have not committed.
+	Forget(url, branch string)
 	// Persist writes the open repository down so a later visit can Restore it.
 	// It is best-effort by contract: a browser can refuse the write (quota,
 	// private mode, eviction) and that must not fail the git operation that
@@ -90,6 +94,8 @@ func (h *handler) dispatch(req gitrpc.Request) gitrpc.Reply {
 		return h.clone(req)
 	case gitrpc.OpRestore:
 		return h.restore(req)
+	case gitrpc.OpForget:
+		return h.forget(req)
 	case gitrpc.OpList:
 		return h.list(req)
 	case gitrpc.OpReadFile:
@@ -148,6 +154,15 @@ func (h *handler) restore(req gitrpc.Request) gitrpc.Reply {
 	}
 	reply := h.mutatingReply(req.ID, true)
 	reply.Restored = reply.OK
+	return reply
+}
+
+// forget drops this browser's saved copy. It always succeeds: there being
+// nothing to forget is the same outcome as having forgotten it.
+func (h *handler) forget(req gitrpc.Request) gitrpc.Reply {
+	h.s.Forget(req.Args.URL, req.Args.Branch)
+	reply := gitrpc.OKReply(req.ID)
+	reply.HasRepo = h.s.HasRepo()
 	return reply
 }
 

@@ -81,6 +81,13 @@ func (s *browsergitSession) Restore(url, branch, token, author, email string) (b
 	return true, nil
 }
 
+// Forget drops the saved copy for url@branch without touching the open
+// repository — see the interface comment for why that separation matters.
+func (s *browsergitSession) Forget(url, branch string) {
+	url, _ = browsergit.SplitCredential(url, "")
+	dropSnapshot(workspaceKey(url, branch))
+}
+
 // Persist writes the open repository down for the next visit. Best-effort by
 // contract: a browser can refuse the write — quota, private mode, eviction —
 // and that must not fail the git operation that just succeeded.

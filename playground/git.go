@@ -134,6 +134,9 @@ type gitBackend interface {
 	// saved — an ordinary first visit, not a failure — and an error only when a
 	// saved workspace existed and could not be reopened.
 	Restore(cfg gitConfig, done func(files []string, found bool, err error))
+	// Forget drops this browser's saved copy of cfg's repository. The open
+	// repository is left alone: forgetting is about the next visit.
+	Forget(cfg gitConfig, done func())
 	// Pull fast-forwards the open repo against origin; done reports the error.
 	Pull(done func(err error))
 	// Commit writes content to path in the working tree, then commits with
@@ -1542,6 +1545,9 @@ func (nopGitBackend) Pull(done func(error))                         { done(errNo
 // native run has no saved workspace and never had one.
 func (nopGitBackend) Restore(_ gitConfig, done func([]string, bool, error)) { done(nil, false, nil) }
 
+// Forget on a build with no browser git has nothing saved to drop.
+func (nopGitBackend) Forget(_ gitConfig, done func()) { done() }
+
 func (nopGitBackend) Commit(_, _, _ string, done func(error)) { done(errNoBrowserGit) }
 func (nopGitBackend) Stage(_, _ string, done func(error))     { done(errNoBrowserGit) }
 func (nopGitBackend) WriteFiles(_ map[string]string, done func(error)) {
@@ -1669,5 +1675,24 @@ func (s *State) gitRestore(done func(restored bool, err error)) {
 		v.bootBuffer = ""
 		v.refresh()
 		done(true, nil)
+	})
+}
+
+// GitForget drops this browser's saved copy of the open repository, so the next
+// visit clones afresh instead of reopening it.
+//
+// It deliberately does NOT touch what is open. A reader asking to forget a
+// stored copy is asking about the future, not asking to lose the document they
+// are editing — and a workspace that emptied itself on this button would be a
+// destructive action wearing a harmless label.
+func (s *State) GitForget(done func()) {
+	v := s.git
+	v.errMsg.Set("")
+	v.backend.Forget(v.config(), func() {
+		v.notice.Set("Saved copy dropped.")
+		v.refresh()
+		if done != nil {
+			done()
+		}
 	})
 }

@@ -31,6 +31,7 @@ type fakeGitBackend struct {
 	restoreFound bool
 	restoreErr   error
 	restoreCalls int
+	forgetCalls  int
 
 	gotCfg           gitConfig
 	gotCommitPath    string
@@ -95,6 +96,12 @@ func (f *fakeGitBackend) Restore(cfg gitConfig, done func([]string, bool, error)
 		return
 	}
 	fire()
+}
+
+func (f *fakeGitBackend) Forget(cfg gitConfig, done func()) {
+	f.forgetCalls++
+	f.gotCfg = cfg
+	done()
 }
 
 func (f *fakeGitBackend) Pull(done func(error)) {
