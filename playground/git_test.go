@@ -26,6 +26,11 @@ type fakeGitBackend struct {
 	stageErr  error
 	writeErr  error
 	pushErr   error
+	// restoreFound makes the fake behave like a browser that already holds this
+	// repository; restoreErr like one holding an entry it cannot reopen.
+	restoreFound bool
+	restoreErr   error
+	restoreCalls int
 
 	gotCfg           gitConfig
 	gotCommitPath    string
@@ -62,6 +67,28 @@ func (f *fakeGitBackend) Clone(cfg gitConfig, done func([]string, error)) {
 		}
 		f.hasRepo = true
 		done(f.files, nil)
+	}
+	if f.hold {
+		f.release = fire
+		return
+	}
+	fire()
+}
+
+func (f *fakeGitBackend) Restore(cfg gitConfig, done func([]string, bool, error)) {
+	f.restoreCalls++
+	f.gotCfg = cfg
+	fire := func() {
+		if f.restoreErr != nil {
+			done(nil, false, f.restoreErr)
+			return
+		}
+		if !f.restoreFound {
+			done(nil, false, nil)
+			return
+		}
+		f.hasRepo = true
+		done(f.files, true, nil)
 	}
 	if f.hold {
 		f.release = fire

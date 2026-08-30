@@ -174,6 +174,24 @@ func (b *workerGitBackend) Clone(cfg gitConfig, done func([]string, error)) {
 	}()
 }
 
+// Restore asks the worker to reopen a saved repository. Nothing saved is an
+// ordinary answer — found is false with no error, and the caller clones.
+func (b *workerGitBackend) Restore(cfg gitConfig, done func([]string, bool, error)) {
+	go func() {
+		reply := b.t.Call(gitrpc.Request{Op: gitrpc.OpRestore, Args: argsFromConfig(cfg)})
+		if !reply.OK {
+			done(nil, false, codeToError(reply.Code, reply.Error))
+			return
+		}
+		if !reply.Restored {
+			done(nil, false, nil)
+			return
+		}
+		b.apply(reply)
+		done(reply.Files, true, nil)
+	}()
+}
+
 // Pull fast-forwards the open repo in the worker and refreshes the cache.
 func (b *workerGitBackend) Pull(done func(error)) {
 	go func() {

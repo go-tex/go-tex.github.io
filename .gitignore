@@ -21,3 +21,8 @@ static/*.wasm
 # site serves is built by pages.yml.
 playground/playground-wasm
 playground/git-worker
+# The same binary lands in the COMMAND'S OWN directory when the build is run
+# from inside it (`cd playground/cmd/git-worker && go build ./...`), which the
+# two paths above do not cover — an 18 MB git-worker reached the index that way.
+playground/cmd/playground-wasm/playground-wasm
+playground/cmd/git-worker/git-worker

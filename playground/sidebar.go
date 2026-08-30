@@ -583,6 +583,11 @@ func (b *sidebar) loadingText() (msg, caption string) {
 		return "Downloading the git client…", a
 	}
 	if op := b.s.git.op.Get(); op != "" {
+		// Restoring reads this browser's own saved copy; it touches no remote,
+		// and saying "fetching" there would name the wrong thing entirely.
+		if op == "Restoring" {
+			return "Restoring…", "Reopening your saved workspace"
+		}
 		return op + "…", "Fetching the sample repository"
 	}
 	return "Working…", ""

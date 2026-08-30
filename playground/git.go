@@ -129,6 +129,11 @@ type gitBackend interface {
 	// Clone opens cfg.URL@cfg.Branch with cfg's identity into memory; done
 	// reports the working-tree file list (slash-relative) or an error.
 	Clone(cfg gitConfig, done func(files []string, err error))
+	// Restore reopens a repository this browser saved on an earlier visit,
+	// without contacting the remote. done reports found=false when nothing was
+	// saved — an ordinary first visit, not a failure — and an error only when a
+	// saved workspace existed and could not be reopened.
+	Restore(cfg gitConfig, done func(files []string, found bool, err error))
 	// Pull fast-forwards the open repo against origin; done reports the error.
 	Pull(done func(err error))
 	// Commit writes content to path in the working tree, then commits with
@@ -1532,8 +1537,13 @@ type nopGitBackend struct{}
 
 func (nopGitBackend) Clone(_ gitConfig, done func([]string, error)) { done(nil, errNoBrowserGit) }
 func (nopGitBackend) Pull(done func(error))                         { done(errNoBrowserGit) }
-func (nopGitBackend) Commit(_, _, _ string, done func(error))       { done(errNoBrowserGit) }
-func (nopGitBackend) Stage(_, _ string, done func(error))           { done(errNoBrowserGit) }
+
+// Restore on a build with no browser git finds nothing, rather than failing: a
+// native run has no saved workspace and never had one.
+func (nopGitBackend) Restore(_ gitConfig, done func([]string, bool, error)) { done(nil, false, nil) }
+
+func (nopGitBackend) Commit(_, _, _ string, done func(error)) { done(errNoBrowserGit) }
+func (nopGitBackend) Stage(_, _ string, done func(error))     { done(errNoBrowserGit) }
 func (nopGitBackend) WriteFiles(_ map[string]string, done func(error)) {
 	done(errNoBrowserGit)
 }
@@ -1571,7 +1581,8 @@ func (s *State) BootClone(done func(err error)) {
 	}
 	v.url.Set(DefaultRemoteURL)
 	v.bootBuffer = s.Source()
-	s.gitClone(true, func(err error) {
+
+	settle := func(err error) {
 		if err == nil {
 			// The sidebar has been open from the start since #67; this keeps
 			// BootClone correct on its own terms rather than resting on that.
@@ -1586,5 +1597,62 @@ func (s *State) BootClone(done func(err error)) {
 		if done != nil {
 			done(err)
 		}
+	}
+
+	// A browser that already holds this repository should not fetch it again.
+	// Restoring is local and quick; the network round-trip that follows is a
+	// fast-forward, not a fresh clone, and it leaves any uncommitted edit alone.
+	s.gitRestore(func(restored bool, err error) {
+		switch {
+		case restored:
+			// Opened from this browser's own copy. Bring it up to date, but a
+			// failed refresh is NOT a failed boot: the workspace is already
+			// open and usable, and an unreachable remote should not empty it.
+			s.GitPull(func(pullErr error) {
+				if pullErr != nil {
+					v.notice.Set("Opened your saved workspace - could not reach the remote to update it.")
+				}
+				settle(nil)
+			})
+		case err != nil:
+			// Something WAS saved and could not be reopened: that is the
+			// reader's own work going away, so it is said out loud rather than
+			// silently replaced by a fresh clone.
+			v.notice.Set(gitErrorMessage(err))
+			s.gitClone(true, settle)
+		default:
+			s.gitClone(true, settle)
+		}
+	})
+}
+
+// gitRestore asks the backend to reopen a saved workspace, folding the result
+// into the view the way a clone does. It reports whether one was found.
+func (s *State) gitRestore(done func(restored bool, err error)) {
+	v := s.git
+	v.beginOp("Restoring")
+	v.errMsg.Set("")
+	v.notice.Set("")
+	v.refresh()
+	v.backend.Restore(v.config(), func(files []string, found bool, err error) {
+		v.endOp()
+		if !found {
+			v.refresh()
+			done(false, err)
+			return
+		}
+		v.setFiles(files)
+		v.buffers = map[string]*fileBuffer{}
+		v.openTabs = nil
+		s.SetBootNotice("")
+		v.primaryPath = primaryTeX(files)
+		v.log = v.backend.Log(gitLogLimit)
+		v.refreshStatus()
+		if v.primaryPath != "" {
+			v.loadFresh(v.primaryPath)
+		}
+		v.bootBuffer = ""
+		v.refresh()
+		done(true, nil)
 	})
 }

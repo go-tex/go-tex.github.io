@@ -360,3 +360,65 @@ func TestCommitsFrom(t *testing.T) {
 		t.Fatalf("commitsFrom = %+v", got)
 	}
 }
+
+// restoreSync drives the async Restore and blocks for its callback.
+func restoreSync(b *workerGitBackend, cfg gitConfig) ([]string, bool, error) {
+	type res struct {
+		f     []string
+		found bool
+		e     error
+	}
+	ch := make(chan res, 1)
+	b.Restore(cfg, func(f []string, found bool, e error) { ch <- res{f, found, e} })
+	r := <-ch
+	return r.f, r.found, r.e
+}
+
+func TestWorkerBackendRestore(t *testing.T) {
+	// A saved workspace comes back with its files, contents, status and log —
+	// everything a clone returns, without the clone.
+	tr := &fakeTransport{replies: map[string]gitrpc.Reply{
+		gitrpc.OpRestore: {
+			OK:       true,
+			Restored: true,
+			Files:    []string{"main.tex"},
+			Contents: map[string]string{"main.tex": "body"},
+			Status:   &gitrpc.Status{Branch: "main", Clean: true},
+			Log:      []gitrpc.Commit{{Hash: "abc1234", Subject: "seed", Author: "Ada"}},
+		},
+	}}
+	b := newWorkerGitBackend(tr)
+	files, found, err := restoreSync(b, gitConfig{URL: "https://forge/o/r.git", Branch: "main"})
+	if err != nil || !found {
+		t.Fatalf("restore found=%v err=%v, want found with no error", found, err)
+	}
+	if len(files) != 1 || files[0] != "main.tex" {
+		t.Fatalf("files = %v", files)
+	}
+	if !b.HasRepo() {
+		t.Fatal("a restored repository must count as open")
+	}
+	if data, err := b.ReadFile("main.tex"); err != nil || string(data) != "body" {
+		t.Fatalf("contents were not cached: %q %v", data, err)
+	}
+
+	// Nothing saved: an ordinary answer, no error, no repo.
+	tr = &fakeTransport{replies: map[string]gitrpc.Reply{gitrpc.OpRestore: {OK: true}}}
+	b = newWorkerGitBackend(tr)
+	files, found, err = restoreSync(b, gitConfig{URL: "https://forge/o/r.git"})
+	if err != nil || found || files != nil {
+		t.Fatalf("a first visit reported found=%v files=%v err=%v", found, files, err)
+	}
+	if b.HasRepo() {
+		t.Fatal("nothing was restored, yet the backend claims a repository")
+	}
+
+	// A saved entry that cannot be reopened is an error the reader hears about.
+	tr = &fakeTransport{replies: map[string]gitrpc.Reply{
+		gitrpc.OpRestore: {OK: false, Code: gitrpc.CodeTransport, Error: "unreadable"},
+	}}
+	b = newWorkerGitBackend(tr)
+	if _, found, err = restoreSync(b, gitConfig{}); err == nil || found {
+		t.Fatalf("a failed restore reported found=%v err=%v", found, err)
+	}
+}
