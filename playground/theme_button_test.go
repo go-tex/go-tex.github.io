@@ -14,8 +14,8 @@ func TestThemeButtonCycles(t *testing.T) {
 	if s.ThemeMode() != "system" {
 		t.Fatalf("initial theme mode = %q, want system", s.ThemeMode())
 	}
-	if got := s.themeBtn.Label().Get(); got != "Theme: System" {
-		t.Fatalf("initial label = %q, want %q", got, "Theme: System")
+	if got := s.themeBtn.Label().Get(); got != "System" {
+		t.Fatalf("initial label = %q, want %q", got, "System")
 	}
 
 	var applied []string
@@ -43,7 +43,7 @@ func TestThemeButtonSetMode(t *testing.T) {
 	s := newTestState(t, false)
 
 	s.SetThemeMode("dark")
-	if s.ThemeMode() != "dark" || s.themeBtn.Label().Get() != "Theme: Dark" {
+	if s.ThemeMode() != "dark" || s.themeBtn.Label().Get() != "Dark" {
 		t.Fatalf("SetThemeMode(dark): mode=%q label=%q", s.ThemeMode(), s.themeBtn.Label().Get())
 	}
 	s.SetThemeMode("bogus")

@@ -448,6 +448,16 @@ func NewState(w, h int, dark bool) *State {
 		s.cycleTheme()
 	})
 
+	// Leading glyphs on the toolbar buttons (buttonicons.go), set through the
+	// toolkit Button's optional MVVM LeadingIcon adornment. The Find button also
+	// carries its keyboard-shortcut hint; the platform-correct modifier is filled
+	// in by the wasm shell via SetFindShortcut.
+	s.minimapBtn.LeadingIcon().Set(iconMinimap)
+	s.sidebarBtn.LeadingIcon().Set(iconWorkspace)
+	s.findBtn.LeadingIcon().Set(iconFind)
+	s.wysiwygBtn.LeadingIcon().Set(iconSource)
+	s.themeBtn.LeadingIcon().Set(iconTheme)
+
 	// The two chrome bands moved in from the host HTML (see zones.go). siteRoot is
 	// seeded to the canonical default before the first layout (bottomZone.measure
 	// reads it); the js layer overrides it with the live origin at startup.
@@ -637,14 +647,16 @@ func (s *State) SetTheme(dark bool) {
 }
 
 // themeBtnLabel is the theme toggle's caption for a given mode.
+// themeBtnLabel is the theme toggle's caption. The button carries a contrast icon
+// (iconTheme), so the caption is just the current mode — "System"/"Light"/"Dark".
 func themeBtnLabel(mode string) string {
 	switch mode {
 	case "light":
-		return "Theme: Light"
+		return "Light"
 	case "dark":
-		return "Theme: Dark"
+		return "Dark"
 	default:
-		return "Theme: System"
+		return "System"
 	}
 }
 
@@ -709,6 +721,14 @@ func (s *State) SetEditorCaretVisible(v bool) {
 // EditorCaretVisible reports whether the editor caret is currently shown
 // (host/harness introspection).
 func (s *State) EditorCaretVisible() bool { return s.editor.CaretVisible() }
+
+// SetFindShortcut sets the keyboard-shortcut hint shown on the Find button (the
+// wasm shell passes the platform-correct label, "⌘F" on macOS else "Ctrl+F"),
+// through the toolkit Button's optional MVVM Shortcut adornment.
+func (s *State) SetFindShortcut(label string) {
+	s.findBtn.Shortcut().Set(label)
+	s.dirty = true
+}
 
 // Resize re-lays out to a new surface size and repaints.
 func (s *State) Resize(w, h int) {
@@ -1048,23 +1068,29 @@ func (s *State) layoutToolbar() {
 	ipw := toolkit.Scaled(110)
 	s.iconPackPicker.SetBounds(toolkit.Rect{X: x, Y: yy, W: ipw, H: h})
 	x += ipw + gap
-	bw := toolkit.Scaled(84)
+	// The buttons now carry a leading icon (buttonicons.go), so each is widened by
+	// iconExtra over its text-only width; Find also reserves room for its shortcut.
+	bw := toolkit.Scaled(84) + iconExtra
 	s.minimapBtn.SetBounds(toolkit.Rect{X: x, Y: yy, W: bw, H: h})
 	x += bw + gap
-	sbw := toolkit.Scaled(sidebarBtnW)
+	sbw := toolkit.Scaled(sidebarBtnW) + iconExtra
 	s.sidebarBtn.SetBounds(toolkit.Rect{X: x, Y: yy, W: sbw, H: h})
 	x += sbw + gap
-	fbw := toolkit.Scaled(56)
+	fbw := toolkit.Scaled(56) + iconExtra + toolkit.Scaled(52) // + shortcut hint
 	s.findBtn.SetBounds(toolkit.Rect{X: x, Y: yy, W: fbw, H: h})
 	x += fbw + gap
-	wbw := toolkit.Scaled(96)
+	wbw := toolkit.Scaled(96) + iconExtra
 	s.wysiwygBtnRect = toolkit.Rect{X: x, Y: yy, W: wbw, H: h}
 	s.wysiwygBtn.SetBounds(s.wysiwygBtnRect)
 	x += wbw + gap
-	thw := toolkit.Scaled(112)
+	thw := toolkit.Scaled(72) + iconExtra
 	s.themeBtnRect = toolkit.Rect{X: x, Y: yy, W: thw, H: h}
 	s.themeBtn.SetBounds(s.themeBtnRect)
 }
+
+// iconExtra is the extra button width a leading icon needs: the icon square (a
+// glyph height) plus the gap to the caption and the left padding.
+var iconExtra = toolkit.Scaled(22)
 
 // applyLeftSplit reserves the top strip of the left pane for the editor's
 // the editor-pane file-tab strip (wysiwyg.go) and a strip on its right for the minimap (when

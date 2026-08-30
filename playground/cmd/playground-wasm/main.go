@@ -94,6 +94,16 @@ func main() {
 	// nothing saying so — enough to make a build eight minutes old look two hours
 	// stale.
 	state.SetBuildInfo(buildVersion, localBuildTime(buildTime))
+
+	// The Find button shows its keyboard-shortcut hint with the platform-correct
+	// modifier: ⌘F on Apple platforms, Ctrl+F elsewhere.
+	findShortcut := "Ctrl+F"
+	if plat := js.Global().Get("navigator").Get("platform"); plat.Truthy() &&
+		(strings.Contains(plat.String(), "Mac") || strings.Contains(plat.String(), "iP")) {
+		findShortcut = "⌘F"
+	}
+	state.SetFindShortcut(findShortcut)
+
 	curDPR := d
 
 	// Stamp each compile's Log entries with the viewer's local wall-clock time,
