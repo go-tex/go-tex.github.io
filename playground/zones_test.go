@@ -19,8 +19,10 @@ func TestZonesReserveHeightAndShrinkBody(t *testing.T) {
 	if s.topZoneH <= 0 {
 		t.Fatalf("topZoneH = %d, want > 0", s.topZoneH)
 	}
-	if s.bottomZoneH <= 0 {
-		t.Fatalf("bottomZoneH = %d, want > 0 (prose must wrap to at least one line)", s.bottomZoneH)
+	// The footer band is empty now, so it reserves no height and the body claims
+	// the space it used to take.
+	if s.bottomZoneH != 0 {
+		t.Fatalf("bottomZoneH = %d, want 0 (the footer band is empty)", s.bottomZoneH)
 	}
 	// The toolbar begins at the topZone height, and the body begins below the
 	// toolbar (bodyTop).
@@ -45,48 +47,18 @@ func TestZonesReserveHeightAndShrinkBody(t *testing.T) {
 	}
 }
 
-// TestBottomZoneLinksTargets proves the three links are laid out with the expected
-// targets: the two repositories and the (dynamic) site root.
-func TestBottomZoneLinksTargets(t *testing.T) {
+// TestBottomZoneIsEmpty proves the footer band carries no content now: no
+// paragraphs, no links, and zero measured height.
+func TestBottomZoneIsEmpty(t *testing.T) {
 	s := newTestState(t, false)
-	links := s.bottomZone.links
-	if len(links) != 3 {
-		t.Fatalf("got %d links, want 3", len(links))
+	if got := len(s.bottomZone.paragraphs()); got != 0 {
+		t.Fatalf("footer paragraphs = %d, want 0", got)
 	}
-	want := map[string]bool{engineURL: false, brandURL: false, defaultSiteRoot: false}
-	for _, ln := range links {
-		if _, ok := want[ln.url]; !ok {
-			t.Fatalf("unexpected link url %q", ln.url)
-		}
-		want[ln.url] = true
-		if ln.rect.W <= 0 || ln.rect.H <= 0 {
-			t.Fatalf("link %q has empty rect %+v", ln.url, ln.rect)
-		}
+	if got := len(s.bottomZone.links); got != 0 {
+		t.Fatalf("footer links = %d, want 0", got)
 	}
-	for url, seen := range want {
-		if !seen {
-			t.Fatalf("link %q was not laid out", url)
-		}
-	}
-}
-
-// TestBottomZoneLinkClickNavigates drives a real click at each link's centre and
-// asserts the host navigate hook fired with that link's exact url.
-func TestBottomZoneLinkClickNavigates(t *testing.T) {
-	s := newTestState(t, false)
-	var got string
-	s.SetNavigate(func(url string) { got = url })
-
-	for _, ln := range s.bottomZone.links {
-		got = ""
-		cx := ln.rect.X + ln.rect.W/2
-		cy := ln.rect.Y + ln.rect.H/2
-		if !s.HandleClick(cx, cy) {
-			t.Fatalf("click at link %q centre (%d,%d) was not consumed", ln.url, cx, cy)
-		}
-		if got != ln.url {
-			t.Fatalf("navigate got %q, want %q", got, ln.url)
-		}
+	if h := s.bottomZone.measure(testW); h != 0 {
+		t.Fatalf("empty footer measure = %d, want 0", h)
 	}
 }
 
@@ -108,24 +80,20 @@ func TestBottomZoneNonLinkClickIsInert(t *testing.T) {
 }
 
 // TestDoNavigateWithoutHook proves the native path (no navigate hook installed) is
-// a safe no-op: a link click neither panics nor errors, it just marks dirty.
+// a safe no-op: doNavigate neither panics nor errors, it just marks dirty.
 func TestDoNavigateWithoutHook(t *testing.T) {
 	s := newTestState(t, false)
 	s.navigate = nil // native build: no host hook
 	s.ClearDirty()
-	links := s.bottomZone.links
-	ln := links[0]
-	if !s.HandleClick(ln.rect.X+ln.rect.W/2, ln.rect.Y+ln.rect.H/2) {
-		t.Fatal("a link click should still be consumed with no hook installed")
-	}
+	s.doNavigate(engineURL)
 	if !s.Dirty() {
-		t.Fatal("a link click should mark the scene dirty even with no hook")
+		t.Fatal("doNavigate should mark the scene dirty even with no hook")
 	}
 }
 
-// TestSetSiteRootUpdatesBackLink proves SetSiteRoot retargets the Back link (and a
-// blank root is ignored, keeping the previous target).
-func TestSetSiteRootUpdatesBackLink(t *testing.T) {
+// TestSetSiteRootUpdatesRoot proves SetSiteRoot updates the stored root and ignores
+// a blank value.
+func TestSetSiteRootUpdatesRoot(t *testing.T) {
 	s := newTestState(t, false)
 
 	s.SetSiteRoot("") // ignored
@@ -135,17 +103,8 @@ func TestSetSiteRootUpdatesBackLink(t *testing.T) {
 
 	const custom = "https://example.test/"
 	s.SetSiteRoot(custom)
-	found := false
-	for _, ln := range s.bottomZone.links {
-		if ln.url == custom {
-			found = true
-		}
-		if ln.url == defaultSiteRoot {
-			t.Fatal("the old default site root is still a link target after SetSiteRoot")
-		}
-	}
-	if !found {
-		t.Fatalf("no Back link points at the new site root %q", custom)
+	if s.siteRoot != custom {
+		t.Fatalf("SetSiteRoot did not update the root; got %q, want %q", s.siteRoot, custom)
 	}
 }
 
@@ -224,97 +183,15 @@ func TestZoneIntrospectionAccessors(t *testing.T) {
 	if tr := s.TopZoneRect(); tr != [4]int{0, 0, testW, s.topZoneH} {
 		t.Fatalf("TopZoneRect = %v", tr)
 	}
-	if br := s.BottomZoneRect(); br[2] != testW || br[3] != s.bottomZoneH || br[1]+br[3] != testH {
-		t.Fatalf("BottomZoneRect = %v", br)
+	// The footer band is empty and collapsed: zero height, no links.
+	if br := s.BottomZoneRect(); br[3] != s.bottomZoneH || s.bottomZoneH != 0 {
+		t.Fatalf("BottomZoneRect = %v, bottomZoneH = %d (want a zero-height band)", br, s.bottomZoneH)
 	}
-	urls := s.BottomZoneLinkURLs()
-	rects := s.BottomZoneLinkRects()
-	if len(urls) != 3 || len(rects) != 3 {
-		t.Fatalf("link urls=%d rects=%d, want 3 each", len(urls), len(rects))
-	}
-	for i, r := range rects {
-		if r[2] <= 0 || r[3] <= 0 {
-			t.Fatalf("link %d (%s) has empty rect %v", i, urls[i], r)
-		}
+	if urls, rects := s.BottomZoneLinkURLs(), s.BottomZoneLinkRects(); len(urls) != 0 || len(rects) != 0 {
+		t.Fatalf("link urls=%d rects=%d, want 0 each", len(urls), len(rects))
 	}
 	if rgb := s.ReadyDotRGB(); rgb != [3]int{int(readyDotColor.R), int(readyDotColor.G), int(readyDotColor.B)} {
 		t.Fatalf("ReadyDotRGB = %v", rgb)
-	}
-}
-
-// TestBottomZoneHoverUnderline proves the footer link hover feedback end-to-end
-// on the real laid-out band: a pointer-move onto a link rect raises that link's
-// accent underline (and marks the scene dirty), a move off it clears the
-// underline, and the click path is unchanged. The underline is asserted from the
-// drawn pixels, not just the hovered flag.
-func TestBottomZoneHoverUnderline(t *testing.T) {
-	s := newTestState(t, false)
-
-	if s.BottomZoneHoveredLink() != -1 {
-		t.Fatalf("no link should be hovered initially, got %d", s.BottomZoneHoveredLink())
-	}
-
-	ln := s.bottomZone.links[0]
-	gh := toolkit.GlyphHeight()
-	// The Link centres its text (VMiddle) and draws the underline one line under
-	// the glyph box, so it lands at this row inside the link's rect.
-	urow := ln.rect.Y + (ln.rect.H-gh)/2 + gh
-
-	underlineDrawn := func() bool {
-		buf := make([]byte, testW*testH*4)
-		s.Draw(buf)
-		for x := ln.rect.X; x < ln.rect.X+ln.rect.W; x++ {
-			if samplePixel(buf, x, urow) == s.theme.Accent {
-				return true
-			}
-		}
-		return false
-	}
-
-	// Resting: accent glyphs but no underline row.
-	if underlineDrawn() {
-		t.Fatal("a resting link must not draw an underline")
-	}
-
-	// Move onto the link centre → hovered → underline appears + dirty.
-	cx := ln.rect.X + ln.rect.W/2
-	cy := ln.rect.Y + ln.rect.H/2
-	s.ClearDirty()
-	s.HandleMove(cx, cy)
-	if !s.Dirty() {
-		t.Fatal("moving onto a link should mark the scene dirty")
-	}
-	if s.BottomZoneHoveredLink() != 0 {
-		t.Fatalf("link 0 should be hovered, got %d", s.BottomZoneHoveredLink())
-	}
-	if !underlineDrawn() {
-		t.Fatal("a hovered link must draw its accent underline")
-	}
-
-	// The click path is unchanged: a click at the hovered link still navigates.
-	var got string
-	s.SetNavigate(func(url string) { got = url })
-	if !s.HandleClick(cx, cy) || got != ln.url {
-		t.Fatalf("hovered link click: consumed=%v got=%q want %q", true, got, ln.url)
-	}
-
-	// Move off every link (into the band's top-left padding) → hover clears.
-	bz := s.bottomZone.bounds
-	s.ClearDirty()
-	s.HandleMove(bz.X, bz.Y)
-	if !s.Dirty() {
-		t.Fatal("moving off the hovered link should mark the scene dirty")
-	}
-	if s.BottomZoneHoveredLink() != -1 {
-		t.Fatalf("no link should be hovered after moving into padding, got %d", s.BottomZoneHoveredLink())
-	}
-	if underlineDrawn() {
-		t.Fatal("the underline must clear once the pointer leaves the link")
-	}
-
-	// A move with no hover change reports no change (the changed==false path).
-	if s.bottomZone.handleMove(bz.X, bz.Y) {
-		t.Fatal("a move that changes no hover state must report no change")
 	}
 }
 
@@ -344,17 +221,15 @@ func TestWrapTokensWordWiderThanMax(t *testing.T) {
 	}
 }
 
-// TestBottomZoneMeasureTinyWidthClamps exercises the maxW<1 and x<pad clamps on a
-// degenerate width without panicking, returning a positive height.
-func TestBottomZoneMeasureTinyWidthClamps(t *testing.T) {
+// TestBottomZoneMeasureEmptyCollapses proves an empty footer measures to zero
+// height at any width and places no links.
+func TestBottomZoneMeasureEmptyCollapses(t *testing.T) {
 	s := newTestState(t, false)
-	h := s.bottomZone.measure(1)
-	if h <= 0 {
-		t.Fatalf("measure(1) height = %d, want > 0", h)
+	if h := s.bottomZone.measure(1); h != 0 {
+		t.Fatalf("empty measure(1) = %d, want 0", h)
 	}
-	// Placing at a matching rect must still expose the links.
-	s.bottomZone.place(toolkit.Rect{X: 0, Y: 0, W: 1, H: h})
-	if len(s.bottomZone.links) != 3 {
-		t.Fatalf("got %d links after a tiny-width layout, want 3", len(s.bottomZone.links))
+	s.bottomZone.place(toolkit.Rect{X: 0, Y: 0, W: 1, H: 0})
+	if len(s.bottomZone.links) != 0 {
+		t.Fatalf("got %d links from an empty footer, want 0", len(s.bottomZone.links))
 	}
 }

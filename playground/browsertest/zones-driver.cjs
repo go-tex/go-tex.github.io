@@ -112,13 +112,9 @@ const puppeteer = require("puppeteer-core");
 
     const z = await page.evaluate(() => globalThis.gotexZones());
     check(/engine ready/.test(z.topStatus), "topZone status reads 'engine ready' (" + z.topStatus + ")");
-    check(Array.isArray(z.links) && z.links.length === 3, "bottomZone laid out 3 links (got " + (z.links && z.links.length) + ")");
-
-    const origin = await page.evaluate(() => location.origin + "/");
-    const wantURLs = ["https://github.com/go-tex/engine", "https://github.com/go-tex/brand", origin];
-    for (const w of wantURLs) {
-      check(z.links.some((l) => l.url === w), "a bottomZone link targets " + w);
-    }
+    // The footer band was emptied and collapses to zero height.
+    check(Array.isArray(z.links) && z.links.length === 0, "bottomZone is empty (got " + (z.links && z.links.length) + " links)");
+    check(z.bottomRect[3] === 0, "bottomZone collapsed to zero height (got " + z.bottomRect[3] + ")");
 
     // readImage(x,y,w,h) -> flat RGBA of that device-pixel canvas region (the app
     // blits with putImageData, so getImageData reads the painted pixels straight
@@ -144,73 +140,6 @@ const puppeteer = require("puppeteer-core");
     }
     check(sawDot, "topZone ready dot painted (green " + dr + "," + dg + "," + db + " found in the band)");
 
-    // 3. Each bottomZone link's text paints: its rect must carry pixels that differ
-    //    from the band's own background (sampled from the band's top-left corner).
-    const bgPix = await readImage([z.bottomRect[0], z.bottomRect[1], 3, 3]);
-    const bg = [bgPix[0], bgPix[1], bgPix[2]];
-    for (const l of z.links) {
-      const px = await readImage(l.rect);
-      let painted = false;
-      for (let i = 0; i + 3 < px.length; i += 4) {
-        if (px[i] !== bg[0] || px[i + 1] !== bg[1] || px[i + 2] !== bg[2]) {
-          painted = true;
-          break;
-        }
-      }
-      check(painted, "bottomZone link text painted for " + l.url);
-    }
-
-    // 3b. Hover feedback: a real pointer-move onto a link's device rect must draw
-    //     the underline, and moving off it must clear it. Rendering is
-    //     deterministic, so the underline is the ONLY thing that changes the link
-    //     rect's pixels between resting and hovered — a position-wise pixel diff of
-    //     the rect isolates it, with no fragile background reference.
-    const engineLink = z.links.find((l) => /go-tex\/engine/.test(l.url)) || z.links[0];
-    const pixelDiff = (a, b) => {
-      let n = 0;
-      for (let i = 0; i + 3 < a.length && i + 3 < b.length; i += 4) {
-        if (a[i] !== b[i] || a[i + 1] !== b[i + 1] || a[i + 2] !== b[i + 2] || a[i + 3] !== b[i + 3]) n++;
-      }
-      return n;
-    };
-    // Device rect -> CSS-pixel centre, the space page.mouse.move works in.
-    const centreCSS = (rect) =>
-      page.evaluate((rr) => {
-        const c = document.getElementById("gotex-canvas");
-        const b = c.getBoundingClientRect();
-        const dpr = c.width / b.width;
-        return { x: b.left + (rr[0] + rr[2] / 2) / dpr, y: b.top + (rr[1] + rr[3] / 2) / dpr };
-      }, rect);
-
-    // Probe the link rect plus a few rows below it: the underline sits just under
-    // the glyph baseline, which at HiDPI can fall on the rect's bottom edge.
-    const probe = [engineLink.rect[0], engineLink.rect[1], engineLink.rect[2], engineLink.rect[3] + 8];
-    const restImg = await readImage(probe);
-    const overPt = await centreCSS(engineLink.rect);
-    await page.mouse.move(overPt.x, overPt.y);
-    await new Promise((r) => setTimeout(r, 150));
-    const hoverImg = await readImage(probe);
-    const hoverDelta = pixelDiff(restImg, hoverImg);
-    check(
-      hoverDelta > 0,
-      "hovering a bottomZone link draws its underline (" + hoverDelta + " px changed vs resting)",
-    );
-
-    // Move the pointer far from the footer (canvas top-left) to clear the hover;
-    // the rect must return pixel-for-pixel to its resting state.
-    const away = await page.evaluate(() => {
-      const c = document.getElementById("gotex-canvas");
-      const b = c.getBoundingClientRect();
-      return { x: b.left + 5, y: b.top + 5 };
-    });
-    await page.mouse.move(away.x, away.y);
-    await new Promise((r) => setTimeout(r, 150));
-    const offImg = await readImage(probe);
-    check(
-      pixelDiff(offImg, restImg) === 0 && pixelDiff(offImg, hoverImg) > 0,
-      "moving off the link clears its underline (back to resting, " + pixelDiff(offImg, hoverImg) + " px differ from hovered)",
-    );
-
     if (screenshot) {
       try {
         await page.screenshot({ path: screenshot });
@@ -219,32 +148,6 @@ const puppeteer = require("puppeteer-core");
         console.log("SCREENSHOT_FAIL " + (e && e.message ? e.message : e));
       }
     }
-
-    // 4. Navigation: intercept navigations, click the go-tex/engine link's device
-    //    rect through a real pointer, and confirm the browser tried to go there.
-    const engine = z.links.find((l) => /go-tex\/engine/.test(l.url));
-    let navURL = null;
-    await page.setRequestInterception(true);
-    page.on("request", (req) => {
-      if (req.isNavigationRequest() && req.frame() === page.mainFrame() && /github\.com\/go-tex\/engine/.test(req.url())) {
-        navURL = req.url();
-        req.abort();
-      } else {
-        req.continue();
-      }
-    });
-    const pt = await page.evaluate((rr) => {
-      const c = document.getElementById("gotex-canvas");
-      const b = c.getBoundingClientRect();
-      const dpr = c.width / b.width;
-      return { x: b.left + (rr[0] + rr[2] / 2) / dpr, y: b.top + (rr[1] + rr[3] / 2) / dpr };
-    }, engine.rect);
-    await page.mouse.click(pt.x, pt.y);
-    // Give the navigation attempt a moment to fire.
-    for (let i = 0; i < 40 && navURL === null; i++) {
-      await new Promise((r) => setTimeout(r, 50));
-    }
-    check(navURL === engine.url, "clicking the go-tex/engine link navigated to it (got " + navURL + ")");
 
     const ok = fails.length === 0;
     console.log("RESULT " + JSON.stringify({ ok, fails }));

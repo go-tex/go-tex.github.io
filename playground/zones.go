@@ -31,11 +31,8 @@ import (
 var readyDotColor = toolkit.RGBA{R: 0x43, G: 0xA0, B: 0x47, A: 0xFF}
 
 // topZoneStatus is the compact status line the topZone shows once the app paints
-// (the wasm is, by definition, ready the moment it draws a frame). The separator
-// is " - ", NOT a middot: the toolkit's ASCII 5x7 bitmap fallback has no "·"
-// glyph, and the OpenType body face is only an opt-in on top of it, so an ASCII
-// separator reads correctly under either face.
-const topZoneStatus = "engine ready - pure-Go go-widgets canvas"
+// (the wasm is, by definition, ready the moment it draws a frame).
+const topZoneStatus = "engine ready"
 
 // loadingDotColor is the amber shown while a background asset is still
 // downloading, so "ready" and "still fetching" are told apart at a glance
@@ -220,21 +217,12 @@ func plainTokens(s string) []zoneToken {
 	return toks
 }
 
-// paragraphs is the band's content as token streams, one paragraph per line
-// group: the description prose (with the go-tex/engine link inline), the Back
-// link on its own line, and the footer line (with the go-tex/brand link). The
-// Back link's target is read from the live site root each layout.
+// paragraphs is the band's content as token streams. The footer band is now empty
+// — its description/links were removed so the app fills the space (measure() then
+// reports zero height and the band collapses). The token/link machinery below is
+// kept intact so the band can carry content again without re-plumbing it.
 func (z *bottomZone) paragraphs() [][]zoneToken {
-	prose := plainTokens("A single go-widgets/toolkit canvas app driving the pure-Go")
-	prose = append(prose, zoneToken{text: "go-tex/engine", url: engineURL})
-	prose = append(prose, plainTokens("- the render pane is a shared go-widgets PagedView with continuous / paginated modes, zoom, and full wheel + keyboard page navigation. Click the render to jump the caret to that source line, and move the caret to scroll the render to its output.")...)
-
-	back := []zoneToken{{text: "<- Back to go-tex", url: z.s.siteRoot}}
-
-	footer := plainTokens("Built with Hugo - Pure Go, CGO=0 - Branding from")
-	footer = append(footer, zoneToken{text: "go-tex/brand", url: brandURL})
-
-	return [][]zoneToken{prose, back, footer}
+	return nil
 }
 
 // wrapTokens greedily wraps a token stream into lines no wider than maxW device
@@ -271,6 +259,12 @@ func wrapTokens(toks []zoneToken, maxW, spaceW int) [][]zoneToken {
 // height. Call place() next to fix the absolute Y and the link rects.
 func (z *bottomZone) measure(w int) int {
 	z.placedRel = z.placedRel[:0]
+	// An empty band collapses to zero height so the app fills the space it used to
+	// take (rather than leaving a blank strip at the bottom of the canvas).
+	if len(z.paragraphs()) == 0 {
+		z.contentH = 0
+		return 0
+	}
 	pad := toolkit.Scaled(12)
 	lineH := toolkit.Scaled(baseFontPx + 4)
 	paraGap := toolkit.Scaled(4)
