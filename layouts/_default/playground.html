@@ -171,6 +171,41 @@ body{overflow:hidden;background:var(--bg)}
             ["keydown","mousedown"].forEach(function(ev){ window.addEventListener(ev,blinkReset); });
             blinkReset();
           }
+          // Git credential "remember on this device", opt-in, via the browser's
+          // Credential Management API. The token lives nowhere durable in the app
+          // itself (see the git panel): the ONLY persistence is the browser's own
+          // credential store, and ONLY when the user flips the switch on.
+          //   • gotexGitStore(true, token)  → save it in the credential store.
+          //   • gotexGitStore(false, "")    → stop silently re-feeding it. The
+          //     Credential Management API has no delete for a stored password, so
+          //     "forget" is best-effort: preventSilentAccess() stops auto-restore
+          //     (the user still clears the saved password via the browser itself).
+          // Requires a secure context + Chromium's PasswordCredential; elsewhere
+          // the switch degrades to session-only (nothing is persisted).
+          var CRED_ID="go-tex-git-playground";
+          var haveCred = !!(window.PasswordCredential && navigator.credentials);
+          window.gotexGitStore=function(store, token){
+            if(!haveCred) return;                 // session-only fallback: no-op
+            try{
+              if(store && token){
+                navigator.credentials.store(new PasswordCredential({
+                  id: CRED_ID, name: "go-tex playground git", password: token
+                }));
+              } else {
+                navigator.credentials.preventSilentAccess();
+              }
+            }catch(e){ /* store is best-effort; never break the app over it */ }
+          };
+          // Startup restore: if a credential was remembered, feed the token back in
+          // ONLY through gotexSetGitToken (never into the remote URL) and reflect the
+          // switch as on. mediation:"optional" stays silent unless access was blocked.
+          if(haveCred && globalThis.gotexSetGitToken && globalThis.gotexSetGitRemember){
+            try{
+              navigator.credentials.get({password:true, mediation:"optional"}).then(function(c){
+                if(c && c.password){ gotexSetGitToken(c.password); gotexSetGitRemember(true); }
+              }).catch(function(){});
+            }catch(e){}
+          }
         }
       },50);
     };

@@ -866,6 +866,33 @@ func main() {
 		render()
 		return nil
 	}))
+	// gotexSetGitToken(token) feeds a token back into the in-memory field — used
+	// at startup when the browser's credential store returned a remembered one.
+	// The token flows ONLY here → SetGitToken; it never reaches the remote URL or
+	// go-git's .git/config (browsergit.SplitCredential holds that door).
+	js.Global().Set("gotexSetGitToken", js.FuncOf(func(_ js.Value, a []js.Value) any {
+		if len(a) > 0 {
+			state.SetGitToken(a[0].String())
+		}
+		render()
+		return nil
+	}))
+	// gotexSetGitRemember(on) reflects the host-side "remember" state into the
+	// panel's opt-in switch WITHOUT re-triggering a store (startup restore path).
+	js.Global().Set("gotexSetGitRemember", js.FuncOf(func(_ js.Value, a []js.Value) any {
+		state.SetGitRemember(len(a) > 0 && a[0].Bool())
+		render()
+		return nil
+	}))
+	// The panel's "remember on this device" hook: it hands the CURRENT token out
+	// to the page's gotexGitStore(store, token) — the deliberate, opt-in posture
+	// change that lets navigator.credentials persist it. store==false asks the
+	// page to drop any persisted credential. This is the one outward path.
+	state.SetGitRememberHook(func(store bool, token string) {
+		if fn := js.Global().Get("gotexGitStore"); fn.Type() == js.TypeFunction {
+			fn.Invoke(store, token)
+		}
+	})
 
 	render()
 	js.Global().Set("gotexPlaygroundReady", true)

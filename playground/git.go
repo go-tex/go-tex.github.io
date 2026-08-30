@@ -217,6 +217,14 @@ type gitView struct {
 	email  *mvvm.Observable[string]
 	msg    *mvvm.Observable[string] // commit message
 
+	// remember is the opt-in "remember this token on this device" state (default
+	// off). When on, the host is asked to persist the token in the browser's
+	// credential store; the token still never enters the remote URL / .git/config
+	// (see internal/browsergit SplitCredential). rememberHook carries the choice
+	// outward — the ONLY path by which the token leaves this in-memory Observable.
+	remember     *mvvm.Observable[bool]
+	rememberHook func(store bool, token string)
+
 	busy   *mvvm.Observable[bool]
 	errMsg *mvvm.Observable[string]
 	notice *mvvm.Observable[string]
@@ -272,6 +280,10 @@ type gitView struct {
 	btns      map[string]*toolkit.Button
 	entries   map[gitField]*toolkit.Entry
 	labelPool []*toolkit.Label
+
+	rememberSwitch *toolkit.Switch // the "remember on this device" opt-in toggle
+	rememberRect   toolkit.Rect    // its hit-rect (the switch, right of its label)
+	quietRemember  bool            // true while reflecting host state: suppress rememberHook
 }
 
 // gitItem is one clickable button in the panel; role drives dispatch and arg
@@ -315,20 +327,21 @@ const (
 // stays here; the wasm driver swaps in the real backend via [State.EnableGit]).
 func newGitView(s *State) *gitView {
 	return &gitView{
-		s:       s,
-		backend: nopGitBackend{},
-		url:     mvvm.NewObservable(DefaultRemoteURL),
-		branch:  mvvm.NewObservable(gitDefaultBranch),
-		token:   mvvm.NewObservable(""),
-		author:  mvvm.NewObservable(""),
-		email:   mvvm.NewObservable(""),
-		msg:     mvvm.NewObservable("Update from the go-tex playground"),
-		busy:    mvvm.NewObservable(false),
-		errMsg:  mvvm.NewObservable(""),
-		notice:  mvvm.NewObservable(""),
-		op:      mvvm.NewObservable(""),
-		loaded:  mvvm.NewObservable(""),
-		buffers: map[string]*fileBuffer{},
+		s:        s,
+		backend:  nopGitBackend{},
+		url:      mvvm.NewObservable(DefaultRemoteURL),
+		branch:   mvvm.NewObservable(gitDefaultBranch),
+		token:    mvvm.NewObservable(""),
+		author:   mvvm.NewObservable(""),
+		email:    mvvm.NewObservable(""),
+		msg:      mvvm.NewObservable("Update from the go-tex playground"),
+		remember: mvvm.NewObservable(false),
+		busy:     mvvm.NewObservable(false),
+		errMsg:   mvvm.NewObservable(""),
+		notice:   mvvm.NewObservable(""),
+		op:       mvvm.NewObservable(""),
+		loaded:   mvvm.NewObservable(""),
+		buffers:  map[string]*fileBuffer{},
 	}
 }
 
@@ -1035,6 +1048,29 @@ func (s *State) GitURL() string               { return s.git.url.Get() }
 func (s *State) GitBranch() string            { return s.git.branch.Get() }
 func (s *State) GitCommitMessage() string     { return s.git.msg.Get() }
 
+// SetGitRememberHook installs the host callback the panel calls when the
+// "remember on this device" opt-in changes, or when the token changes while it
+// is on: store==true asks the host to persist the given token in the browser's
+// credential store, store==false asks it to drop any persisted token. This hook
+// is the ONLY path by which the token leaves the in-memory Observable — there is
+// deliberately no GitToken() getter (see [[gotex-playground-ui-architecture]]).
+func (s *State) SetGitRememberHook(f func(store bool, token string)) {
+	s.git.rememberHook = f
+}
+
+// SetGitRemember reflects a host-side "remember" state into the panel WITHOUT
+// re-triggering the hook (used at startup when a token was restored from the
+// credential store): it only flips the switch's visual/opt-in state.
+func (s *State) SetGitRemember(on bool) {
+	s.git.quietRemember = true
+	s.git.remember.Set(on)
+	if s.git.rememberSwitch != nil {
+		s.git.rememberSwitch.On().Set(on)
+	}
+	s.git.quietRemember = false
+	s.git.refresh()
+}
+
 // GitStatusLine formats the status area's headline: the branch and, when the
 // repo has enough history, its ahead/behind divergence plus dirty-file count.
 func (s *State) GitStatusLine() string {
@@ -1135,6 +1171,11 @@ func (v *gitView) layout() {
 	addField(gitFieldURL, "Remote", false)
 	addField(gitFieldBranch, "Branch", false)
 	addField(gitFieldToken, "Token", true)
+	// "Remember on this device" opt-in: a label with the switch at the row's right.
+	swW, swH := toolkit.Scaled(38), toolkit.Scaled(20)
+	v.labels = append(v.labels, gitLabel{rect: toolkit.Rect{X: innerX, Y: cur, W: innerW - swW - gap, H: bh}, text: "Remember on this device"})
+	v.rememberRect = toolkit.Rect{X: innerX + innerW - swW, Y: cur + (bh-swH)/2, W: swW, H: swH}
+	cur += bh + toolkit.Scaled(4)
 	addField(gitFieldAuthor, "Author", false)
 	addField(gitFieldEmail, "Email", false)
 
@@ -1212,6 +1253,31 @@ func (v *gitView) ensureWidgets() {
 	v.card = &toolkit.Backdrop{}
 	v.btns = map[string]*toolkit.Button{}
 	v.entries = map[gitField]*toolkit.Entry{}
+
+	// The "remember on this device" opt-in. Toggling it, or changing the token while
+	// it is on, asks the host to (re)store or drop the token in the browser's
+	// credential store (see rememberHook / onRememberChanged).
+	v.rememberSwitch = toolkit.NewSwitch(v.remember.Get())
+	v.rememberSwitch.On().Subscribe(func(on bool) {
+		v.remember.Set(on)
+		v.onRememberChanged()
+	})
+	v.token.Subscribe(func(string) {
+		if v.remember.Get() {
+			v.onRememberChanged() // re-store the new token while opted in
+		}
+	})
+}
+
+// onRememberChanged carries the opt-in state outward through the host hook: store
+// the CURRENT token when remembering (and a non-empty token exists), else drop it.
+// This hook is the ONLY path by which the token leaves the in-memory Observable.
+func (v *gitView) onRememberChanged() {
+	if v.rememberHook == nil || v.quietRemember {
+		return
+	}
+	tok := v.token.Get()
+	v.rememberHook(v.remember.Get() && tok != "", tok)
 }
 
 // btnKey uniquely identifies a persistent button: its role plus the file-picker
@@ -1309,6 +1375,10 @@ func (v *gitView) draw(p painter.Painter, theme *toolkit.Theme) {
 		lb.Ink = l.ink
 		lb.Draw(p, theme)
 	}
+	if v.rememberSwitch != nil {
+		v.rememberSwitch.SetBounds(v.rememberRect)
+		v.rememberSwitch.Draw(p, theme)
+	}
 	// Action buttons, each a persistent Button so it depresses on press; the
 	// network buttons go inert (disabled) while an operation is in flight.
 	for _, b := range v.buttons {
@@ -1341,6 +1411,14 @@ func (v *gitView) handleClick(x, y int) bool {
 		}
 	}
 	v.focus = gitFieldNone
+	if v.rememberSwitch != nil {
+		v.rememberSwitch.SetBounds(v.rememberRect)
+		if v.rememberSwitch.HitTest(x, y) {
+			v.rememberSwitch.OnEvent(toolkit.Event{Kind: toolkit.EventClick})
+			v.refresh()
+			return true
+		}
+	}
 	for _, b := range v.buttons {
 		btn := v.btn(b.role, b.arg)
 		btn.SetBounds(b.rect)
