@@ -74,8 +74,17 @@ func TestAnUnreachableRemoteDoesNotEmptyASavedWorkspace(t *testing.T) {
 	if got := s.Source(); !strings.Contains(got, "restored") {
 		t.Errorf("the restored .tex was dropped: %q", got)
 	}
-	if n := s.git.notice.Get(); n == "" || !strings.Contains(n, "saved workspace") {
-		t.Errorf("notice = %q, want it to say the workspace was opened but not updated", n)
+	if n := s.git.notice.Get(); !strings.Contains(strings.ToLower(n), "saved copy") {
+		t.Errorf("notice = %q, want it to say the saved copy is what is on screen", n)
+	}
+	// The red error line must be CLEARED: the workspace opened and is usable,
+	// and a failure shown ahead of everything else says the opposite.
+	if e := s.git.errMsg.Get(); e != "" {
+		t.Errorf("error line = %q, want it cleared — only the update failed, not the boot", e)
+	}
+	// The notice shares the 264 px column with the file tree and does not wrap.
+	if n := s.git.notice.Get(); len(n) > 40 {
+		t.Errorf("notice is %d characters (%q); anything longer is clipped mid-word", len(n), n)
 	}
 	if s.BootNotice() != "" {
 		t.Errorf("boot notice = %q, want none — the samples DID arrive", s.BootNotice())
