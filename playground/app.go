@@ -694,6 +694,22 @@ func (s *State) cycleTheme() {
 // ThemeMode is the current theme selection (host/harness introspection).
 func (s *State) ThemeMode() string { return s.themeMode }
 
+// SetEditorCaretVisible shows or hides the source editor's insertion caret and
+// repaints. The host drives it on a timer to blink the caret (so it is easier to
+// spot), resetting it visible on input; a hidden caret leaves focus, selection and
+// the IME preview untouched (see go-widgets/toolkit TextView.SetCaretVisible).
+func (s *State) SetEditorCaretVisible(v bool) {
+	if s.editor.CaretVisible() == v {
+		return
+	}
+	s.editor.SetCaretVisible(v)
+	s.dirty = true
+}
+
+// EditorCaretVisible reports whether the editor caret is currently shown
+// (host/harness introspection).
+func (s *State) EditorCaretVisible() bool { return s.editor.CaretVisible() }
+
 // Resize re-lays out to a new surface size and repaints.
 func (s *State) Resize(w, h int) {
 	s.w, s.h = w, h

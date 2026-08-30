@@ -436,6 +436,17 @@ func main() {
 		return nil
 	}))
 
+	// The page blinks the editor caret by toggling this on a timer (and setting it
+	// true on input so the caret is solid while typing). Only repaints on an actual
+	// change, so an idle blink is one cheap redraw per phase.
+	js.Global().Set("gotexSetCaretVisible", js.FuncOf(func(_ js.Value, args []js.Value) any {
+		if len(args) > 0 {
+			state.SetEditorCaretVisible(args[0].Bool())
+			render()
+		}
+		return nil
+	}))
+
 	// Read-only introspection for headless verification (asserting a real state
 	// change after a pointer / wheel / key interaction). The render pane's paging,
 	// zoom and mode are the PagedView's MVVM observables, surfaced here.

@@ -160,6 +160,17 @@ body{overflow:hidden;background:var(--bg)}
           syncTheme();
           // Seed the in-app theme button with the mode restored from localStorage.
           if(globalThis.gotexSetThemeMode && globalThis.gotexThemeMode) gotexSetThemeMode(gotexThemeMode());
+          // Blink the editor caret so it is easy to spot: toggle it on a timer, and
+          // reset it solid on any input (a keystroke or click) so it never blinks
+          // off while the user is typing.
+          if(globalThis.gotexSetCaretVisible){
+            var caretOn=true, blinkTimer=null;
+            function blinkStep(){ caretOn=!caretOn; gotexSetCaretVisible(caretOn); }
+            function blinkReset(){ caretOn=true; gotexSetCaretVisible(true);
+              clearInterval(blinkTimer); blinkTimer=setInterval(blinkStep,530); }
+            ["keydown","mousedown"].forEach(function(ev){ window.addEventListener(ev,blinkReset); });
+            blinkReset();
+          }
         }
       },50);
     };
