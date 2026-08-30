@@ -83,7 +83,7 @@ func newTopZone(s *State) *topZone {
 		s:     s,
 		bg:    &toolkit.Backdrop{},
 		rule:  &toolkit.Backdrop{},
-		logo:  &toolkit.Backdrop{Fill: brandIndigo, Radius: toolkit.Scaled(4)},
+		logo:  &toolkit.Backdrop{Fill: brandIndigo, Radius: toolkit.Scaled(6)},
 		logoT: toolkit.NewLabel("T"),
 		dot:   &toolkit.Backdrop{},
 		lbl:   toolkit.NewLabel(topZoneStatus),
@@ -91,15 +91,21 @@ func newTopZone(s *State) *topZone {
 	z.logoT.Ink = toolkit.RGB(0xFF, 0xFF, 0xFF)
 	z.logoT.Align = toolkit.AlignCenter
 	z.logoT.VAlign = toolkit.VMiddle
+	z.logoT.SetFontSize(toolkit.Scaled(logoTilePx * 3 / 4)) // the "T" fills most of the tile
 	z.logoWord = toolkit.NewLabel("go-tex")
 	z.logoWord.Ink = brandIndigo
 	z.logoWord.VAlign = toolkit.VMiddle
+	z.logoWord.SetFontSize(toolkit.Scaled(17)) // the wordmark reads larger than the status line
 	return z
 }
 
+// logoTilePx is the brand tile's LOGICAL size; the "T" and the wordmark are sized
+// from it so the lockup at the very top of the app reads as the app's name.
+const logoTilePx = 26
+
 // height is the band's fixed device height (one text line plus padding), scaled
 // to the active HiDPI metric scale.
-func (z *topZone) height() int { return toolkit.Scaled(24) }
+func (z *topZone) height() int { return toolkit.Scaled(36) }
 
 // setBounds records the band's placement (computed by State.layout).
 func (z *topZone) setBounds(r toolkit.Rect) { z.bounds = r }
@@ -123,13 +129,13 @@ func (z *topZone) draw(p painter.Painter, theme *toolkit.Theme) {
 	gap := toolkit.Scaled(8)
 
 	// Brand lockup on the left: the go-tex tile with its "T", then the wordmark.
-	tile := toolkit.Scaled(16)
+	tile := toolkit.Scaled(logoTilePx)
 	logoRect := toolkit.Rect{X: r.X + pad, Y: r.Y + (r.H-tile)/2, W: tile, H: tile}
 	z.logo.SetBounds(logoRect)
 	z.logo.Draw(p, theme)
 	z.logoT.SetBounds(logoRect)
 	z.logoT.Draw(p, theme)
-	wordW := toolkit.Scaled(46)
+	wordW := toolkit.Scaled(84)
 	z.logoWord.SetBounds(toolkit.Rect{X: logoRect.X + tile + toolkit.Scaled(6), Y: r.Y, W: wordW, H: r.H})
 	z.logoWord.Draw(p, theme)
 
