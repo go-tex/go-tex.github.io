@@ -31,6 +31,15 @@ type gitSession interface {
 	// Clone opens url@branch with the given identity into memory (a no-op path
 	// prefix; the whole URL rides in url). It replaces any previously open repo.
 	Clone(url, branch, token, author, email string) error
+	// Restore reopens a repository this browser saved on an earlier visit,
+	// without contacting the remote, and reports whether one was found. A false
+	// with no error means nothing was stored for this url@branch.
+	Restore(url, branch, token, author, email string) (bool, error)
+	// Persist writes the open repository down so a later visit can Restore it.
+	// It is best-effort by contract: a browser can refuse the write (quota,
+	// private mode, eviction) and that must not fail the git operation that
+	// just succeeded.
+	Persist()
 	// List returns the working-tree file paths (slash-relative), .git pruned.
 	List() ([]string, error)
 	// ReadFile returns one working-tree file's contents.
@@ -79,6 +88,8 @@ func (h *handler) dispatch(req gitrpc.Request) gitrpc.Reply {
 	switch req.Op {
 	case gitrpc.OpClone:
 		return h.clone(req)
+	case gitrpc.OpRestore:
+		return h.restore(req)
 	case gitrpc.OpList:
 		return h.list(req)
 	case gitrpc.OpReadFile:
@@ -123,6 +134,23 @@ func (h *handler) clone(req gitrpc.Request) gitrpc.Reply {
 	return h.mutatingReply(req.ID, true)
 }
 
+// restore reopens a saved repository. Finding none is an ordinary answer, not a
+// failure: a first visit has nothing stored, and the caller clones instead.
+func (h *handler) restore(req gitrpc.Request) gitrpc.Reply {
+	a := req.Args
+	found, err := h.s.Restore(a.URL, a.Branch, a.Token, a.Author, a.Email)
+	if err != nil {
+		return h.fail(req.ID, err)
+	}
+	if !found {
+		reply := gitrpc.OKReply(req.ID)
+		return reply
+	}
+	reply := h.mutatingReply(req.ID, true)
+	reply.Restored = reply.OK
+	return reply
+}
+
 func (h *handler) list(req gitrpc.Request) gitrpc.Reply {
 	if r, ok := h.requireRepo(req.ID); !ok {
 		return r
@@ -158,6 +186,11 @@ func (h *handler) writeFile(req gitrpc.Request) gitrpc.Reply {
 	if err := h.s.WriteFile(req.Args.Path, req.Args.Content); err != nil {
 		return h.fail(req.ID, err)
 	}
+	// An uncommitted edit is exactly the work a reload must not throw away, so
+	// a plain write is saved like any other change. This reply deliberately
+	// carries no status or log — nothing about the history moved — so it does
+	// not go through mutatingReply and saves for itself.
+	h.s.Persist()
 	reply := gitrpc.OKReply(req.ID)
 	reply.HasRepo = true
 	return reply
@@ -247,6 +280,11 @@ func (h *handler) log(req gitrpc.Request) gitrpc.Reply {
 // the working-tree file list plus the .tex file contents, so the panel loads the
 // source without a second round-trip.
 func (h *handler) mutatingReply(id int, withFiles bool) gitrpc.Reply {
+	// Every caller of this has just changed the repository, so this is the one
+	// place the saved copy is refreshed. Best-effort by contract: a browser that
+	// refuses the write must not turn a successful commit into a failed one.
+	h.s.Persist()
+
 	reply := gitrpc.OKReply(id)
 	reply.HasRepo = true
 

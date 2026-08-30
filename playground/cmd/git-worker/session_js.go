@@ -19,6 +19,11 @@ import (
 // headless two-wasm clone→commit→push run.
 type browsergitSession struct {
 	repo *browsergit.Repo
+	// client and key belong to the repository currently open: the client can
+	// reopen it and the key says where it is saved. Both are set by whichever of
+	// Clone or Restore opened it, so Persist knows where to write.
+	client *browsergit.Client
+	key    string
 }
 
 // Clone opens url@branch with the given identity, replacing any open repo. The
@@ -36,8 +41,52 @@ func (s *browsergitSession) Clone(url, branch, token, author, email string) erro
 	if err != nil {
 		return err
 	}
-	s.repo = repo
+	s.repo, s.client, s.key = repo, client, workspaceKey(url, branch)
 	return nil
+}
+
+// Restore reopens the repository this browser saved for url@branch on an earlier
+// visit, without contacting the remote.
+//
+// Finding nothing is an ordinary answer: a first visit, a cleared browser, a
+// private window, a context with no storage at all. Only one case is an error —
+// an entry that exists and cannot be reopened — because that is the reader's own
+// uncommitted work going away, and they should be told rather than left to
+// notice. The unreadable entry is dropped so the next visit starts clean.
+func (s *browsergitSession) Restore(url, branch, token, author, email string) (bool, error) {
+	client := browsergit.New(browsergit.Options{
+		BaseURL:  url,
+		Token:    token,
+		Author:   author,
+		Email:    email,
+		Provider: "generic",
+	})
+	key := workspaceKey(url, branch)
+	snap, existed := loadSnapshot(key)
+	if !existed {
+		return false, nil
+	}
+	repo, err := client.Open(snap, branch)
+	if err != nil {
+		dropSnapshot(key)
+		return false, errSavedWorkspaceUnreadable
+	}
+	s.repo, s.client, s.key = repo, client, key
+	return true, nil
+}
+
+// Persist writes the open repository down for the next visit. Best-effort by
+// contract: a browser can refuse the write — quota, private mode, eviction —
+// and that must not fail the git operation that just succeeded.
+func (s *browsergitSession) Persist() {
+	if s.repo == nil || s.key == "" {
+		return
+	}
+	snap, err := s.repo.Snapshot()
+	if err != nil {
+		return
+	}
+	saveSnapshot(s.key, snap)
 }
 
 func (s *browsergitSession) List() ([]string, error) { return s.repo.List() }

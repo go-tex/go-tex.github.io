@@ -22,6 +22,10 @@ type fakeSession struct {
 	log      []gitrpc.Commit
 
 	cloneErr, listErr, readErr, writeErr, commitErr, stageErr, pullErr, pushErr, statusErr, logErr error
+	restoreErr                                                                                     error
+	restoreFound                                                                                   bool
+	persists                                                                                       int
+	gotRestore                                                                                     [5]string
 
 	gotClone     [5]string
 	gotWrite     [2]string
@@ -37,6 +41,17 @@ func (f *fakeSession) Clone(url, branch, token, author, email string) error {
 	f.hasRepo = true
 	return nil
 }
+func (f *fakeSession) Restore(url, branch, token, author, email string) (bool, error) {
+	f.gotRestore = [5]string{url, branch, token, author, email}
+	if f.restoreErr != nil {
+		return false, f.restoreErr
+	}
+	f.hasRepo = f.restoreFound
+	return f.restoreFound, nil
+}
+
+func (f *fakeSession) Persist() { f.persists++ }
+
 func (f *fakeSession) List() ([]string, error) { return f.files, f.listErr }
 func (f *fakeSession) ReadFile(p string) (string, error) {
 	if f.readErr != nil {
@@ -343,6 +358,85 @@ func TestIsTextSource(t *testing.T) {
 	for _, f := range []string{"img.png", "a.pdf", "noext", "font.ttf"} {
 		if isTextSource(f) {
 			t.Fatalf("isTextSource(%q) = true, want false", f)
+		}
+	}
+}
+
+// A browser that has held this repository before should not have to fetch it
+// again, and one that has not must not be told a restore failed. These pin both
+// halves, and that a successful mutation always refreshes the saved copy.
+
+func TestRestoreFindsASavedRepository(t *testing.T) {
+	f := &fakeSession{
+		restoreFound: true,
+		files:        []string{"main.tex"},
+		contents:     map[string]string{"main.tex": "\\documentclass{article}\n"},
+		status:       gitrpc.Status{Branch: "main", Clean: true},
+	}
+	h := newHandler(f)
+	reply := h.dispatch(gitrpc.Request{ID: 7, Op: gitrpc.OpRestore, Args: gitrpc.Args{
+		URL: "https://example.test/demo.git", Branch: "main", Token: "t", Author: "a", Email: "e",
+	}})
+	if !reply.OK || !reply.Restored {
+		t.Fatalf("reply = %+v, want OK and Restored", reply)
+	}
+	if reply.ID != 7 {
+		t.Fatalf("id = %d, want the request's 7", reply.ID)
+	}
+	if len(reply.Files) != 1 || reply.Files[0] != "main.tex" {
+		t.Fatalf("files = %v, want the restored working tree", reply.Files)
+	}
+	if reply.Contents["main.tex"] == "" {
+		t.Fatal("a restore must return file contents, like a clone does")
+	}
+	if reply.Status == nil || reply.Status.Branch != "main" {
+		t.Fatalf("status = %+v, want the restored branch", reply.Status)
+	}
+	want := [5]string{"https://example.test/demo.git", "main", "t", "a", "e"}
+	if f.gotRestore != want {
+		t.Fatalf("session got %v, want %v", f.gotRestore, want)
+	}
+}
+
+func TestRestoreFindingNothingIsNotAFailure(t *testing.T) {
+	f := &fakeSession{restoreFound: false}
+	h := newHandler(f)
+	reply := h.dispatch(gitrpc.Request{ID: 1, Op: gitrpc.OpRestore})
+	if !reply.OK {
+		t.Fatalf("a first visit reported failure: %+v", reply)
+	}
+	if reply.Restored {
+		t.Fatal("Restored is set although nothing was found")
+	}
+	if reply.HasRepo {
+		t.Fatal("HasRepo is set although nothing was restored")
+	}
+	if f.persists != 0 {
+		t.Fatalf("nothing was restored, yet the session was told to persist %d times", f.persists)
+	}
+}
+
+func TestRestoreSurfacesItsError(t *testing.T) {
+	h := newHandler(&fakeSession{restoreErr: errors.New("storage is unreadable")})
+	reply := h.dispatch(gitrpc.Request{ID: 2, Op: gitrpc.OpRestore})
+	if reply.OK {
+		t.Fatal("a failed restore reported success")
+	}
+	if reply.Error == "" {
+		t.Fatal("a failed restore said nothing about why")
+	}
+}
+
+func TestEveryMutationRefreshesTheSavedCopy(t *testing.T) {
+	for _, op := range []string{gitrpc.OpClone, gitrpc.OpWriteFile, gitrpc.OpCommit, gitrpc.OpStage, gitrpc.OpPull, gitrpc.OpPush} {
+		f := &fakeSession{hasRepo: true, files: []string{"main.tex"}, contents: map[string]string{"main.tex": "x"}}
+		h := newHandler(f)
+		reply := h.dispatch(gitrpc.Request{ID: 1, Op: op, Args: gitrpc.Args{Path: "main.tex", Content: "x", Message: "m"}})
+		if !reply.OK {
+			t.Fatalf("%s: %+v", op, reply)
+		}
+		if f.persists != 1 {
+			t.Fatalf("%s persisted %d times, want exactly 1 — a change that is not written down is lost on reload", op, f.persists)
 		}
 	}
 }
