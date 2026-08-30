@@ -26,6 +26,7 @@ type fakeSession struct {
 	restoreFound                                                                                   bool
 	persists                                                                                       int
 	gotRestore                                                                                     [5]string
+	gotForget                                                                                      [2]string
 
 	gotClone     [5]string
 	gotWrite     [2]string
@@ -49,6 +50,8 @@ func (f *fakeSession) Restore(url, branch, token, author, email string) (bool, e
 	f.hasRepo = f.restoreFound
 	return f.restoreFound, nil
 }
+
+func (f *fakeSession) Forget(url, branch string) { f.gotForget = [2]string{url, branch} }
 
 func (f *fakeSession) Persist() { f.persists++ }
 
@@ -438,5 +441,38 @@ func TestEveryMutationRefreshesTheSavedCopy(t *testing.T) {
 		if f.persists != 1 {
 			t.Fatalf("%s persisted %d times, want exactly 1 — a change that is not written down is lost on reload", op, f.persists)
 		}
+	}
+}
+
+func TestForgetDropsTheSavedCopyWithoutClosingTheRepository(t *testing.T) {
+	f := &fakeSession{hasRepo: true}
+	h := newHandler(f)
+	reply := h.dispatch(gitrpc.Request{ID: 3, Op: gitrpc.OpForget, Args: gitrpc.Args{
+		URL: "https://example.test/demo.git", Branch: "main",
+	}})
+	if !reply.OK {
+		t.Fatalf("reply = %+v, want OK", reply)
+	}
+	if want := ([2]string{"https://example.test/demo.git", "main"}); f.gotForget != want {
+		t.Fatalf("session got %v, want %v", f.gotForget, want)
+	}
+	// The open repository stays open: forgetting is about the NEXT visit, so it
+	// can never cost the reader work they have not committed.
+	if !reply.HasRepo {
+		t.Fatal("forgetting closed the open repository")
+	}
+	if f.persists != 0 {
+		t.Fatalf("forgetting re-saved the copy %d times", f.persists)
+	}
+}
+
+func TestForgettingNothingIsStillSuccess(t *testing.T) {
+	h := newHandler(&fakeSession{})
+	reply := h.dispatch(gitrpc.Request{ID: 4, Op: gitrpc.OpForget})
+	if !reply.OK {
+		t.Fatalf("reply = %+v — there being nothing to forget is the same outcome as having forgotten it", reply)
+	}
+	if reply.HasRepo {
+		t.Fatal("HasRepo is set although no repository is open")
 	}
 }

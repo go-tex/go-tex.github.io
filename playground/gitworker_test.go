@@ -422,3 +422,18 @@ func TestWorkerBackendRestore(t *testing.T) {
 		t.Fatalf("a failed restore reported found=%v err=%v", found, err)
 	}
 }
+
+func TestWorkerBackendForget(t *testing.T) {
+	tr := &fakeTransport{replies: map[string]gitrpc.Reply{gitrpc.OpForget: {OK: true}}}
+	b := newWorkerGitBackend(tr)
+	done := make(chan struct{})
+	b.Forget(gitConfig{URL: " https://forge/o/r.git ", Branch: "main"}, func() { close(done) })
+	<-done
+	a, ok := tr.lastArgs(gitrpc.OpForget)
+	if !ok {
+		t.Fatal("the worker was never asked to forget anything")
+	}
+	if a.URL != "https://forge/o/r.git" || a.Branch != "main" {
+		t.Fatalf("forget args = %+v, want the trimmed remote and its branch", a)
+	}
+}
