@@ -21,12 +21,13 @@ import (
 // [toolkit.NewSearchModal] builds a dimming, click-catching scrim over the whole
 // surface with a centred [toolkit.Dialog] panel on top. The panel's TOP INPUT BAR
 // is the regex query (a focused [toolkit.SearchEntry], returned as `query`); its
-// BODY carries the occurrence-count read-out and the replacement field; its ACTION
-// STRIP carries Previous / Next / Replace / Replace all; and its × close button —
-// like Escape and a click on the scrim — dismisses it (clearing the highlights)
-// through the modal's single OnClose hook. The panel is positioned over the LOWER
-// portion of the editor pane so the current match, scrolled into the top of the
-// viewport, reads ABOVE the card rather than under it.
+// BODY carries the occurrence-count read-out, the replacement field, and the
+// Previous / Next / Replace / Replace all verbs in two button rows INSIDE the card
+// (no bottom action strip — the Dialog collapses it when given no strip buttons,
+// so the modal is one clean card like the Collaborate panel); and its × close
+// button — like Escape and a click on the scrim — dismisses it (clearing the
+// highlights) through the modal's single OnClose hook. The panel is centred in the
+// editor pane.
 //
 // # The active-editor abstraction
 //
@@ -62,13 +63,12 @@ import (
 // document, search and replace in full.
 
 // findPanelW / findPanelH are the modal panel's preferred size in LOGICAL pixels
-// (metric-scaled by the toolkit). The width is chosen so the four action buttons
-// (Previous / Next / Replace / Replace all) fit the [toolkit.Dialog] bottom strip
-// without crowding; the height leaves the title bar, the query input strip, the
-// count + replace body rows and the button strip each a comfortable band.
+// (metric-scaled by the toolkit). The width seats the two-per-row action buttons
+// comfortably; the height leaves the title bar, the query input strip, the count +
+// replace field and the two in-card button rows each a comfortable band.
 const (
 	findPanelW = 460
-	findPanelH = 172
+	findPanelH = 208
 )
 
 // findBottomMargin is the gap in LOGICAL pixels between the modal panel's bottom
@@ -143,21 +143,33 @@ type findReplace struct {
 func newFindReplace(s *State) *findReplace {
 	f := &findReplace{s: s, current: -1}
 
-	// Panel body: the count read-out over the replacement field.
+	// The step + replace verbs. They live INSIDE the panel body (two rows), not in
+	// the Dialog's bottom action strip, so the modal is one clean card like the
+	// Collaborate panel — the strip collapses when NewSearchModal is given no
+	// action buttons (toolkit v0.294.0).
+	f.prevBtn = toolkit.NewButton("Previous", func() { f.step(-1) })
+	f.nextBtn = toolkit.NewButton("Next", func() { f.step(1) })
+	f.replaceBtn = toolkit.NewButton("Replace", f.replaceCurrent)
+	f.replaceAllBtn = toolkit.NewButton("Replace all", f.replaceAll)
+	stepRow := toolkit.NewHBox()
+	stepRow.AddFlex(f.prevBtn, 1)
+	stepRow.AddFlex(f.nextBtn, 1)
+	replaceRow := toolkit.NewHBox()
+	replaceRow.AddFlex(f.replaceBtn, 1)
+	replaceRow.AddFlex(f.replaceAllBtn, 1)
+
+	// Panel body: the count read-out, the replacement field, then the two button
+	// rows — all inside the card.
 	f.count = toolkit.NewLabel("")
 	f.replace = toolkit.NewEntry("")
 	f.replace.Placeholder = "Replace with…"
 	body := toolkit.NewVBox()
 	body.AddFixed(f.count, toolkit.Scaled(22))
-	body.AddFixed(f.replace, toolkit.Scaled(28))
+	body.AddFixed(f.replace, toolkit.Scaled(30))
+	body.AddFixed(stepRow, toolkit.Scaled(32))
+	body.AddFixed(replaceRow, toolkit.Scaled(32))
 
-	// Action strip: step + replace verbs.
-	f.prevBtn = toolkit.NewButton("Previous", func() { f.step(-1) })
-	f.nextBtn = toolkit.NewButton("Next", func() { f.step(1) })
-	f.replaceBtn = toolkit.NewButton("Replace", f.replaceCurrent)
-	f.replaceAllBtn = toolkit.NewButton("Replace all", f.replaceAll)
-
-	m, se := toolkit.NewSearchModal("Find and replace", body, f.prevBtn, f.nextBtn, f.replaceBtn, f.replaceAllBtn)
+	m, se := toolkit.NewSearchModal("Find and replace", body)
 	m.PanelW, m.PanelH = findPanelW, findPanelH
 	m.OnClose = f.onModalClose // × / Escape / scrim → dismiss + clear highlights
 	m.Panel.PlainTitle = true  // a calm Surface title bar, matching the Collaborate card
@@ -369,7 +381,7 @@ func (f *findReplace) positionPanel() {
 		h = er.H
 	}
 	x := er.X + (er.W-w)/2
-	y := er.Y + er.H - h - toolkit.Scaled(findBottomMargin)
+	y := er.Y + (er.H-h)/2 // centred in the editor pane, like the Collaborate panel
 	if y < er.Y {
 		y = er.Y
 	}
