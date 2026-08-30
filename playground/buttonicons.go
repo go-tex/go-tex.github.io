@@ -35,4 +35,15 @@ var (
 	// stacked bars = the minimap.
 	iconMinimap = toolkit.SVGIcon(svgDoc(
 		`<path d="M4 5h16v2H4zM4 9h12v2H4zM4 13h16v2H4zM4 17h9v2H4z"/>`))
+
+	// Git panel glyphs (git.go). Down-into-tray = clone/pull, up-arrow = push, a
+	// line-circle-line = commit.
+	iconGitClone = toolkit.SVGIcon(svgDoc(
+		`<path d="M11 3h2v7h3l-4 4-4-4h3z"/><path d="M4 18h16v2H4z"/>`))
+	iconGitPull = toolkit.SVGIcon(svgDoc(
+		`<path d="M11 3h2v10h3l-4 4-4-4h3z"/>`))
+	iconGitPush = toolkit.SVGIcon(svgDoc(
+		`<path d="M13 21h-2V11H8l4-4 4 4h-3z"/>`))
+	iconGitCommit = toolkit.SVGIcon(svgDoc(
+		`<path fill-rule="evenodd" d="M2 11h6.1a4 4 0 0 1 7.8 0H22v2h-6.1a4 4 0 0 1-7.8 0H2v-2zm10-1a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/>`))
 )

@@ -1225,8 +1225,23 @@ func (v *gitView) btn(role gitRole, arg int) *toolkit.Button {
 	if b := v.btns[k]; b != nil {
 		return b
 	}
+	if v.btns == nil {
+		v.btns = map[string]*toolkit.Button{}
+	}
 	rr, aa := role, arg
 	b := toolkit.NewButton("", func() { v.dispatch(rr, aa) })
+	// A leading glyph for the git actions (buttonicons.go), through the toolkit
+	// Button's MVVM LeadingIcon adornment.
+	switch role {
+	case gitRoleClone:
+		b.LeadingIcon().Set(iconGitClone)
+	case gitRolePull:
+		b.LeadingIcon().Set(iconGitPull)
+	case gitRoleCommit:
+		b.LeadingIcon().Set(iconGitCommit)
+	case gitRolePush:
+		b.LeadingIcon().Set(iconGitPush)
+	}
 	v.btns[k] = b
 	return b
 }
