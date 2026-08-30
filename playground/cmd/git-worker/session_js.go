@@ -30,6 +30,11 @@ type browsergitSession struct {
 // whole remote URL rides in BaseURL (empty repoPath), matching the panel's two
 // documented URL forms; every remote authenticates the same way (PAT-as-password).
 func (s *browsergitSession) Clone(url, branch, token, author, email string) error {
+	// Strip a credential out of the remote before it is used for anything —
+	// browsergit.New would do it for the client, but the cache key is derived
+	// here too, and the same repository opened with and without a credential in
+	// its URL must be ONE saved workspace, not two.
+	url, token = browsergit.SplitCredential(url, token)
 	client := browsergit.New(browsergit.Options{
 		BaseURL:  url,
 		Token:    token,
@@ -54,6 +59,7 @@ func (s *browsergitSession) Clone(url, branch, token, author, email string) erro
 // uncommitted work going away, and they should be told rather than left to
 // notice. The unreadable entry is dropped so the next visit starts clean.
 func (s *browsergitSession) Restore(url, branch, token, author, email string) (bool, error) {
+	url, token = browsergit.SplitCredential(url, token)
 	client := browsergit.New(browsergit.Options{
 		BaseURL:  url,
 		Token:    token,
