@@ -3,7 +3,7 @@ module github.com/go-tex/go-tex.github.io/playground
 go 1.26.4
 
 require (
-	github.com/andybalholm/brotli v1.2.2
+	github.com/andybalholm/brotli v1.2.3
 	github.com/go-crdt/collab v0.26.1
 	github.com/go-crdt/crdt v0.31.0
 	github.com/go-gfx/qr v0.1.0
