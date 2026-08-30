@@ -95,17 +95,17 @@ func newTopZone(s *State) *topZone {
 	z.logoWord = toolkit.NewLabel("go-tex")
 	z.logoWord.Ink = brandIndigo
 	z.logoWord.VAlign = toolkit.VMiddle
-	z.logoWord.SetFontSize(toolkit.Scaled(17)) // the wordmark reads larger than the status line
+	z.logoWord.SetFontSize(toolkit.Scaled(23)) // the wordmark reads larger than the status line
 	return z
 }
 
 // logoTilePx is the brand tile's LOGICAL size; the "T" and the wordmark are sized
 // from it so the lockup at the very top of the app reads as the app's name.
-const logoTilePx = 26
+const logoTilePx = 36
 
 // height is the band's fixed device height (one text line plus padding), scaled
 // to the active HiDPI metric scale.
-func (z *topZone) height() int { return toolkit.Scaled(36) }
+func (z *topZone) height() int { return toolkit.Scaled(48) }
 
 // setBounds records the band's placement (computed by State.layout).
 func (z *topZone) setBounds(r toolkit.Rect) { z.bounds = r }
@@ -135,7 +135,7 @@ func (z *topZone) draw(p painter.Painter, theme *toolkit.Theme) {
 	z.logo.Draw(p, theme)
 	z.logoT.SetBounds(logoRect)
 	z.logoT.Draw(p, theme)
-	wordW := toolkit.Scaled(84)
+	wordW := toolkit.Scaled(118)
 	z.logoWord.SetBounds(toolkit.Rect{X: logoRect.X + tile + toolkit.Scaled(6), Y: r.Y, W: wordW, H: r.H})
 	z.logoWord.Draw(p, theme)
 
