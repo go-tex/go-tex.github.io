@@ -285,7 +285,7 @@ type collabView struct {
 	// widget accessors (ensureWidgets / btn / label / swatch).
 	launcherBtn *toolkit.Button
 	scrim       *toolkit.Backdrop              // modal dim behind the panel
-	card        *toolkit.Backdrop              // the panel's Surface body + border
+	dialog      *toolkit.Dialog                // the panel FRAME: title bar + × + border (the fields draw inside)
 	btns        map[collabRole]*toolkit.Button // one persistent Button per role
 	nameEntry   *toolkit.Entry
 	iceEntry    *toolkit.Entry
@@ -1282,11 +1282,9 @@ func (v *collabView) layout() {
 	innerX := x + pad
 	innerW := pw - 2*pad
 
-	cur := y + pad
-	// Title row + close button.
-	v.labels = append(v.labels, collabLabel{rect: toolkit.Rect{X: innerX, Y: cur, W: innerW - bh, H: line}, text: "Collaborate"})
-	v.buttons = append(v.buttons, collabItem{role: roleClose, rect: toolkit.Rect{X: x + pw - pad - bh, Y: cur, W: bh, H: bh}, label: "X"})
-	cur += bh + gap
+	// The title row ("Collaborate") and the × close are drawn by the Dialog frame
+	// (see draw); the fields begin below its title bar.
+	cur := y + toolkit.Scaled(toolkit.DialogTitleH) + gap
 
 	// Identity row: "You:" + name field + stable id + colour swatch + Shuffle. The
 	// id (e.g. #A3F9) sits between the name and the swatch, fixed for the page load,
@@ -1497,7 +1495,14 @@ func (v *collabView) ensureWidgets() {
 	// the pill through the same toolkit path as any other button.
 	v.launcherBtn = toolkit.NewButton("", func() { v.open = true; v.refresh() })
 	v.scrim = &toolkit.Backdrop{Fill: toolkit.RGBA{A: 0x66}, Interactive: true}
-	v.card = &toolkit.Backdrop{}
+	// The panel frame is a toolkit.Dialog (the same high-level modal frame the Find
+	// panel uses): a Surface title bar (PlainTitle) with a "Collaborate" title and a
+	// × close, and the panel border. Its Content is nil — the fields are drawn on top
+	// inside the frame by this view — so it draws only the chrome.
+	v.dialog = toolkit.NewDialog("Collaborate", nil)
+	v.dialog.Closable = true
+	v.dialog.PlainTitle = true
+	v.dialog.OnClose = func() { v.dispatch(roleClose) }
 	v.btns = map[collabRole]*toolkit.Button{}
 	v.nameEntry = toolkit.NewEntry("")
 	v.iceEntry = toolkit.NewEntry("")
@@ -1559,11 +1564,10 @@ func (v *collabView) draw(p painter.Painter, theme *toolkit.Theme) {
 	// topZone band, above the bottomZone band).
 	v.scrim.SetBounds(toolkit.Rect{X: 0, Y: v.s.bodyTop(), W: v.s.w, H: v.s.h - v.s.bodyTop() - v.s.statusH - v.s.bottomZoneH})
 	v.scrim.Draw(p, theme)
-	v.card.Fill = theme.Surface
-	v.card.Stroke = theme.Border
-	v.card.StrokeWidth = toolkit.Scaled(1)
-	v.card.SetBounds(v.panel)
-	v.card.Draw(p, theme)
+	// The Dialog frame (title bar "Collaborate" + × + border); the fields below draw
+	// on top of its body.
+	v.dialog.SetBounds(v.panel)
+	v.dialog.Draw(p, theme)
 
 	// Name field: a real Entry (own border, text + focus caret).
 	if v.nameRect.W > 0 {
@@ -1645,6 +1649,15 @@ func (v *collabView) handleClick(x, y int) bool {
 		return false
 	}
 	// Modal: swallow everything, routing a control hit through the widget's HitTest.
+	// The × close is drawn by the Dialog frame; route a click on it through the
+	// Dialog (panel-relative coords), which fires OnClose. Clicks elsewhere fall
+	// through to the fields below.
+	v.dialog.SetBounds(v.panel)
+	wasOpen := v.open
+	v.dialog.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - v.panel.X, Y: y - v.panel.Y})
+	if wasOpen && !v.open {
+		return true
+	}
 	if v.pasteRect.W > 0 {
 		v.pasteEntry.SetBounds(v.pasteRect)
 		if v.pasteEntry.HitTest(x, y) {
