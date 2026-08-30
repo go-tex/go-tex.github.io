@@ -7,7 +7,7 @@ require (
 	github.com/go-crdt/collab v0.33.0
 	github.com/go-crdt/crdt v0.35.0
 	github.com/go-gfx/qr v0.1.0
-	github.com/go-git/go-billy/v5 v5.9.0
+	github.com/go-git/go-billy/v5 v5.9.1
 	github.com/go-git/go-git/v5 v5.19.2
 	github.com/go-icons/devicon v0.1.0
 	github.com/go-icons/material v0.1.1
