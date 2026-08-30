@@ -1613,10 +1613,19 @@ func (s *State) BootClone(done func(err error)) {
 					// The pull left its failure on the error line, which the
 					// detail strip shows in red ahead of everything else. That
 					// reads as "the workspace is broken" when in fact it opened
-					// and is usable — only the update did not happen. Replace it
-					// with the plain fact, short enough for the 264 px column.
-					v.errMsg.Set("")
-					v.notice.Set("Offline - showing your saved copy.")
+					// and is usable — only the update did not happen.
+					//
+					// WHY the failure matters, though. A remote we could not
+					// reach is nobody's fault and needs no action, so it is said
+					// plainly and the red is dropped. A rejected token or a
+					// missing repository is a real problem the reader has to
+					// fix, and quietly calling it "offline" would send them
+					// looking for a network fault that is not there — so those
+					// keep the error line they earned.
+					if errors.Is(pullErr, errGitTransport) {
+						v.errMsg.Set("")
+						v.notice.Set("Offline - showing your saved copy.")
+					}
 				}
 				settle(nil)
 			})
