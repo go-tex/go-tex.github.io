@@ -799,7 +799,8 @@ func TestCollabButtonRects(t *testing.T) {
 	// field appear.
 	s.SetCollabOpen(true)
 	r = s.CollabButtonRects()
-	for _, name := range []string{"launcher", "name", "localConnect", "host", "join", "close", "shuffle"} {
+	// "close" is no longer a collab button — the Dialog frame draws the × now.
+	for _, name := range []string{"launcher", "name", "localConnect", "host", "join", "shuffle"} {
 		rc, ok := r[name]
 		if !ok {
 			t.Fatalf("expected %q rect while open+idle; have %v", name, keysOf(r))
