@@ -160,6 +160,7 @@ func newFindReplace(s *State) *findReplace {
 	m, se := toolkit.NewSearchModal("Find and replace", body, f.prevBtn, f.nextBtn, f.replaceBtn, f.replaceAllBtn)
 	m.PanelW, m.PanelH = findPanelW, findPanelH
 	m.OnClose = f.onModalClose // × / Escape / scrim → dismiss + clear highlights
+	m.Panel.PlainTitle = true  // a calm Surface title bar, matching the Collaborate card
 	f.modal = m
 	f.query = se
 

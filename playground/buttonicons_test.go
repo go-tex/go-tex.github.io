@@ -32,3 +32,13 @@ func TestToolbarButtonsHaveIcons(t *testing.T) {
 		t.Errorf("find shortcut = %q, want ⌘F", got)
 	}
 }
+
+// The git panel buttons carry action glyphs too (created lazily by role).
+func TestGitButtonsHaveIcons(t *testing.T) {
+	s := newTestState(t, false)
+	for _, role := range []gitRole{gitRoleClone, gitRolePull, gitRoleCommit, gitRolePush} {
+		if s.git.btn(role, 0).LeadingIcon().Get() == nil {
+			t.Errorf("git button role %d has no leading icon", role)
+		}
+	}
+}

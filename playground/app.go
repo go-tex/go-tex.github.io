@@ -1068,29 +1068,29 @@ func (s *State) layoutToolbar() {
 	ipw := toolkit.Scaled(110)
 	s.iconPackPicker.SetBounds(toolkit.Rect{X: x, Y: yy, W: ipw, H: h})
 	x += ipw + gap
-	// The buttons now carry a leading icon (buttonicons.go), so each is widened by
-	// iconExtra over its text-only width; Find also reserves room for its shortcut.
-	bw := toolkit.Scaled(84) + iconExtra
-	s.minimapBtn.SetBounds(toolkit.Rect{X: x, Y: yy, W: bw, H: h})
-	x += bw + gap
-	sbw := toolkit.Scaled(sidebarBtnW) + iconExtra
-	s.sidebarBtn.SetBounds(toolkit.Rect{X: x, Y: yy, W: sbw, H: h})
-	x += sbw + gap
-	fbw := toolkit.Scaled(56) + iconExtra + toolkit.Scaled(52) // + shortcut hint
-	s.findBtn.SetBounds(toolkit.Rect{X: x, Y: yy, W: fbw, H: h})
-	x += fbw + gap
-	wbw := toolkit.Scaled(96) + iconExtra
-	s.wysiwygBtnRect = toolkit.Rect{X: x, Y: yy, W: wbw, H: h}
-	s.wysiwygBtn.SetBounds(s.wysiwygBtnRect)
-	x += wbw + gap
-	thw := toolkit.Scaled(72) + iconExtra
-	s.themeBtnRect = toolkit.Rect{X: x, Y: yy, W: thw, H: h}
-	s.themeBtn.SetBounds(s.themeBtnRect)
+	// The Source⇄WYSIWYG button's caption toggles; set it to the current state
+	// before measuring so its width fits whichever word is shown (draw resets it
+	// too). The theme button's caption is kept current by cycleTheme/SetThemeMode.
+	if s.wysiwyg().active() {
+		s.wysiwygBtn.Label().Set("WYSIWYG")
+	} else {
+		s.wysiwygBtn.Label().Set("Source")
+	}
+	// Each button is sized to fit its own content — leading icon, caption and (on
+	// Find) the shortcut hint — via the toolkit Button's PreferredWidth, so nothing
+	// clips regardless of label length or the icon/shortcut adornments.
+	place := func(b *toolkit.Button) toolkit.Rect {
+		r := toolkit.Rect{X: x, Y: yy, W: b.PreferredWidth(), H: h}
+		b.SetBounds(r)
+		x += r.W + gap
+		return r
+	}
+	place(s.minimapBtn)
+	place(s.sidebarBtn)
+	place(s.findBtn)
+	s.wysiwygBtnRect = place(s.wysiwygBtn)
+	s.themeBtnRect = place(s.themeBtn)
 }
-
-// iconExtra is the extra button width a leading icon needs: the icon square (a
-// glyph height) plus the gap to the caption and the left padding.
-var iconExtra = toolkit.Scaled(22)
 
 // applyLeftSplit reserves the top strip of the left pane for the editor's
 // the editor-pane file-tab strip (wysiwyg.go) and a strip on its right for the minimap (when
