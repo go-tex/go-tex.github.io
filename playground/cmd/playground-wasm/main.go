@@ -421,6 +421,21 @@ func main() {
 		return nil
 	}))
 
+	// The in-app theme button asks the page to apply a mode (system/light/dark); the
+	// page sets data-theme + persists, and the resulting recolour returns through
+	// gotexSetTheme above.
+	state.SetThemeApply(func(mode string) {
+		js.Global().Call("gotexApplyThemeMode", mode)
+	})
+	// The page seeds the button's current selection (restored from localStorage).
+	js.Global().Set("gotexSetThemeMode", js.FuncOf(func(_ js.Value, args []js.Value) any {
+		if len(args) > 0 {
+			state.SetThemeMode(args[0].String())
+			render()
+		}
+		return nil
+	}))
+
 	// Read-only introspection for headless verification (asserting a real state
 	// change after a pointer / wheel / key interaction). The render pane's paging,
 	// zoom and mode are the PagedView's MVVM observables, surfaced here.

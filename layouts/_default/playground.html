@@ -10,23 +10,15 @@
 /* Playground-only styles — kept off every other page. */
 /* The playground is ONE go-widgets canvas run TRUE fullscreen: the .stage is
    fixed to the whole viewport (no hero, no margins, no border) so the canvas
-   fills 100vw x 100vh. The only HTML chrome is a floating Theme toggle and the
-   load-failure banner, both painted OVER the canvas. Everything else — the
-   status line, the description and the footer that used to be HTML — now lives
-   INSIDE the wasm (its topZone / bottomZone), painted by the toolkit; see
-   playground/zones.go. */
+   fills 100vw x 100vh. The only HTML chrome is the load-failure banner painted
+   OVER the canvas. Everything else — the status line, the theme toggle, the
+   description and the footer that used to be HTML — now lives INSIDE the wasm
+   (its toolbar / topZone), painted by the toolkit; see playground/zones.go. */
 html,body{height:100%;margin:0}
 body{overflow:hidden;background:var(--bg)}
 /* The stage IS the window; the canvas fills it edge to edge. */
 .stage{position:fixed;inset:0;background:var(--bg);overflow:hidden}
 #gotex-canvas{display:block;width:100%;height:100%;background:var(--bg);opacity:0;transition:opacity .25s}
-/* Floating Theme toggle over the canvas (top-right). The shared .theme rule is
-   built for the coloured hero — white text on translucent white — which vanishes
-   over the app surface, so the playground overrides it with a legible card pill
-   that reads in both themes. */
-#themebtn{position:fixed;top:10px;right:12px;z-index:5;background:var(--card);color:var(--ink);
-  border:1px solid var(--line);border-radius:8px;padding:6px 11px;font-size:12px;font-weight:600;
-  cursor:pointer;box-shadow:0 2px 10px var(--shadow2)}
 /* The rendered pages themselves. The render pane lays them out and paints their
    paper on the canvas; the BROWSER draws the pages, as SVG — 2.7x faster than
    rasterising them in wasm, crisp at any zoom, and searchable. The container
@@ -68,7 +60,6 @@ body{overflow:hidden;background:var(--bg)}
 #err.show{display:block}
 </style>
 </head><body>
-<button id="themebtn" class="theme" type="button">Theme: System</button>
 <div id="err"></div>
 <div class="stage">
   <canvas id="gotex-canvas"></canvas>
@@ -167,6 +158,8 @@ body{overflow:hidden;background:var(--bg)}
           // The "engine ready" status line now lives inside the wasm (its topZone),
           // so there is no HTML status/dot/version to update here anymore.
           syncTheme();
+          // Seed the in-app theme button with the mode restored from localStorage.
+          if(globalThis.gotexSetThemeMode && globalThis.gotexThemeMode) gotexSetThemeMode(gotexThemeMode());
         }
       },50);
     };
