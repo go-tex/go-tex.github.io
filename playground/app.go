@@ -155,6 +155,16 @@ type State struct {
 	iconPackPicker *toolkit.DropDown
 	minimapBtn     *toolkit.Button
 
+	// themeBtn cycles the light/dark theme from inside the app (System -> Light ->
+	// Dark), replacing the floating HTML toggle. themeMode is the current selection
+	// ("system"/"light"/"dark"); themeApply is the host hook a click drives to put
+	// the choice on the page (data-theme + persistence), whose resulting recolour
+	// flows back through SetTheme. themeBtnRect is its toolbar hit-rect.
+	themeBtn     *toolkit.Button
+	themeBtnRect toolkit.Rect
+	themeMode    string
+	themeApply   func(mode string)
+
 	// buildInfo is the immutable "which build is this" string shown in the last
 	// status-bar segment: a git short SHA + a UTC build timestamp, baked into the
 	// wasm at deploy time via -ldflags and pushed in once at startup by the
@@ -430,6 +440,14 @@ func NewState(w, h int, dark bool) *State {
 		s.dirty = true
 	})
 
+	// Light/dark theme toggle, moved in from the floating HTML button. It cycles
+	// System -> Light -> Dark and drives the host to apply the choice to the page;
+	// the label states the CURRENT selection.
+	s.themeMode = "system"
+	s.themeBtn = toolkit.NewButton(themeBtnLabel(s.themeMode), func() {
+		s.cycleTheme()
+	})
+
 	// The two chrome bands moved in from the host HTML (see zones.go). siteRoot is
 	// seeded to the canonical default before the first layout (bottomZone.measure
 	// reads it); the js layer overrides it with the live origin at startup.
@@ -617,6 +635,64 @@ func (s *State) SetTheme(dark bool) {
 	s.Compile()
 	s.dirty = true
 }
+
+// themeBtnLabel is the theme toggle's caption for a given mode.
+func themeBtnLabel(mode string) string {
+	switch mode {
+	case "light":
+		return "Theme: Light"
+	case "dark":
+		return "Theme: Dark"
+	default:
+		return "Theme: System"
+	}
+}
+
+// nextThemeMode cycles System -> Light -> Dark -> System.
+func nextThemeMode(mode string) string {
+	switch mode {
+	case "system":
+		return "light"
+	case "light":
+		return "dark"
+	default:
+		return "system"
+	}
+}
+
+// SetThemeApply installs the host hook the in-app theme button drives to put the
+// chosen mode on the page (set data-theme + persist). The host's resulting recolour
+// flows back through SetTheme, so this hook only carries the selection outward. A
+// native build leaves it nil, so the button still cycles its own label and stays
+// testable off a browser.
+func (s *State) SetThemeApply(f func(mode string)) { s.themeApply = f }
+
+// SetThemeMode seeds the button's current selection from the host (the value the
+// page restored from localStorage at startup), without driving a re-apply.
+func (s *State) SetThemeMode(mode string) {
+	if mode != "system" && mode != "light" && mode != "dark" {
+		mode = "system"
+	}
+	s.themeMode = mode
+	s.themeBtn.Label().Set(themeBtnLabel(mode))
+	s.dirty = true
+}
+
+// cycleTheme advances the theme selection and asks the host to apply it. The
+// palette itself is not switched here: the host puts data-theme on the page, and
+// the resulting theme change comes back through SetTheme (so a native build with no
+// host hook just advances the label).
+func (s *State) cycleTheme() {
+	s.themeMode = nextThemeMode(s.themeMode)
+	s.themeBtn.Label().Set(themeBtnLabel(s.themeMode))
+	if s.themeApply != nil {
+		s.themeApply(s.themeMode)
+	}
+	s.dirty = true
+}
+
+// ThemeMode is the current theme selection (host/harness introspection).
+func (s *State) ThemeMode() string { return s.themeMode }
 
 // Resize re-lays out to a new surface size and repaints.
 func (s *State) Resize(w, h int) {
@@ -968,6 +1044,10 @@ func (s *State) layoutToolbar() {
 	wbw := toolkit.Scaled(96)
 	s.wysiwygBtnRect = toolkit.Rect{X: x, Y: yy, W: wbw, H: h}
 	s.wysiwygBtn.SetBounds(s.wysiwygBtnRect)
+	x += wbw + gap
+	thw := toolkit.Scaled(112)
+	s.themeBtnRect = toolkit.Rect{X: x, Y: yy, W: thw, H: h}
+	s.themeBtn.SetBounds(s.themeBtnRect)
 }
 
 // applyLeftSplit reserves the top strip of the left pane for the editor's
@@ -1144,6 +1224,7 @@ func (s *State) Draw(buf []byte) {
 	s.wysiwygBtn.Selected().Set(wys)
 	s.wysiwygBtn.Disabled().Set(!s.wysiwyg().available())
 	s.wysiwygBtn.Draw(p, s.theme)
+	s.themeBtn.Draw(p, s.theme)
 
 	// The workspace sidebar (left column of the body band), when open.
 	s.sidebar.draw(p, s.theme)
@@ -1264,7 +1345,7 @@ func (s *State) HandleClick(x, y int) bool {
 
 	// Toolbar controls (the row between the topZone band and the body).
 	if y >= s.topZoneH && y < s.bodyTop() {
-		for _, w := range []toolkit.Widget{s.schemePicker, s.iconPackPicker, s.minimapBtn, s.sidebarBtn, s.findBtn, s.wysiwygBtn} {
+		for _, w := range []toolkit.Widget{s.schemePicker, s.iconPackPicker, s.minimapBtn, s.sidebarBtn, s.findBtn, s.wysiwygBtn, s.themeBtn} {
 			r := w.Bounds()
 			if r.Contains(x, y) {
 				w.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - r.X, Y: y - r.Y})
