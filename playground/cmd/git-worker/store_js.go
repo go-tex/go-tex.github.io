@@ -27,8 +27,6 @@ package main
 // work going away — they should be told rather than left to notice.
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"syscall/js"
 )
@@ -40,14 +38,11 @@ const cacheName = "gotex-workspace-v1"
 // something WAS saved for this repository and could not be reopened.
 var errSavedWorkspaceUnreadable = errors.New("the saved workspace could not be reopened; starting from the remote instead")
 
-// workspaceKey is the cache key for one repository at one branch. It is a URL
-// under this worker's origin — the Cache API keys on requests — with the remote
-// hashed rather than embedded, so a token that happens to sit in a remote URL
-// never becomes a stored key.
+// workspaceKey is the cache key for one repository at one branch: a URL under
+// this worker's origin, since the Cache API keys on requests. The path — and the
+// reason the remote is hashed into it — is [workspacePath].
 func workspaceKey(url, branch string) string {
-	sum := sha256.Sum256([]byte(url + "\n" + branch))
-	origin := js.Global().Get("location").Get("origin").String()
-	return origin + "/__gotex-workspace/" + hex.EncodeToString(sum[:])
+	return js.Global().Get("location").Get("origin").String() + workspacePath(url, branch)
 }
 
 // await blocks the calling goroutine on a JS promise. It is only ever called
@@ -132,7 +127,30 @@ func saveSnapshot(key string, snap []byte) {
 	u8 := js.Global().Get("Uint8Array").New(len(snap))
 	js.CopyBytesToJS(u8, snap)
 	resp := js.Global().Get("Response").New(u8)
-	_, _ = await(cache.Call("put", key, resp))
+
+	// Delete before put so this key lands at the END of the cache's insertion
+	// order. Cache.keys() answers in insertion order, and re-putting an existing
+	// key is not specified to move it — so without the delete, "oldest" below
+	// would mean "first ever saved" rather than "least recently used".
+	_, _ = await(cache.Call("delete", key))
+	if _, err := await(cache.Call("put", key, resp)); err != nil {
+		return // quota, private mode: best-effort by contract
+	}
+	pruneWorkspaces(cache, keptWorkspaces)
+}
+
+// pruneWorkspaces drops all but the keep most recently saved workspaces. It runs
+// after a successful save, so the entry just written is the last one and is
+// never a candidate.
+func pruneWorkspaces(cache js.Value, keep int) {
+	keys, err := await(cache.Call("keys"))
+	if err != nil || !keys.Truthy() {
+		return
+	}
+	drop := pruneCount(keys.Get("length").Int(), keep)
+	for i := 0; i < drop; i++ { // oldest first
+		_, _ = await(cache.Call("delete", keys.Index(i)))
+	}
 }
 
 // dropSnapshot removes an entry that could not be reopened, so the next visit

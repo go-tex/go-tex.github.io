@@ -5,6 +5,7 @@ package playground
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -61,7 +62,7 @@ func TestAnUnreachableRemoteDoesNotEmptyASavedWorkspace(t *testing.T) {
 	f.restoreFound = true
 	f.files = []string{"article.tex"}
 	f.fileData["article.tex"] = `\documentclass{article}\begin{document}restored\end{document}`
-	f.pullErr = errors.New("dial tcp: no route to host")
+	f.pullErr = fmt.Errorf("dial tcp: no route to host: %w", errGitTransport)
 
 	var gotErr error
 	s.BootClone(func(err error) { gotErr = err })
@@ -140,5 +141,27 @@ func TestBootIsIdempotent(t *testing.T) {
 	}
 	if f.restoreCalls != before || f.cloneCalls != 0 {
 		t.Fatalf("the second boot went to work anyway: restore=%d clone=%d", f.restoreCalls, f.cloneCalls)
+	}
+}
+
+func TestARejectedTokenIsNotCalledOffline(t *testing.T) {
+	s, f, _ := withGit(t)
+	f.restoreFound = true
+	f.files = []string{"article.tex"}
+	f.fileData["article.tex"] = `\documentclass{article}\begin{document}restored\end{document}`
+	f.pullErr = fmt.Errorf("refused: %w", errGitAuth)
+
+	var gotErr error
+	s.BootClone(func(err error) { gotErr = err })
+	if gotErr != nil {
+		t.Fatalf("the boot still succeeded on its own terms: %v", gotErr)
+	}
+	// A problem the reader has to fix keeps the error line it earned. Calling it
+	// "offline" would send them hunting a network fault that is not there.
+	if e := s.git.errMsg.Get(); e == "" {
+		t.Fatal("a rejected token left no error line at all")
+	}
+	if n := s.git.notice.Get(); strings.Contains(strings.ToLower(n), "offline") {
+		t.Fatalf("notice = %q — a rejected token is not a network failure", n)
 	}
 }
