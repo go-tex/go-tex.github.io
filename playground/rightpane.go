@@ -49,6 +49,9 @@ const (
 func newRightPane(rv *toolkit.PagedView, lv *toolkit.LogView) *rightPane {
 	rp := &rightPane{render: rv, log: lv}
 	rp.tabs = toolkit.NewFolderTabs([]string{"Rendered", "Log"}, tabRender)
+	// A leading glyph on each tab (buttonicons.go): a page for the rendered output,
+	// a list for the diagnostics log.
+	rp.tabs.Icons = []toolkit.IconFunc{iconRendered, iconLog}
 	return rp
 }
 

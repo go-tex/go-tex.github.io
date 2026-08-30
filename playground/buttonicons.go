@@ -46,4 +46,11 @@ var (
 		`<path d="M13 21h-2V11H8l4-4 4 4h-3z"/>`))
 	iconGitCommit = toolkit.SVGIcon(svgDoc(
 		`<path fill-rule="evenodd" d="M2 11h6.1a4 4 0 0 1 7.8 0H22v2h-6.1a4 4 0 0 1-7.8 0H2v-2zm10-1a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/>`))
+
+	// Right-pane tab glyphs (rightpane.go): a page for the rendered output, a
+	// bulleted list for the diagnostics log.
+	iconRendered = toolkit.SVGIcon(svgDoc(
+		`<path fill-rule="evenodd" d="M6 2h8l4 4v16H6V2zm2 2v16h8V8h-4V4H8z"/>`))
+	iconLog = toolkit.SVGIcon(svgDoc(
+		`<path d="M3 5h2v2H3zM7 5h14v2H7zM3 11h2v2H3zM7 11h14v2H7zM3 17h2v2H3zM7 17h11v2H7z"/>`))
 )

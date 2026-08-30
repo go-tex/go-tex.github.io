@@ -68,7 +68,7 @@ import (
 // count + replace body rows and the button strip each a comfortable band.
 const (
 	findPanelW = 460
-	findPanelH = 210
+	findPanelH = 172
 )
 
 // findBottomMargin is the gap in LOGICAL pixels between the modal panel's bottom
