@@ -1610,7 +1610,13 @@ func (s *State) BootClone(done func(err error)) {
 			// open and usable, and an unreachable remote should not empty it.
 			s.GitPull(func(pullErr error) {
 				if pullErr != nil {
-					v.notice.Set("Opened your saved workspace - could not reach the remote to update it.")
+					// The pull left its failure on the error line, which the
+					// detail strip shows in red ahead of everything else. That
+					// reads as "the workspace is broken" when in fact it opened
+					// and is usable — only the update did not happen. Replace it
+					// with the plain fact, short enough for the 264 px column.
+					v.errMsg.Set("")
+					v.notice.Set("Offline - showing your saved copy.")
 				}
 				settle(nil)
 			})
