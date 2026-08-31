@@ -238,7 +238,16 @@ type gitView struct {
 	// ("Pulling… 5s") so a long pull/push over a slow network reads as progressing
 	// rather than hung. Reset at beginOp; meaningless when not busy.
 	opElapsed float64
-	loaded    *mvvm.Observable[string] // the ACTIVE working-tree path bound to the editor
+	// progressLine / progressFrac carry the remote's latest sideband progress for a
+	// clone or pull, forwarded from the worker (see [State.SetGitProgress]).
+	// progressLine is the raw phase line ("Receiving objects:  45% (450/1000)");
+	// progressFrac is its parsed [0,1] completion, or -1 when the line has no
+	// measurable ratio — the same "cannot tell" convention as the asset bar. Both
+	// reset at beginOp and are meaningful only while busy; the elapsed-seconds
+	// fallback (above) still stands for an op that streams no progress at all.
+	progressLine string
+	progressFrac float64
+	loaded       *mvvm.Observable[string] // the ACTIVE working-tree path bound to the editor
 
 	// Independent per-file edit buffers. Opening a file no longer discards the
 	// previous file's unsaved edits: every opened path keeps its own [fileBuffer]
@@ -332,21 +341,22 @@ const (
 // stays here; the wasm driver swaps in the real backend via [State.EnableGit]).
 func newGitView(s *State) *gitView {
 	return &gitView{
-		s:        s,
-		backend:  nopGitBackend{},
-		url:      mvvm.NewObservable(DefaultRemoteURL),
-		branch:   mvvm.NewObservable(gitDefaultBranch),
-		token:    mvvm.NewObservable(""),
-		author:   mvvm.NewObservable(""),
-		email:    mvvm.NewObservable(""),
-		msg:      mvvm.NewObservable("Update from the go-tex playground"),
-		remember: mvvm.NewObservable(false),
-		busy:     mvvm.NewObservable(false),
-		errMsg:   mvvm.NewObservable(""),
-		notice:   mvvm.NewObservable(""),
-		op:       mvvm.NewObservable(""),
-		loaded:   mvvm.NewObservable(""),
-		buffers:  map[string]*fileBuffer{},
+		s:            s,
+		backend:      nopGitBackend{},
+		url:          mvvm.NewObservable(DefaultRemoteURL),
+		branch:       mvvm.NewObservable(gitDefaultBranch),
+		token:        mvvm.NewObservable(""),
+		author:       mvvm.NewObservable(""),
+		email:        mvvm.NewObservable(""),
+		msg:          mvvm.NewObservable("Update from the go-tex playground"),
+		remember:     mvvm.NewObservable(false),
+		busy:         mvvm.NewObservable(false),
+		errMsg:       mvvm.NewObservable(""),
+		notice:       mvvm.NewObservable(""),
+		op:           mvvm.NewObservable(""),
+		loaded:       mvvm.NewObservable(""),
+		buffers:      map[string]*fileBuffer{},
+		progressFrac: -1,
 	}
 }
 
@@ -632,6 +642,10 @@ func (v *gitView) beginOp(name string) {
 	v.busy.Set(true)
 	v.op.Set(name)
 	v.opElapsed = 0
+	// A new op starts with no progress of its own; carrying the previous one's line
+	// or fraction would show a bar already part-full or a stale phase.
+	v.progressLine = ""
+	v.progressFrac = -1
 }
 
 func (v *gitView) endOp() {
@@ -1016,6 +1030,48 @@ func (s *State) GitBusy() bool { return s.git.busy.Get() }
 // GitError / GitNotice expose the last error and the last success line.
 func (s *State) GitError() string  { return s.git.errMsg.Get() }
 func (s *State) GitNotice() string { return s.git.notice.Get() }
+
+// SetGitProgress records the remote's latest clone/pull progress (the worker
+// forwards it off the sideband; see git_js.go): line is the raw phase text and
+// frac its parsed [0,1] completion (or negative for "cannot tell"). It is
+// best-effort — an update that arrives with no op in flight is dropped rather
+// than left to linger — and repaints so the sidebar's bar/phase tracks the
+// object count as it climbs. A no-op that leaves nothing changed skips the
+// repaint so a flat-lined percentage does not churn frames.
+func (s *State) SetGitProgress(line string, frac float64) {
+	v := s.git
+	if !v.busy.Get() {
+		return
+	}
+	if frac < 0 {
+		frac = -1
+	} else if frac > 1 {
+		frac = 1
+	}
+	if v.progressLine == line && v.progressFrac == frac {
+		return
+	}
+	v.progressLine = line
+	v.progressFrac = frac
+	s.dirty = true
+	if v.repaint != nil {
+		v.repaint()
+	}
+}
+
+// GitProgressLine is the remote's latest clone/pull progress phase line, or ""
+// when none has arrived for the op in flight.
+func (s *State) GitProgressLine() string { return s.git.progressLine }
+
+// GitProgressFraction is the parsed [0,1] completion of the current clone/pull's
+// progress, or -1 when it is unknown / nothing is in flight. The busy empty-state
+// bar reads it to run determinate (a real object count) rather than indeterminate.
+func (s *State) GitProgressFraction() float64 {
+	if !s.git.busy.Get() {
+		return -1
+	}
+	return s.git.progressFrac
+}
 
 // GitLoadedPath is the working-tree path currently shown in the editor ("" none).
 func (s *State) GitLoadedPath() string { return s.git.loaded.Get() }

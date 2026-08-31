@@ -571,6 +571,13 @@ func (b *sidebar) detailText() (string, toolkit.RGBA) {
 	// this ticks up on screen.
 	if b.s.git.busy.Get() {
 		if op := b.s.git.op.Get(); op != "" {
+			// Real object-count progress off the remote's sideband wins over the bare
+			// clock: "Pulling — Receiving objects:  45% (450/1000)" says the transfer
+			// is moving, not just that time is passing. It falls back to the elapsed
+			// seconds (from #120) whenever the server streams no progress.
+			if line := b.s.git.progressLine; line != "" {
+				return op + " — " + line, toolkit.RGBA{}
+			}
 			if secs := int(b.s.git.opElapsed); secs >= 1 {
 				return fmt.Sprintf("%s… %ds", op, secs), toolkit.RGBA{}
 			}
@@ -599,8 +606,13 @@ func (b *sidebar) loadingText() (msg, caption string) {
 		if op == "Restoring" {
 			return "Restoring…", "Reopening your saved workspace"
 		}
+		// The remote's own sideband line, when it is sending one, is the truest
+		// caption ("Receiving objects:  45% (450/1000)"); it falls back to the generic
+		// "Fetching…" plus the elapsed clock (from #120) when the server is quiet.
 		caption := "Fetching the sample repository"
-		if secs := int(b.s.git.opElapsed); secs >= 1 {
+		if line := b.s.git.progressLine; line != "" {
+			caption = line
+		} else if secs := int(b.s.git.opElapsed); secs >= 1 {
 			caption = fmt.Sprintf("%s — %ds", caption, secs)
 		}
 		return op + "…", caption
@@ -644,25 +656,30 @@ func (b *sidebar) draw(p painter.Painter, theme *toolkit.Theme) {
 			b.empty.Caption().Set(caption)
 			b.empty.SetBounds(toolkit.Rect{X: body.X, Y: body.Y + body.H/3 + sz, W: body.W, H: body.H*2/3 - sz})
 			b.empty.Draw(p, theme)
-			// The git client is a separate multi-megabyte binary. While it is on
-			// its way the workspace is empty for a reason the reader cannot see,
-			// so the download draws its own bar under the message — determinate
-			// when the host can measure it, sliding when it cannot.
-			if b.s.AssetLoading() != "" {
-				w := min(body.W-2*toolkit.Scaled(16), toolkit.Scaled(220))
-				if w > 0 {
-					frac := b.s.AssetProgress()
-					b.assetBar.Indeterminate = frac < 0
-					if frac >= 0 {
-						b.assetBar.SetFraction(frac)
-					}
-					b.assetBar.SetBounds(toolkit.Rect{
-						X: body.X + (body.W-w)/2,
-						Y: body.Y + body.H/3 + sz + toolkit.Scaled(64),
-						W: w, H: toolkit.Scaled(6),
-					})
-					b.assetBar.Draw(p, theme)
+			// A clone is two waits back to back: first the git client (a separate
+			// multi-megabyte binary) downloads, then the repository's objects come
+			// off the remote. One bar under the message carries both — the asset's
+			// own download fraction while it streams in, then the remote's parsed
+			// object count once the client has landed — determinate when either can
+			// be measured, sliding when neither can. Reused across the whole clone so
+			// the reader never watches an empty column with no sign of movement.
+			assetActive := b.s.AssetLoading() != ""
+			frac := b.s.GitProgressFraction()
+			if assetActive {
+				frac = b.s.AssetProgress()
+			}
+			w := min(body.W-2*toolkit.Scaled(16), toolkit.Scaled(220))
+			if w > 0 {
+				b.assetBar.Indeterminate = frac < 0
+				if frac >= 0 {
+					b.assetBar.SetFraction(frac)
 				}
+				b.assetBar.SetBounds(toolkit.Rect{
+					X: body.X + (body.W-w)/2,
+					Y: body.Y + body.H/3 + sz + toolkit.Scaled(64),
+					W: w, H: toolkit.Scaled(6),
+				})
+				b.assetBar.Draw(p, theme)
 			}
 			b.drawButtons(p, theme)
 			return

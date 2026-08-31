@@ -5,6 +5,8 @@ package playground
 
 import (
 	"testing"
+
+	"github.com/go-widgets/painter"
 )
 
 // A git operation over a slow network (a pull or push) can run for many seconds
@@ -76,5 +78,107 @@ func TestGitBusyCoversAllOps(t *testing.T) {
 	}
 	if fired == 0 {
 		t.Fatal("SubscribeGitBusy callback did not fire when the op began")
+	}
+}
+
+// SetGitProgress is best-effort: it is ignored when no op is in flight, clamps the
+// fraction, and (while busy) feeds the parsed line + fraction the UI reads.
+func TestSetGitProgressGatedAndClamped(t *testing.T) {
+	s := newTestState(t, false)
+
+	// Idle: a stray progress update from a late notification is dropped.
+	s.SetGitProgress("Receiving objects:  50% (500/1000)", 0.5)
+	if s.GitProgressLine() != "" || s.GitProgressFraction() != -1 {
+		t.Fatalf("progress leaked while idle: line=%q frac=%v", s.GitProgressLine(), s.GitProgressFraction())
+	}
+
+	s.git.beginOp("Pulling")
+	// beginOp starts from a clean slate.
+	if s.GitProgressLine() != "" || s.git.progressFrac != -1 {
+		t.Fatalf("beginOp did not reset progress: line=%q frac=%v", s.GitProgressLine(), s.git.progressFrac)
+	}
+	s.SetGitProgress("Receiving objects:  45% (450/1000)", 0.45)
+	if s.GitProgressLine() != "Receiving objects:  45% (450/1000)" || s.GitProgressFraction() != 0.45 {
+		t.Fatalf("progress not recorded: line=%q frac=%v", s.GitProgressLine(), s.GitProgressFraction())
+	}
+	// Over-range fractions clamp; negatives collapse to the -1 "unknown".
+	s.SetGitProgress("x", 2)
+	if s.GitProgressFraction() != 1 {
+		t.Fatalf("fraction not clamped up: %v", s.GitProgressFraction())
+	}
+	s.SetGitProgress("y", -3)
+	if s.GitProgressFraction() != -1 {
+		t.Fatalf("negative fraction not normalised to -1: %v", s.GitProgressFraction())
+	}
+	// Re-setting the same values must not dirty the frame.
+	s.SetGitProgress("y", -1)
+	s.dirty = false
+	s.SetGitProgress("y", -1)
+	if s.dirty {
+		t.Fatal("re-setting identical progress should not request a repaint")
+	}
+	// endOp reports "unknown" again even though the field still holds the last line.
+	s.git.endOp()
+	if s.GitProgressFraction() != -1 {
+		t.Fatalf("progress fraction leaked past endOp: %v", s.GitProgressFraction())
+	}
+}
+
+// With real object-count progress in flight, the repo-view busy status shows the
+// remote's phase line instead of the bare elapsed clock; without it, the #120
+// elapsed-seconds fallback still stands.
+func TestBusyStatusShowsRemoteProgress(t *testing.T) {
+	s := newTestState(t, false)
+	s.git.beginOp("Pulling")
+	s.Tick(4) // 4s elapsed — the fallback would say "Pulling… 4s"
+
+	s.SetGitProgress("Receiving objects:  70% (700/1000)", 0.70)
+	if got, _ := s.sidebar.detailText(); got != "Pulling — Receiving objects:  70% (700/1000)" {
+		t.Fatalf("busy status = %q, want the remote phase line", got)
+	}
+	// A phase that stops streaming (line cleared) falls back to the elapsed clock.
+	s.SetGitProgress("", -1)
+	if got, _ := s.sidebar.detailText(); got != "Pulling… 4s" {
+		t.Fatalf("busy status without progress = %q, want the elapsed fallback", got)
+	}
+}
+
+// A clone drives the empty-workspace bar from the remote's object count once the
+// git client wasm has landed (AssetLoading cleared): the bar goes determinate at
+// the parsed fraction, and the loading caption shows the phase line.
+func TestCloneBarFollowsRemoteObjectCount(t *testing.T) {
+	s := newTestState(t, false)
+	buf := make([]byte, testW*testH*4)
+	p := painter.NewPixelPainter(buf, testW, testH)
+
+	s.git.beginOp("Cloning")
+	// Phase 1: the client wasm is still downloading — the asset bar owns the frac.
+	s.SetAssetLoading("git-worker.wasm")
+	s.SetAssetProgress(0.4)
+	s.sidebar.draw(p, s.theme)
+	if s.sidebar.assetBar.Indeterminate || s.sidebar.assetBar.Fraction().Get() != 0.4 {
+		t.Fatalf("asset phase bar = ind:%v frac:%v", s.sidebar.assetBar.Indeterminate, s.sidebar.assetBar.Fraction().Get())
+	}
+
+	// Phase 2: the client landed; the remote's object count now drives the bar.
+	s.SetAssetLoading("")
+	s.SetGitProgress("Receiving objects:  60% (600/1000)", 0.60)
+	s.sidebar.draw(p, s.theme)
+	if s.sidebar.assetBar.Indeterminate {
+		t.Fatal("a measured clone transfer should draw a determinate bar")
+	}
+	if got := s.sidebar.assetBar.Fraction().Get(); got != 0.60 {
+		t.Fatalf("clone bar shows %v, want 0.60 from the object count", got)
+	}
+	if _, caption := s.sidebar.loadingText(); caption != "Receiving objects:  60% (600/1000)" {
+		t.Fatalf("clone caption = %q, want the remote phase line", caption)
+	}
+
+	// An unmeasured phase (Counting objects, no ratio) slides the bar rather than
+	// claiming a fraction.
+	s.SetGitProgress("Counting objects: 128", -1)
+	s.sidebar.draw(p, s.theme)
+	if !s.sidebar.assetBar.Indeterminate {
+		t.Fatal("an unmeasured clone phase should slide, not show a fraction")
 	}
 }

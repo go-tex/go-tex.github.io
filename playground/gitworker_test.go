@@ -19,6 +19,12 @@ type fakeTransport struct {
 	replies map[string]gitrpc.Reply
 	calls   []gitrpc.Request
 	spawns  int
+	// progress, keyed by op, is emitted to Call's onProgress callback (in order)
+	// before the terminal reply — the fake's stand-in for the worker streaming
+	// sideband updates ahead of its result. gotProgress records whether an op was
+	// even offered a progress sink (nil for the ops that never stream one).
+	progress    map[string][]gitrpc.Progress
+	gotProgress map[string]bool
 }
 
 func (f *fakeTransport) Spawn() {
@@ -27,11 +33,23 @@ func (f *fakeTransport) Spawn() {
 	f.mu.Unlock()
 }
 
-func (f *fakeTransport) Call(req gitrpc.Request) gitrpc.Reply {
+func (f *fakeTransport) Call(req gitrpc.Request, onProgress func(gitrpc.Progress)) gitrpc.Reply {
 	f.mu.Lock()
 	f.calls = append(f.calls, req)
+	if f.gotProgress == nil {
+		f.gotProgress = map[string]bool{}
+	}
+	f.gotProgress[req.Op] = onProgress != nil
+	updates := f.progress[req.Op]
 	r := f.replies[req.Op]
 	f.mu.Unlock()
+	// Stream the canned progress ahead of the reply, exactly as the real transport
+	// routes worker progress notifications to the op's sink before the result.
+	if onProgress != nil {
+		for _, p := range updates {
+			onProgress(p)
+		}
+	}
 	return r
 }
 
@@ -435,5 +453,50 @@ func TestWorkerBackendForget(t *testing.T) {
 	}
 	if a.URL != "https://forge/o/r.git" || a.Branch != "main" {
 		t.Fatalf("forget args = %+v, want the trimmed remote and its branch", a)
+	}
+}
+
+// TestWorkerBackendForwardsProgress proves the backend hands the transport its
+// progress sink for the streaming ops (clone/pull) and nil for the rest, and that
+// the transport's progress notifications reach the installed callback.
+func TestWorkerBackendForwardsProgress(t *testing.T) {
+	tr := &fakeTransport{
+		replies: map[string]gitrpc.Reply{
+			gitrpc.OpClone: {OK: true, Files: []string{"main.tex"}, Status: &gitrpc.Status{Branch: "main"}},
+			gitrpc.OpPull:  {OK: true, Status: &gitrpc.Status{Branch: "main"}},
+			gitrpc.OpPush:  {OK: true, Status: &gitrpc.Status{Branch: "main"}},
+		},
+		progress: map[string][]gitrpc.Progress{
+			gitrpc.OpClone: {gitrpc.ParseProgress("Receiving objects:  20% (200/1000)")},
+			gitrpc.OpPull:  {gitrpc.ParseProgress("Receiving objects: 100% (10/10)")},
+		},
+	}
+	b := newWorkerGitBackend(tr)
+	var seen []gitrpc.Progress
+	b.SetProgress(func(p gitrpc.Progress) { seen = append(seen, p) })
+
+	if _, err := cloneSync(b, gitConfig{URL: "u"}); err != nil {
+		t.Fatalf("clone: %v", err)
+	}
+	if len(seen) != 1 || seen[0].Fraction != 0.2 {
+		t.Fatalf("clone progress reached callback wrong: %+v", seen)
+	}
+	if err := errSync(b.Pull); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if len(seen) != 2 || seen[1].Fraction != 1 {
+		t.Fatalf("pull progress reached callback wrong: %+v", seen)
+	}
+	// Push must not be offered a progress sink (it streams none).
+	if err := errSync(b.Push); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	if !tr.gotProgress[gitrpc.OpClone] || !tr.gotProgress[gitrpc.OpPull] {
+		t.Fatalf("clone/pull were not offered a progress sink: %v", tr.gotProgress)
+	}
+	if tr.gotProgress[gitrpc.OpPush] {
+		t.Fatal("push must not be offered a progress sink")
 	}
 }
