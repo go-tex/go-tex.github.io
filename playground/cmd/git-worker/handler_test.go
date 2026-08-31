@@ -32,6 +32,25 @@ type fakeSession struct {
 	gotWrite     [2]string
 	gotCommitMsg string
 	gotLogLimit  int
+
+	// progress is the sink the handler installs around a clone/pull; cloneProgress
+	// / pullProgress are canned lines the fake feeds through it to model the remote
+	// streaming sideband while the op runs.
+	progress                    func(gitrpc.Progress)
+	cloneProgress, pullProgress []string
+}
+
+func (f *fakeSession) SetProgress(fn func(gitrpc.Progress)) { f.progress = fn }
+
+// emitProgress feeds each canned line through the installed sink, as the live
+// session's go-git sideband writer would during the op.
+func (f *fakeSession) emitProgress(lines []string) {
+	if f.progress == nil {
+		return
+	}
+	for _, l := range lines {
+		f.progress(gitrpc.ParseProgress(l))
+	}
 }
 
 func (f *fakeSession) Clone(url, branch, token, author, email string) error {
@@ -39,6 +58,7 @@ func (f *fakeSession) Clone(url, branch, token, author, email string) error {
 	if f.cloneErr != nil {
 		return f.cloneErr
 	}
+	f.emitProgress(f.cloneProgress)
 	f.hasRepo = true
 	return nil
 }
@@ -68,8 +88,14 @@ func (f *fakeSession) WriteFile(p, content string) error {
 }
 func (f *fakeSession) Commit(message string) error { f.gotCommitMsg = message; return f.commitErr }
 func (f *fakeSession) Stage() error                { return f.stageErr }
-func (f *fakeSession) Pull() error                 { return f.pullErr }
-func (f *fakeSession) Push() error                 { return f.pushErr }
+func (f *fakeSession) Pull() error {
+	if f.pullErr != nil {
+		return f.pullErr
+	}
+	f.emitProgress(f.pullProgress)
+	return nil
+}
+func (f *fakeSession) Push() error { return f.pushErr }
 func (f *fakeSession) Status() (gitrpc.Status, error) {
 	return f.status, f.statusErr
 }
@@ -474,5 +500,67 @@ func TestForgettingNothingIsStillSuccess(t *testing.T) {
 	}
 	if reply.HasRepo {
 		t.Fatal("HasRepo is set although no repository is open")
+	}
+}
+
+// TestCloneStreamsProgress proves a clone forwards the session's sideband updates
+// as NON-TERMINAL progress notifications (tagged with the request id and carrying
+// a Progress payload) ahead of the terminal OK reply.
+func TestCloneStreamsProgress(t *testing.T) {
+	f := &fakeSession{
+		files:         []string{"main.tex"},
+		status:        gitrpc.Status{Branch: "main", Clean: true},
+		cloneProgress: []string{"Counting objects: 100% (42/42)", "Receiving objects:  50% (500/1000)"},
+	}
+	h := newHandler(f)
+	var notes []gitrpc.Reply
+	h.emit = func(r gitrpc.Reply) { notes = append(notes, r) }
+
+	reply := h.dispatch(gitrpc.Request{ID: 7, Op: gitrpc.OpClone, Args: gitrpc.Args{URL: "u"}})
+	if !reply.OK || reply.Progress != nil {
+		t.Fatalf("terminal reply = %+v (must be OK with nil Progress)", reply)
+	}
+	if len(notes) != 2 {
+		t.Fatalf("emitted %d progress notes, want 2: %+v", len(notes), notes)
+	}
+	for _, n := range notes {
+		if n.ID != 7 || n.Progress == nil {
+			t.Fatalf("progress note not tagged for the op: %+v", n)
+		}
+	}
+	if notes[1].Progress.Fraction != 0.5 || notes[1].Progress.Phase != "Receiving objects" {
+		t.Fatalf("second note payload = %+v", *notes[1].Progress)
+	}
+	// The sink is detached after the op, so a later session emit reaches nobody.
+	if f.progress != nil {
+		t.Fatal("clone left a progress sink installed on the session")
+	}
+}
+
+// TestPullStreamsProgress is the pull counterpart, and also pins that an op with no
+// emit hook (the default handler) simply installs no sink and runs unchanged.
+func TestPullStreamsProgress(t *testing.T) {
+	f := &fakeSession{
+		hasRepo:      true,
+		status:       gitrpc.Status{Branch: "main", Clean: true},
+		pullProgress: []string{"Receiving objects: 100% (10/10), done."},
+	}
+	h := newHandler(f)
+	var notes []gitrpc.Reply
+	h.emit = func(r gitrpc.Reply) { notes = append(notes, r) }
+	if reply := h.dispatch(gitrpc.Request{ID: 3, Op: gitrpc.OpPull}); !reply.OK {
+		t.Fatalf("pull reply = %+v", reply)
+	}
+	if len(notes) != 1 || notes[0].ID != 3 || notes[0].Progress == nil {
+		t.Fatalf("pull progress notes = %+v", notes)
+	}
+
+	// With no emit hook the pull still succeeds and streams nothing.
+	f2 := &fakeSession{hasRepo: true, status: gitrpc.Status{Branch: "main"}, pullProgress: []string{"ignored"}}
+	if reply := newHandler(f2).dispatch(gitrpc.Request{ID: 4, Op: gitrpc.OpPull}); !reply.OK {
+		t.Fatalf("pull with no emit hook = %+v", reply)
+	}
+	if f2.progress != nil {
+		t.Fatal("a handler with no emit hook must install no progress sink")
 	}
 }

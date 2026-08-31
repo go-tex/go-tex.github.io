@@ -24,6 +24,35 @@ type browsergitSession struct {
 	// Clone or Restore opened it, so Persist knows where to write.
 	client *browsergit.Client
 	key    string
+	// progress, when set by the handler around a clone/pull, receives the remote's
+	// parsed sideband updates. It is applied to every client this session mints
+	// (so a Clone's brand-new client forwards too) via applyProgress.
+	progress func(gitrpc.Progress)
+}
+
+// SetProgress records the sink the handler wants remote progress forwarded to
+// and, when a repository is already open (a Pull reuses its client), attaches it
+// at once. A fresh Clone's client picks it up in applyProgress.
+func (s *browsergitSession) SetProgress(fn func(gitrpc.Progress)) {
+	s.progress = fn
+	if s.client != nil {
+		s.applyProgress(s.client)
+	}
+}
+
+// applyProgress points client's sideband callback at the session's current sink,
+// translating each raw git line into a parsed [gitrpc.Progress]. A nil sink
+// detaches forwarding on that client.
+func (s *browsergitSession) applyProgress(client *browsergit.Client) {
+	if s.progress == nil {
+		client.SetProgress(nil)
+		return
+	}
+	client.SetProgress(func(line string) {
+		if s.progress != nil {
+			s.progress(gitrpc.ParseProgress(line))
+		}
+	})
 }
 
 // Clone opens url@branch with the given identity, replacing any open repo. The
@@ -42,6 +71,9 @@ func (s *browsergitSession) Clone(url, branch, token, author, email string) erro
 		Email:    email,
 		Provider: "generic",
 	})
+	// Forward this clone's own progress: the handler set the sink before calling
+	// Clone, and this client is brand new, so it must be wired up here.
+	s.applyProgress(client)
 	repo, err := client.Clone(context.Background(), "", branch, 1)
 	if err != nil {
 		return err
@@ -67,6 +99,7 @@ func (s *browsergitSession) Restore(url, branch, token, author, email string) (b
 		Email:    email,
 		Provider: "generic",
 	})
+	s.applyProgress(client)
 	key := workspaceKey(url, branch)
 	snap, existed := loadSnapshot(key)
 	if !existed {

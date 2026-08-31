@@ -87,7 +87,10 @@ func argsFromConfig(c gitConfig) gitrpc.Args {
 // to the page event loop instead of freezing the UI.
 type workerTransport interface {
 	Spawn()
-	Call(req gitrpc.Request) gitrpc.Reply
+	// Call posts req and blocks for its reply. onProgress, when non-nil, receives
+	// the op's server-side progress notifications (clone/pull sideband) ahead of
+	// the terminal reply; the ops that do not stream progress pass nil.
+	Call(req gitrpc.Request, onProgress func(gitrpc.Progress)) gitrpc.Reply
 }
 
 // workerGitBackend is the [gitBackend] that drives the git worker. It caches the
@@ -95,6 +98,11 @@ type workerTransport interface {
 // interface's synchronous reads never cross the worker boundary.
 type workerGitBackend struct {
 	t workerTransport
+
+	// onProgress receives the remote's parsed sideband updates during a clone/pull.
+	// Set once (SetProgress) by the wasm driver to forward into State; nil in the
+	// native tests. It runs on the transport's event-loop goroutine.
+	onProgress func(gitrpc.Progress)
 
 	mu       sync.Mutex
 	hasRepo  bool
@@ -108,6 +116,10 @@ type workerGitBackend struct {
 func newWorkerGitBackend(t workerTransport) *workerGitBackend {
 	return &workerGitBackend{t: t, contents: map[string]string{}}
 }
+
+// SetProgress installs the sink the clone/pull ops forward the remote's progress
+// notifications to. nil (the default) means no forwarding.
+func (b *workerGitBackend) SetProgress(fn func(gitrpc.Progress)) { b.onProgress = fn }
 
 // Prewarm spawns the worker (and starts its wasm download) ahead of the first
 // operation. The panel calls it when it opens.
@@ -164,7 +176,7 @@ func commitsFrom(in []gitrpc.Commit) []GitCommitInfo {
 // list; the reply also seeds the contents/status/log cache.
 func (b *workerGitBackend) Clone(cfg gitConfig, done func([]string, error)) {
 	go func() {
-		reply := b.t.Call(gitrpc.Request{Op: gitrpc.OpClone, Args: argsFromConfig(cfg)})
+		reply := b.t.Call(gitrpc.Request{Op: gitrpc.OpClone, Args: argsFromConfig(cfg)}, b.onProgress)
 		if !reply.OK {
 			done(nil, codeToError(reply.Code, reply.Error))
 			return
@@ -178,7 +190,7 @@ func (b *workerGitBackend) Clone(cfg gitConfig, done func([]string, error)) {
 // ordinary answer — found is false with no error, and the caller clones.
 func (b *workerGitBackend) Restore(cfg gitConfig, done func([]string, bool, error)) {
 	go func() {
-		reply := b.t.Call(gitrpc.Request{Op: gitrpc.OpRestore, Args: argsFromConfig(cfg)})
+		reply := b.t.Call(gitrpc.Request{Op: gitrpc.OpRestore, Args: argsFromConfig(cfg)}, nil)
 		if !reply.OK {
 			done(nil, false, codeToError(reply.Code, reply.Error))
 			return
@@ -197,7 +209,7 @@ func (b *workerGitBackend) Restore(cfg gitConfig, done func([]string, bool, erro
 // so there is no error to surface.
 func (b *workerGitBackend) Forget(cfg gitConfig, done func()) {
 	go func() {
-		b.t.Call(gitrpc.Request{Op: gitrpc.OpForget, Args: argsFromConfig(cfg)})
+		b.t.Call(gitrpc.Request{Op: gitrpc.OpForget, Args: argsFromConfig(cfg)}, nil)
 		done()
 	}()
 }
@@ -205,7 +217,7 @@ func (b *workerGitBackend) Forget(cfg gitConfig, done func()) {
 // Pull fast-forwards the open repo in the worker and refreshes the cache.
 func (b *workerGitBackend) Pull(done func(error)) {
 	go func() {
-		reply := b.t.Call(gitrpc.Request{Op: gitrpc.OpPull})
+		reply := b.t.Call(gitrpc.Request{Op: gitrpc.OpPull}, b.onProgress)
 		if !reply.OK {
 			done(codeToError(reply.Code, reply.Error))
 			return
@@ -220,7 +232,7 @@ func (b *workerGitBackend) Pull(done func(error)) {
 // re-pick of the same file shows what was committed).
 func (b *workerGitBackend) Commit(path, content, message string, done func(error)) {
 	go func() {
-		reply := b.t.Call(gitrpc.Request{Op: gitrpc.OpCommit, Args: gitrpc.Args{Path: path, Content: content, Message: message}})
+		reply := b.t.Call(gitrpc.Request{Op: gitrpc.OpCommit, Args: gitrpc.Args{Path: path, Content: content, Message: message}}, nil)
 		if !reply.OK {
 			done(codeToError(reply.Code, reply.Error))
 			return
@@ -239,7 +251,7 @@ func (b *workerGitBackend) Commit(path, content, message string, done func(error
 // overlay clears and the file's "staged" badge shows through.
 func (b *workerGitBackend) Stage(path, content string, done func(error)) {
 	go func() {
-		reply := b.t.Call(gitrpc.Request{Op: gitrpc.OpStage, Args: gitrpc.Args{Path: path, Content: content}})
+		reply := b.t.Call(gitrpc.Request{Op: gitrpc.OpStage, Args: gitrpc.Args{Path: path, Content: content}}, nil)
 		if !reply.OK {
 			done(codeToError(reply.Code, reply.Error))
 			return
@@ -260,7 +272,7 @@ func (b *workerGitBackend) Stage(path, content string, done func(error)) {
 func (b *workerGitBackend) WriteFiles(files map[string]string, done func(error)) {
 	go func() {
 		for p, c := range files {
-			reply := b.t.Call(gitrpc.Request{Op: gitrpc.OpWriteFile, Args: gitrpc.Args{Path: p, Content: c}})
+			reply := b.t.Call(gitrpc.Request{Op: gitrpc.OpWriteFile, Args: gitrpc.Args{Path: p, Content: c}}, nil)
 			if !reply.OK {
 				done(codeToError(reply.Code, reply.Error))
 				return
@@ -276,7 +288,7 @@ func (b *workerGitBackend) WriteFiles(files map[string]string, done func(error))
 // Push pushes the open branch and refreshes the status/log cache.
 func (b *workerGitBackend) Push(done func(error)) {
 	go func() {
-		reply := b.t.Call(gitrpc.Request{Op: gitrpc.OpPush})
+		reply := b.t.Call(gitrpc.Request{Op: gitrpc.OpPush}, nil)
 		if !reply.OK {
 			done(codeToError(reply.Code, reply.Error))
 			return

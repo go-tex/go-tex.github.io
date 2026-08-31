@@ -59,7 +59,13 @@ func (s *State) EnableGit(repaint func()) {
 			repaint()
 		}
 	}
-	s.git.attach(newWorkerGitBackend(t), repaint)
+	b := newWorkerGitBackend(t)
+	// Once the client wasm has landed the clone talks to the remote, and go-git's
+	// sideband ("Counting objects…", "Receiving objects:  45% (450/1000)") flows
+	// back through the worker. Route each parsed update into the State the sidebar
+	// reads so the object count, not just the elapsed seconds, drives the bar.
+	b.SetProgress(func(p gitrpc.Progress) { s.SetGitProgress(p.Line, p.Fraction) })
+	s.git.attach(b, repaint)
 }
 
 // jsWorkerTransport owns the Web Worker and correlates replies to the
@@ -73,6 +79,11 @@ type jsWorkerTransport struct {
 	dead    bool
 	nextID  int
 	pending map[int]chan gitrpc.Reply
+	// progressCbs holds the per-call progress sink for the ops that asked for one
+	// (clone/pull), keyed by the same id as pending. A worker→main progress
+	// notification (a reply carrying a Progress field) is routed here WITHOUT
+	// resolving the call; the terminal reply clears both maps together.
+	progressCbs map[int]func(gitrpc.Progress)
 
 	readyOnce sync.Once
 	readyCh   chan struct{}
@@ -89,7 +100,11 @@ type jsWorkerTransport struct {
 // newJSWorkerTransport builds an unspawned transport; the Worker is created lazily
 // by Spawn (on panel open) or by the first Call.
 func newJSWorkerTransport() *jsWorkerTransport {
-	return &jsWorkerTransport{pending: map[int]chan gitrpc.Reply{}, readyCh: make(chan struct{})}
+	return &jsWorkerTransport{
+		pending:     map[int]chan gitrpc.Reply{},
+		progressCbs: map[int]func(gitrpc.Progress){},
+		readyCh:     make(chan struct{}),
+	}
 }
 
 // gitWorkerURL is the cache-busted URL of the worker bootstrap the host page
@@ -143,9 +158,23 @@ func (w *jsWorkerTransport) Spawn() {
 			}
 			return nil
 		}
+		// A progress notification is NON-TERMINAL: forward it to the op's progress
+		// sink and keep the call pending for its real reply. Distinguished from the
+		// terminal reply purely by the Progress field, so an op that never sends one
+		// (or a worker that predates the field) simply never reaches here.
+		if reply.Progress != nil {
+			w.mu.Lock()
+			cb := w.progressCbs[reply.ID]
+			w.mu.Unlock()
+			if cb != nil {
+				cb(*reply.Progress)
+			}
+			return nil
+		}
 		w.mu.Lock()
 		ch := w.pending[reply.ID]
 		delete(w.pending, reply.ID)
+		delete(w.progressCbs, reply.ID)
 		w.mu.Unlock()
 		if ch != nil {
 			ch <- reply
@@ -167,6 +196,7 @@ func (w *jsWorkerTransport) Spawn() {
 		w.dead = true
 		pending := w.pending
 		w.pending = map[int]chan gitrpc.Reply{}
+		w.progressCbs = map[int]func(gitrpc.Progress){}
 		w.mu.Unlock()
 		for id, ch := range pending {
 			ch <- workerDeadReply(id)
@@ -179,7 +209,10 @@ func (w *jsWorkerTransport) Spawn() {
 
 // Call posts req to the worker and blocks until the matching reply arrives. It is
 // only invoked from op-goroutines, so the block yields to the page event loop.
-func (w *jsWorkerTransport) Call(req gitrpc.Request) gitrpc.Reply {
+// onProgress, when non-nil, receives the op's server-side progress notifications
+// (clone/pull sideband) as they arrive, ahead of the terminal reply; it runs on
+// the event-loop goroutine inside the message handler, like onProgress/onReady.
+func (w *jsWorkerTransport) Call(req gitrpc.Request, onProgress func(gitrpc.Progress)) gitrpc.Reply {
 	w.Spawn()
 	<-w.readyCh // the worker signals ready once its wasm is instantiated
 
@@ -192,6 +225,9 @@ func (w *jsWorkerTransport) Call(req gitrpc.Request) gitrpc.Reply {
 	w.nextID++
 	req.ID = w.nextID
 	w.pending[req.ID] = ch
+	if onProgress != nil {
+		w.progressCbs[req.ID] = onProgress
+	}
 	worker := w.worker
 	w.mu.Unlock()
 

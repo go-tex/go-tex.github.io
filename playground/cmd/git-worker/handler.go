@@ -58,6 +58,12 @@ type gitSession interface {
 	Pull() error
 	// Push pushes the tracked branch to origin.
 	Push() error
+	// SetProgress installs a sink the session forwards the remote's sideband
+	// progress updates to during the next Clone/Pull, or nil to stop forwarding.
+	// The handler sets it around a clone/pull so the updates can be correlated to
+	// the request ID; best-effort, so a session that produces no sideband simply
+	// never calls it.
+	SetProgress(fn func(gitrpc.Progress))
 	// Status snapshots the branch/divergence/dirty state.
 	Status() (gitrpc.Status, error)
 	// Log returns up to limit commits, newest first (limit <= 0 → the client cap).
@@ -71,10 +77,27 @@ type gitSession interface {
 // message pump also hands it one request at a time.
 type handler struct {
 	s gitSession
+	// emit posts a message to the main app OUT OF BAND of the terminal reply — the
+	// worker sets it to postMessage so a clone/pull can stream progress notifications
+	// while it runs. nil in the native tests (and then no progress is forwarded).
+	emit func(gitrpc.Reply)
 }
 
 // newHandler builds a handler over s.
 func newHandler(s gitSession) *handler { return &handler{s: s} }
+
+// withProgress runs op with the session forwarding the remote's progress to the
+// main app as [gitrpc] progress notifications tagged with id, then detaches the
+// sink. A handler with no emit hook (the native tests) installs none and op runs
+// exactly as before. run is the clone/pull that produces the terminal reply.
+func (h *handler) withProgress(id int, run func() gitrpc.Reply) gitrpc.Reply {
+	if h.emit == nil {
+		return run()
+	}
+	h.s.SetProgress(func(p gitrpc.Progress) { h.emit(gitrpc.ProgressReply(id, p)) })
+	defer h.s.SetProgress(nil)
+	return run()
+}
 
 // handle decodes a request wire string, dispatches it and encodes the reply. A
 // malformed request maps to a bad-request reply (id 0, since the id could not be
@@ -133,11 +156,13 @@ func (h *handler) fail(id int, err error) gitrpc.Reply {
 }
 
 func (h *handler) clone(req gitrpc.Request) gitrpc.Reply {
-	a := req.Args
-	if err := h.s.Clone(a.URL, a.Branch, a.Token, a.Author, a.Email); err != nil {
-		return h.fail(req.ID, err)
-	}
-	return h.mutatingReply(req.ID, true)
+	return h.withProgress(req.ID, func() gitrpc.Reply {
+		a := req.Args
+		if err := h.s.Clone(a.URL, a.Branch, a.Token, a.Author, a.Email); err != nil {
+			return h.fail(req.ID, err)
+		}
+		return h.mutatingReply(req.ID, true)
+	})
 }
 
 // restore reopens a saved repository. Finding none is an ordinary answer, not a
@@ -260,10 +285,12 @@ func (h *handler) pull(req gitrpc.Request) gitrpc.Reply {
 	if r, ok := h.requireRepo(req.ID); !ok {
 		return r
 	}
-	if err := h.s.Pull(); err != nil {
-		return h.fail(req.ID, err)
-	}
-	return h.mutatingReply(req.ID, true)
+	return h.withProgress(req.ID, func() gitrpc.Reply {
+		if err := h.s.Pull(); err != nil {
+			return h.fail(req.ID, err)
+		}
+		return h.mutatingReply(req.ID, true)
+	})
 }
 
 func (h *handler) push(req gitrpc.Request) gitrpc.Reply {

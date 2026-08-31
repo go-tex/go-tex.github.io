@@ -24,6 +24,11 @@ import (
 // the browsergit worktree, which is not safe for concurrent use.
 func main() {
 	h := newHandler(&browsergitSession{})
+	// Progress notifications are posted OUT OF BAND, from the drain goroutine while
+	// a clone/pull's Fetch is in flight (it yields to the worker event loop at each
+	// blocking point, and the sideband writer runs on that same goroutine). The main
+	// app tells a progress notification from the terminal reply by its Progress field.
+	h.emit = func(r gitrpc.Reply) { js.Global().Call("postMessage", gitrpc.EncodeReply(r)) }
 	requests := make(chan string, 64)
 
 	go func() {
