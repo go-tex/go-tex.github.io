@@ -195,15 +195,18 @@ func main() {
 	// arrives when the network delivers it. See State.BootClone.
 	state.BootClone(func(error) { render() })
 
-	// While a repository clone is in flight, run a requestAnimationFrame loop so
-	// the workspace's loading spinner spins. The loop ticks animations + repaints
-	// each frame and self-stops the moment the clone ends; a guard keeps a second
-	// clone from starting a duplicate loop.
+	// While any git operation is in flight, run a requestAnimationFrame loop so the
+	// workspace animates — the loading spinner spins and the busy status ticks its
+	// elapsed time — instead of freezing on a static "Pulling…". A pull or push over
+	// a slow network can take many seconds during which nothing else changes on
+	// screen, so without this the app looks hung. The loop ticks animations +
+	// repaints each frame and self-stops the moment the operation ends; a guard keeps
+	// a second operation from starting a duplicate loop.
 	var animate js.Func
 	var animating bool
 	var lastTS float64
 	animate = js.FuncOf(func(_ js.Value, args []js.Value) any {
-		if !state.Cloning() {
+		if !state.GitBusy() {
 			animating = false
 			lastTS = 0
 			return nil
@@ -223,13 +226,13 @@ func main() {
 		return nil
 	})
 	startAnim := func() {
-		if animating || !state.Cloning() {
+		if animating || !state.GitBusy() {
 			return
 		}
 		animating = true
 		js.Global().Call("requestAnimationFrame", animate)
 	}
-	state.SubscribeCloning(startAnim)
+	state.SubscribeGitBusy(startAnim)
 	startAnim() // the boot clone may already be in flight
 
 	// Debounced compile.

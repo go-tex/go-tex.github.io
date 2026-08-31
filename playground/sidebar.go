@@ -4,6 +4,7 @@
 package playground
 
 import (
+	"fmt"
 	"path"
 	"sort"
 	"strings"
@@ -563,10 +564,16 @@ func (b *sidebar) detailText() (string, toolkit.RGBA) {
 		return n, toolkit.RGBA{}
 	}
 	// With a repository already open the workspace keeps showing its tree during
-	// an operation, so the only sign anything is happening is that the buttons
-	// went flat. Name the operation instead.
+	// an operation, so the only sign anything is happening is that the buttons went
+	// flat. Name the operation, and — once it has been running a moment — its
+	// elapsed seconds, so a slow pull/push reads as progressing rather than hung.
+	// The host runs an animation-frame loop while busy (see SubscribeGitBusy), so
+	// this ticks up on screen.
 	if b.s.git.busy.Get() {
 		if op := b.s.git.op.Get(); op != "" {
+			if secs := int(b.s.git.opElapsed); secs >= 1 {
+				return fmt.Sprintf("%s… %ds", op, secs), toolkit.RGBA{}
+			}
 			return op + "…", toolkit.RGBA{}
 		}
 	}
@@ -592,7 +599,11 @@ func (b *sidebar) loadingText() (msg, caption string) {
 		if op == "Restoring" {
 			return "Restoring…", "Reopening your saved workspace"
 		}
-		return op + "…", "Fetching the sample repository"
+		caption := "Fetching the sample repository"
+		if secs := int(b.s.git.opElapsed); secs >= 1 {
+			caption = fmt.Sprintf("%s — %ds", caption, secs)
+		}
+		return op + "…", caption
 	}
 	return "Working…", ""
 }
