@@ -6,10 +6,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# The build needs nothing beyond the source and the Pages configuration it
+# reads to compute the base URL. Publishing rights are granted to the deploy
+# job alone, below, so a pull request build cannot replace what is served.
 permissions:
   contents: read
-  pages: write
-  id-token: write
+  pages: read
 
 concurrency:
   group: pages
@@ -68,6 +70,10 @@ jobs:
     if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
