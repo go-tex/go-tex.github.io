@@ -849,13 +849,25 @@ func (s *State) SelectedScheme() int { return s.schemePicker.Selected().Get() }
 func (s *State) Cloning() bool { return s.git.busy.Get() && !s.git.backend.HasRepo() }
 
 // Tick advances time-based animations (the workspace loading spinner) by dt
-// seconds. The host calls it once per animation frame while Cloning.
-func (s *State) Tick(dt float64) { s.sidebar.tick(dt) }
+// seconds and accumulates the in-flight git operation's elapsed time. The host
+// calls it once per animation frame while a git operation is in flight (GitBusy).
+func (s *State) Tick(dt float64) {
+	s.sidebar.tick(dt)
+	if s.git.busy.Get() {
+		s.git.opElapsed += dt
+	}
+}
 
 // SubscribeCloning registers cb to run whenever the clone-in-flight state may
 // have changed, so the host can start its animation frame loop when a clone
 // begins. cb should check Cloning and (re)start the loop when it becomes true.
 func (s *State) SubscribeCloning(cb func()) { s.git.busy.Subscribe(func(bool) { cb() }) }
+
+// SubscribeGitBusy registers cb to run whenever ANY git operation starts or ends,
+// so the host can start its animation frame loop for a pull/push/commit too — not
+// only the initial clone. cb should check GitBusy and (re)start the loop when it
+// becomes true.
+func (s *State) SubscribeGitBusy(cb func()) { s.git.busy.Subscribe(func(bool) { cb() }) }
 
 // iconPackIdx is the index into iconPacks of the workspace tree's chosen icon
 // pack (clamped defensively, since the picker owns the value).

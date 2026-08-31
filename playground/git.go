@@ -232,8 +232,13 @@ type gitView struct {
 	// empty. busy alone says only THAT something is happening; a workspace that
 	// freezes its buttons without saying which of five operations is running
 	// leaves the reader to guess, so the name is carried and shown.
-	op     *mvvm.Observable[string]
-	loaded *mvvm.Observable[string] // the ACTIVE working-tree path bound to the editor
+	op *mvvm.Observable[string]
+	// opElapsed is how many seconds the in-flight operation has been running,
+	// accumulated from the host's animation-frame Tick. The busy status shows it
+	// ("Pulling… 5s") so a long pull/push over a slow network reads as progressing
+	// rather than hung. Reset at beginOp; meaningless when not busy.
+	opElapsed float64
+	loaded    *mvvm.Observable[string] // the ACTIVE working-tree path bound to the editor
 
 	// Independent per-file edit buffers. Opening a file no longer discards the
 	// previous file's unsaved edits: every opened path keeps its own [fileBuffer]
@@ -626,6 +631,7 @@ func (s *State) GitStage(done func(err error)) {
 func (v *gitView) beginOp(name string) {
 	v.busy.Set(true)
 	v.op.Set(name)
+	v.opElapsed = 0
 }
 
 func (v *gitView) endOp() {
