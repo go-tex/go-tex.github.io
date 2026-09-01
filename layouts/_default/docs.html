@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ .Site.Title }} — Capability reference</title>
+<meta name="description" content="Everything the pure-Go go-tex engine supports today — document classes, packages, TeX primitives, math, fonts, output, image formats and standards — and every remaining gap, listed honestly.">
+<link rel="icon" type="image/svg+xml" href="{{ "favicon.svg" | relURL }}">
+<link rel="stylesheet" href="{{ "css/brand.css" | relURL }}">
+<script src="{{ "js/theme.js" | relURL }}"></script>
+<style>
+  .hero.compact{padding:52px 24px 74px}
+  .hero.compact h1{font-size:38px}
+  .lead{font-size:16px;color:var(--muted);margin:0 0 4px}
+  .legend{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0 0}
+  .twrap{overflow-x:auto;border:1px solid var(--line);border-radius:14px;background:var(--card);box-shadow:0 10px 30px var(--shadow);margin-top:6px}
+  table.cap{border-collapse:collapse;width:100%;font-size:14px;min-width:560px}
+  table.cap th,table.cap td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+  table.cap th{color:var(--to);font-weight:700;white-space:nowrap;background:var(--bg)}
+  table.cap tr:last-child td{border-bottom:0}
+  table.cap code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+  .b{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap;letter-spacing:.02em}
+  .b-full{background:#1c9e6a1a;color:#12885a;border:1px solid #12885a55}
+  .b-part{background:#c8860015;color:#b07600;border:1px solid #b0760055}
+  .b-stub{background:#8a97a015;color:var(--muted);border:1px solid var(--line)}
+  .b-gate{background:#0079a815;color:var(--to);border:1px solid #0079a855}
+  @media (prefers-color-scheme:dark){
+    .b-full{color:#3fce93}.b-part{color:#e0a63a}
+  }
+  .note{font-size:14px;color:var(--muted)}
+  ul.gaps{margin:6px 0 0;padding-left:20px}
+  ul.gaps li{margin:6px 0;font-size:14px}
+  ul.gaps code{font-size:13px}
+  .toc{display:flex;flex-wrap:wrap;gap:8px 18px;margin:6px 0 0;font-size:14px;font-weight:600}
+</style>
+</head><body>
+<section class="hero compact">
+  <button id="themebtn" class="theme" type="button">Theme: System</button>
+  <h1>Capability reference</h1>
+  <p>Everything go-tex supports today — and every gap that remains, listed honestly.</p>
+  <div class="btns">
+    <a class="btn btn-solid" href="{{ "/" | relURL }}">← Home</a>
+    <a class="btn btn-ghost" href="{{ "playground/" | relURL }}">Playground</a>
+    <a class="btn btn-ghost" href="https://github.com/go-tex/engine">Engine on GitHub</a>
+  </div>
+</section>
+<div class="wrap">
+  <div class="panel">
+    <h2>How to read this</h2>
+    <p>go-tex is a pure-Go (<code>CGO_ENABLED=0</code>) re-implementation of TeX that <strong>loads and runs the genuine LaTeX classes and packages</strong> as real TeX macros. This page lists the supported surface as it actually stands in the source, and names what is still missing — the aim is that nothing goes unlisted. Statuses:</p>
+    <div class="legend">
+      <span class="b b-full">Full</span><span class="note">faithful, gated by an oracle</span>
+      <span class="b b-part">Partial</span><span class="note">real support, documented limits</span>
+      <span class="b b-stub">Stub</span><span class="note">content preserved, effect approximated or dropped</span>
+      <span class="b b-gate">Opt-in</span><span class="note">behind an env flag, off by default</span>
+    </div>
+    <p class="toc" style="margin-top:16px">
+      <a href="#classes">Classes</a> <a href="#packages">Packages</a> <a href="#engine">TeX engine</a>
+      <a href="#math">Math</a> <a href="#output">Fonts &amp; output</a> <a href="#images">Images</a>
+      <a href="#lenient">Lenient mode</a> <a href="#gated">Opt-in features</a>
+      <a href="#standards">Standards</a> <a href="#gaps">Known gaps</a>
+    </p>
+  </div>
+
+  <h2 class="section" id="classes">Document classes</h2>
+  <p class="sub">The standard base classes are the genuine embedded LaTeX <code>.cls</code> files, run for real. Any other resolvable class loads tolerantly.</p>
+  <div class="twrap"><table class="cap">
+    <tr><th>Class</th><th>Status</th><th>Notes</th></tr>
+    <tr><td><code>article</code> · <code>report</code> · <code>book</code></td><td><span class="b b-full">Full</span></td><td>Real embedded <code>.cls</code> (LPPL, verbatim) with the size option files — numbered title, dotted <code>\tableofcontents</code>, numbered sections/chapters, figure/table captions, lists, math. Passes the conformance and fidelity gates. Runs identically in <code>js/wasm</code>.</td></tr>
+    <tr><td><code>amsart</code></td><td><span class="b b-part">Partial</span></td><td>Real embedded class by default; title, sections and theorem heads typeset. <code>GOTEX_AMSART=0</code> forces the older emulation.</td></tr>
+    <tr><td><code>beamer</code></td><td><span class="b b-part">Partial</span></td><td>Runs the real <code>beamer.cls</code> when resolvable (measured rendering on 99.9% of 10,025 talks); otherwise a built-in emulation — one page per frame, static overlays, themes gobbled. <code>GOTEX_BEAMER=0</code> forces emulation.</td></tr>
+    <tr><td><code>revtex4</code> / <code>4-1</code> / <code>4-2</code></td><td><span class="b b-part">Partial</span></td><td>Title-block emulation preserving author/affiliation content. Two-column reprint layout only under <code>GOTEX_TWOCOLUMN</code>; the superscript-address layout is not reproduced.</td></tr>
+    <tr><td><code>acmart</code></td><td><span class="b b-part">Partial</span></td><td>Runs an <code>amsart</code>-shaped path with metadata stubs; content is clean, render is single-column, geometry approximated.</td></tr>
+    <tr><td><code>IEEEtran</code>, <code>elsarticle</code>, <code>aastex</code></td><td><span class="b b-stub">Stub</span></td><td>Geometry floor plus an article-shaped fallback; class-specific front-matter macros are dropped.</td></tr>
+    <tr><td><code>letter</code>, <code>proc</code>, <code>slides</code>, <code>minimal</code></td><td><span class="b b-stub">Stub</span></td><td>Built-in emulation.</td></tr>
+    <tr><td>any other <code>.cls</code></td><td><span class="b b-part">Best-effort</span></td><td>If resolvable (document dir, <code>TEXINPUTS</code>/<code>GOTEX_TEXMF</code>, or host resolver) it is loaded and run as real TeX; unknown commands are skipped.</td></tr>
+  </table></div>
+
+  <h2 class="section" id="packages">Packages</h2>
+  <p class="sub">Distribution-heavy packages are emulated natively; anything else resolvable runs from disk as real TeX macros, with the full LaTeX2e option mechanism (<code>\DeclareOption</code>, <code>\ProcessOptions</code>, <code>\PassOptionsToPackage</code>, hooks, <code>\IfFileExists</code>, …).</p>
+  <div class="twrap"><table class="cap">
+    <tr><th>Package</th><th>Status</th><th>What works / what doesn't</th></tr>
+    <tr><td><code>amsmath</code></td><td><span class="b b-full">Full</span> subset</td><td><code>equation(*)</code>, <code>align(*)</code>, <code>gather(*)</code>, <code>multline(*)</code>, <code>eqnarray(*)</code>, <code>flalign(*)</code>, <code>displaymath</code>; box-level alignment, <code>\tag</code>/<code>\eqref</code>/<code>\label</code>/numbering.</td></tr>
+    <tr><td><code>amssymb</code> / <code>amsfonts</code></td><td><span class="b b-part">Partial</span></td><td>Symbol substrate; individual unknown symbols still drop their equation.</td></tr>
+    <tr><td><code>amsthm</code> / theorem</td><td><span class="b b-part">Partial</span></td><td><code>\newtheorem</code>, <code>proof</code> with QED.</td></tr>
+    <tr><td><code>graphicx</code> / <code>graphics</code></td><td><span class="b b-part">Partial</span></td><td><code>\includegraphics</code> embeds PNG/JPEG/SVG for real; PDF/EPS become placeholders (see Images).</td></tr>
+    <tr><td><code>color</code> / <code>xcolor</code></td><td><span class="b b-part">Partial</span></td><td><code>\color</code>, <code>\textcolor</code>, <code>\colorbox</code>, <code>\fcolorbox</code>, <code>\definecolor</code> (rgb/RGB/gray/HTML).</td></tr>
+    <tr><td><code>hyperref</code></td><td><span class="b b-part">Partial</span></td><td><code>\url</code>, <code>\href</code>, <code>\nolinkurl</code>. SVG output has live clickable links; the <strong>PDF has no link annotations yet</strong>.</td></tr>
+    <tr><td><code>geometry</code></td><td><span class="b b-part">Partial</span></td><td>Paper size and margins map to the box model.</td></tr>
+    <tr><td><code>fancyhdr</code></td><td><span class="b b-part">Partial</span></td><td>Six header/footer fields; rule widths not modelled.</td></tr>
+    <tr><td><code>setspace</code></td><td><span class="b b-part">Partial</span></td><td><code>\singlespacing</code>/<code>\onehalfspacing</code>/<code>\doublespacing</code>/<code>\setstretch</code>/<code>\linespread</code>.</td></tr>
+    <tr><td><code>enumitem</code></td><td><span class="b b-part">Partial</span></td><td><code>[key=value]</code> lists incl. <code>label=</code>; unknown keys ignored.</td></tr>
+    <tr><td><code>multicols</code></td><td><span class="b b-part">Partial</span></td><td>N balanced columns, single forward-pass balance (not iterative).</td></tr>
+    <tr><td>tabular family — <code>booktabs</code>, <code>multirow</code>, <code>tabularx</code></td><td><span class="b b-part">Partial</span></td><td><code>\toprule</code>/<code>\midrule</code>/<code>\bottomrule</code>, spanning rows, X columns. Paragraph columns (<code>p/m/b</code>) and <code>\cline</code> not yet handled.</td></tr>
+    <tr><td><code>subcaption</code> / <code>subfig</code></td><td><span class="b b-part">Partial</span></td><td><code>subfigure</code>/<code>subtable</code> → minipage panel with a lettered sub-caption.</td></tr>
+    <tr><td><code>algorithm</code> / <code>algorithmic</code> / <code>algpseudocode</code></td><td><span class="b b-part">Partial</span></td><td>Float caption plus STATE/IF/FOR/WHILE/FUNCTION keyword machinery (upper- and mixed-case). <code>algorithm2e</code> is not supported.</td></tr>
+    <tr><td><code>listings</code></td><td><span class="b b-part">Partial</span></td><td><code>lstlisting</code>/<code>\lstinline</code>, <code>numbers=left</code>, <code>frame=single</code>. No syntax highlighting (<code>language=</code> is parsed, ignored).</td></tr>
+    <tr><td><code>minted</code></td><td><span class="b b-stub">Stub</span></td><td>Always a verbatim fallback — no shell-escape / Pygments.</td></tr>
+    <tr><td><code>siunitx</code></td><td><span class="b b-part">Partial</span></td><td><code>\num</code>, <code>\si</code>, <code>\unit</code>, <code>\SI</code>/<code>\qty</code>, <code>\ang</code>; grouping threshold, <code>\pm</code>, ranges/lists limited.</td></tr>
+    <tr><td><code>numprint</code></td><td><span class="b b-part">Partial</span></td><td><code>\numprint</code>/<code>\np</code> incl. <code>[unit]</code>.</td></tr>
+    <tr><td><code>makeidx</code></td><td><span class="b b-part">Partial</span></td><td><code>\makeindex</code>/<code>\index</code>/<code>\printindex</code> via a two-pass run.</td></tr>
+    <tr><td><code>verbatim</code></td><td><span class="b b-full">Full</span></td><td><code>verbatim</code> environment and <code>\verb</code>.</td></tr>
+    <tr><td>BibTeX (<code>\bibliography</code>)</td><td><span class="b b-part">Partial</span></td><td>Parses <code>.bib</code>; a plain-ish style, not <code>.bst</code>-faithful.</td></tr>
+    <tr><td><code>sidecap</code>, <code>overpic</code>, <code>apacite</code></td><td><span class="b b-stub">Stub</span></td><td>Content preserved: side-caption floats render as ordinary floats; <code>overpic</code> is a framed placeholder (no drawing layer); <code>apacite</code> macros are stubbed to keep the reference list.</td></tr>
+    <tr><td><code>tikz</code> / <code>pgf</code> / <code>pgfplots</code></td><td><span class="b b-gate">Opt-in</span></td><td>Whole picture gobbled to a placeholder by default; real sources behind <code>GOTEX_PGF</code>, bring-up incomplete.</td></tr>
+    <tr><td><code>keyval</code>, <code>etoolbox</code>, <code>iftex</code>/<code>ifpdf</code>/…</td><td><span class="b b-full">Loaded real</span></td><td>Embedded, run as real macros.</td></tr>
+    <tr><td><code>biblatex</code>, <code>fontspec</code>, <code>inputenc</code>/<code>fontenc</code>/<code>babel</code>, <code>pstricks</code></td><td><span class="b b-stub">No-op</span></td><td>Stubbed; <code>biblatex</code> bibliography commands are dropped.</td></tr>
+  </table></div>
+  <p class="note">Any other resolvable <code>.sty</code> is loaded and run as real TeX macros — the list above is the packages given deliberate native handling, not the limit of what runs.</p>
+
+  <h2 class="section" id="engine">The TeX engine</h2>
+  <p class="sub">A faithful re-implementation — ~306 primitives, held byte-for-byte against real TeX by a conformance ratchet.</p>
+  <div class="twrap"><table class="cap">
+    <tr><th>Layer</th><th>Coverage</th></tr>
+    <tr><td>Tokenizer (mouth)</td><td>Full category-code table, comments, control words/symbols.</td></tr>
+    <tr><td>Macros</td><td><code>\def</code> (undelimited, <strong>delimited</strong>, grouped params, with backtracking), <code>\edef</code>/<code>\gdef</code>/<code>\xdef</code>, <code>\let</code>, <code>\global</code>, <code>\newcommand(*)</code>/<code>\renewcommand</code>/<code>\providecommand</code>, <code>\newenvironment</code>.</td></tr>
+    <tr><td>Expansion (gullet)</td><td><code>\expandafter</code>, <code>\csname</code>/<code>\endcsname</code>, <code>\noexpand</code>, <code>\string</code>, <code>\the</code>, <code>\number</code>, <code>\romannumeral</code>, <code>\meaning</code>, <code>\uppercase</code>/<code>\lowercase</code>.</td></tr>
+    <tr><td>Conditionals</td><td><code>\if</code>, <code>\ifnum</code>, <code>\ifx</code>, <code>\ifcat</code>, <code>\ifodd</code>, <code>\ifcase</code>, <code>\iftrue</code>/<code>\iffalse</code>, with <code>\else</code>/<code>\or</code>/<code>\fi</code> and nesting.</td></tr>
+    <tr><td>Registers &amp; arithmetic</td><td><code>\count</code>, <code>\dimen</code>, <code>\skip</code>, <code>\toks</code>/<code>\newtoks</code>, <code>\advance</code>, <code>\multiply</code>, <code>\divide</code>, <code>\chardef</code>, <code>\mathchardef</code>, <code>\catcode</code>.</td></tr>
+    <tr><td>e-TeX</td><td><code>\numexpr</code>/<code>\dimexpr</code> (exact 64-bit), e-TeX <code>\if</code> extensions, <code>\protected</code>, <code>\unexpanded</code>, <code>\detokenize</code> — the default under LaTeX for two decades.</td></tr>
+    <tr><td>Boxes &amp; glue (stomach)</td><td><code>\hbox</code>/<code>\vbox</code>/<code>\vtop</code> with <code>to</code>/<code>spread</code>, <code>\kern</code>, <code>\hskip</code>/<code>\vskip</code> + fil glue, <code>\hrule</code>/<code>\vrule</code>, <code>\penalty</code>, box registers, <code>\wd</code>/<code>\ht</code>/<code>\dp</code> — all in scaled points, TeX-exact.</td></tr>
+    <tr><td>Paragraphs</td><td>Knuth–Plass line breaking with an emergency pass, <code>\parfillskip</code>, Liang hyphenation.</td></tr>
+    <tr><td>Page builder</td><td>Cost-based (badness + penalty), forced/forbidden breaks, glue discard, <code>\vsplit</code>. <em>Not yet:</em> insertions, <code>\topskip</code>, a user <code>\output</code> routine.</td></tr>
+    <tr><td>Alignment</td><td><code>\halign</code> and <code>tabular</code>.</td></tr>
+  </table></div>
+
+  <h2 class="section" id="math">Math</h2>
+  <div class="panel">
+    <p>Math mode is delegated whole to <a href="https://github.com/go-tex/math"><code>go-tex/math</code></a>: <code>$…$</code> and <code>$$…$$</code> source is handed to the library, which returns a self-contained SVG rendered via the OpenType MATH table (STIX Two Math). Supported: fractions, radicals, matrices, big operators with limits, stretchy delimiters, scripts and primes, ~200 named symbols, and the <code>\mathbb</code>/<code>\mathcal</code>/<code>\mathfrak</code> alphabets. Multi-line display environments (<code>align</code>/<code>gather</code>/<code>multline</code>/<code>eqnarray</code>/<code>flalign</code>) are assembled at the box level, each <code>&amp;</code>-cell rendered and columns width-shared for alignment, with per-line numbering and <code>\tag</code>/<code>\eqref</code>.</p>
+    <p class="note">A formula the library cannot parse drops that one equation (tallied in diagnostics). Common triggers: user-defined math macros, alignment inside a bare matrix environment, and <code>\SI</code>/<code>\num</code> used inside math.</p>
+  </div>
+
+  <h2 class="section" id="output">Fonts &amp; output</h2>
+  <div class="twrap"><table class="cap">
+    <tr><th>Concern</th><th>Support</th></tr>
+    <tr><td>Fonts</td><td>OpenType via <a href="https://github.com/go-opentype/opentype">go-opentype</a> — measuring, kerning, ligatures, CFF/TrueType outlines. A <strong>built-in default font</strong> so it runs with zero assets; the CLI binds <code>-font</code>/<code>-boldfont</code>/<code>-italicfont</code>/<code>-monofont</code>/<code>-sansfont</code> (<code>.ttf</code>/<code>.otf</code>) to <code>\rm</code>/<code>\bf</code>/<code>\it</code>/<code>\tt</code>/<code>\sf</code>. Type1 and the XeTeX/LuaTeX Unicode engines are not supported.</td></tr>
+    <tr><td>PDF</td><td>Via <a href="https://github.com/go-pdfkit/pdfkit">go-pdfkit</a>, with embedded subset fonts and a selectable text layer over the glyph outlines. No link annotations or named destinations yet.</td></tr>
+    <tr><td>SVG</td><td>Self-contained pages, glyphs as <code>&lt;path&gt;</code> outlines, carrying a source map for click-to-line and live <code>&lt;a href&gt;</code> links. Multi-page output is written as <code>name-N.svg</code>.</td></tr>
+  </table></div>
+
+  <h2 class="section" id="images"><code>\includegraphics</code> formats</h2>
+  <div class="twrap"><table class="cap">
+    <tr><th>Format</th><th>Behaviour</th></tr>
+    <tr><td>PNG, JPEG (and GIF)</td><td><span class="b b-full">Full</span> — decoded and embedded verbatim (PDF XObject / SVG data-URI); reads pHYs/JFIF DPI.</td></tr>
+    <tr><td>SVG</td><td><span class="b b-part">Partial</span> — embedded verbatim in the SVG driver; drawn as native vector paths in the PDF driver (a subset of path/rect/circle with translate/scale).</td></tr>
+    <tr><td>PDF figures</td><td><span class="b b-gate">Opt-in</span> — a framed placeholder unless the host wires a rasteriser; the <a href="https://github.com/go-tex/pdfrender"><code>pdfrender</code></a> module supplies one (pure Go). Placeholders are sized to the true page aspect.</td></tr>
+    <tr><td>EPS</td><td><span class="b b-stub">Placeholder</span> — not decoded.</td></tr>
+    <tr><td><code>data:</code> URI</td><td><span class="b b-full">Full</span> — so the browser build needs no filesystem.</td></tr>
+  </table></div>
+
+  <h2 class="section" id="lenient">Lenient mode &amp; CLI flags</h2>
+  <div class="panel">
+    <p>Strict mode aborts on the first gap, as real TeX does. <strong>Lenient mode</strong> (<code>gotex -lenient</code>) turns gaps into best-effort no-ops for a preview: an undefined command is skipped along with its likely <code>[opt]{arg}</code> block; an unloadable figure becomes a framed placeholder; an unknown math macro drops that equation; a missing <code>\input</code>/<code>\bibliography</code>/<code>\font</code> file is ignored. Every skipped construct is tallied.</p>
+    <p class="note"><code>-report-skipped</code> prints (frequency-sorted) the skipped commands, dropped equations, undefined environments and silent-swallow alarms after a run. <code>-offline</code> never fetches a support tree — embedded set, local cache and <code>TEXINPUTS</code>/<code>GOTEX_TEXMF</code> only. <code>-format pdf|svg</code>, <code>-size</code>, <code>-margin</code>, <code>-o</code>/<code>-outdir</code>. A runaway-expansion guard bounds macro expansion so no file can hang. Lenient mode is a preview aid, not a fidelity claim.</p>
+  </div>
+
+  <h2 class="section" id="gated">Opt-in features (env flags, off by default)</h2>
+  <div class="twrap"><table class="cap">
+    <tr><th>Flag</th><th>Effect</th></tr>
+    <tr><td><code>GOTEX_FLOATS</code></td><td>Real single-column float placement (top/bottom/float-page). Off: floats typeset inline where written, so figure-heavy documents under-paginate.</td></tr>
+    <tr><td><code>GOTEX_TWOCOLUMN</code></td><td>Two-column output routine for non-standard classes. (<code>article</code>/<code>report</code>/<code>book</code> <code>[twocolumn]</code> are live without it.)</td></tr>
+    <tr><td><code>GOTEX_PGF</code></td><td>Load the real pgf/TikZ sources (bring-up incomplete).</td></tr>
+    <tr><td><code>GOTEX_PDFASPECT</code></td><td>Size un-rasterizable PDF placeholders to their true aspect ratio.</td></tr>
+    <tr><td><code>GOTEX_BEAMER=0</code> · <code>GOTEX_AMSART=0</code></td><td>Force the built-in emulation instead of the real class.</td></tr>
+  </table></div>
+
+  <h2 class="section" id="standards">Standards targeted</h2>
+  <div class="twrap"><table class="cap">
+    <tr><th>Spec</th><th>Status</th></tr>
+    <tr><td>TeX82 semantics (catcodes, <code>eqtb</code>, mouth/gullet/stomach, scaled points)</td><td><span class="b b-full">Full</span> — held byte-for-byte against real TeX by a conformance ratchet.</td></tr>
+    <tr><td>The TeXbook algorithms — Knuth–Plass line breaking</td><td><span class="b b-full">Full</span> (with an emergency pass); the page builder is cost-based but partial (no insertions/<code>\topskip</code>/<code>\output</code>).</td></tr>
+    <tr><td>Liang hyphenation</td><td><span class="b b-full">Full</span> (US-English patterns).</td></tr>
+    <tr><td>LaTeX2e kernel + class/option mechanism</td><td><span class="b b-part">Partial</span> — enough to run the real <code>article</code>/<code>report</code>/<code>book</code>/<code>amsart</code> classes and arbitrary <code>.sty</code>.</td></tr>
+    <tr><td>e-TeX extensions</td><td><span class="b b-full">Full</span> — <code>\numexpr</code>/<code>\dimexpr</code>, <code>\protected</code>, <code>\unexpanded</code>, <code>\detokenize</code>, e-TeX ifs.</td></tr>
+    <tr><td>OpenType</td><td><span class="b b-full">Full</span> via go-opentype (measuring, kerning, ligatures, CFF Type2 outlines, the MATH table).</td></tr>
+    <tr><td>PDF output</td><td><span class="b b-part">Partial</span> via go-pdfkit — no link annotations / named destinations yet.</td></tr>
+    <tr><td>SVG output</td><td><span class="b b-full">Full</span> — self-contained, source-mapped, clickable.</td></tr>
+    <tr><td>The TRIP test</td><td><span class="b b-stub">Not yet</span> — on the roadmap.</td></tr>
+  </table></div>
+
+  <h2 class="section" id="gaps">Known gaps — not yet supported</h2>
+  <p class="sub">Named honestly, so nothing goes unlisted. These are the next targets, not hidden limitations.</p>
+  <div class="panel">
+    <ul class="gaps">
+      <li><strong>TikZ / pgf / pgfplots drawing</strong> — pictures are gobbled to a placeholder by default; real sources are gated behind <code>GOTEX_PGF</code> and bring-up is incomplete. <code>tikzcd</code> and <code>algorithm2e</code> drop.</li>
+      <li><strong>Full float pagination</strong> — real placement is gated (<code>GOTEX_FLOATS</code>) and off by default; figure/float-heavy documents mis-paginate because floats sit inline.</li>
+      <li><strong>Two-column reprint layouts</strong> — revtex / acmart sigconf / IEEEtran conference are behind <code>GOTEX_TWOCOLUMN</code>, with page-count overshoot on full-width <code>figure*</code>/<code>table*</code> bands.</li>
+      <li><strong>PDF figures &amp; EPS</strong> — a PDF figure needs the <code>pdfrender</code> module wired in (the CLI wires none by default); EPS is not decoded.</li>
+      <li><strong>Clickable PDF links</strong> — hyperref links render but carry no PDF annotation yet; only the SVG driver produces live navigation.</li>
+      <li><strong>biblatex</strong> — unsupported; only BibTeX <code>\bibliography</code> with a plain-ish (non-<code>.bst</code>) style.</li>
+      <li><strong>Tables</strong> — paragraph columns (<code>p</code>/<code>m</code>/<code>b</code>) and <code>\cline</code> not yet handled; <code>longtable</code>, <code>tabular*</code>, <code>xtabular</code> drop.</li>
+      <li><strong>Assorted environments</strong> — <code>tcolorbox</code>, <code>adjustbox</code>/<code>adjustwidth</code>, <code>widetext</code>, <code>landscape</code>, <code>varwidth</code>, paralist compact lists, and unregistered theorem styles are dropped in lenient mode.</li>
+      <li><strong>Page builder internals</strong> — no insertions, no <code>\topskip</code>, no user <code>\output</code> routine.</li>
+      <li><strong>Unicode engines &amp; encodings</strong> — no XeTeX/LuaTeX path; <code>fontspec</code>, <code>inputenc</code>/<code>fontenc</code>, <code>babel</code> and Type1 fonts are stubbed or unsupported.</li>
+      <li><strong>The TRIP test</strong> — not yet passed.</li>
+    </ul>
+  </div>
+</div>
+<footer>Built with Hugo · Pure Go, CGO=0 · Branding from <a href="https://github.com/go-tex/brand">go-tex/brand</a></footer>
+</body></html>
