@@ -168,18 +168,22 @@ func (h *handler) clone(req gitrpc.Request) gitrpc.Reply {
 // restore reopens a saved repository. Finding none is an ordinary answer, not a
 // failure: a first visit has nothing stored, and the caller clones instead.
 func (h *handler) restore(req gitrpc.Request) gitrpc.Reply {
-	a := req.Args
-	found, err := h.s.Restore(a.URL, a.Branch, a.Token, a.Author, a.Email)
-	if err != nil {
-		return h.fail(req.ID, err)
-	}
-	if !found {
-		reply := gitrpc.OKReply(req.ID)
+	// withProgress wires the session's progress sink so Restore's own phase updates
+	// (reading the saved copy, reopening the repository) reach the panel — the same
+	// path a clone/pull sideband takes.
+	return h.withProgress(req.ID, func() gitrpc.Reply {
+		a := req.Args
+		found, err := h.s.Restore(a.URL, a.Branch, a.Token, a.Author, a.Email)
+		if err != nil {
+			return h.fail(req.ID, err)
+		}
+		if !found {
+			return gitrpc.OKReply(req.ID)
+		}
+		reply := h.mutatingReply(req.ID, true)
+		reply.Restored = reply.OK
 		return reply
-	}
-	reply := h.mutatingReply(req.ID, true)
-	reply.Restored = reply.OK
-	return reply
+	})
 }
 
 // forget drops this browser's saved copy. It always succeeds: there being

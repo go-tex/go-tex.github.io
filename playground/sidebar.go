@@ -602,9 +602,19 @@ func (b *sidebar) loadingText() (msg, caption string) {
 	}
 	if op := b.s.git.op.Get(); op != "" {
 		// Restoring reads this browser's own saved copy; it touches no remote,
-		// and saying "fetching" there would name the wrong thing entirely.
+		// and saying "fetching" there would name the wrong thing entirely. Its two
+		// coarse phases (reading the saved copy, reopening the repository) ride the
+		// same progressLine as a clone/pull sideband; before the first phase lands it
+		// falls back to the generic caption plus the elapsed clock, so the panel
+		// always says what the restore is doing rather than a frozen line.
 		if op == "Restoring" {
-			return "Restoring…", "Reopening your saved workspace"
+			caption := "Reopening your saved workspace"
+			if line := b.s.git.progressLine; line != "" {
+				caption = line
+			} else if secs := int(b.s.git.opElapsed); secs >= 1 {
+				caption = fmt.Sprintf("%s — %ds", caption, secs)
+			}
+			return "Restoring…", caption
 		}
 		// The remote's own sideband line, when it is sending one, is the truest
 		// caption ("Receiving objects:  45% (450/1000)"); it falls back to the generic

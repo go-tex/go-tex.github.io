@@ -40,6 +40,18 @@ func (s *browsergitSession) SetProgress(fn func(gitrpc.Progress)) {
 	}
 }
 
+// emitPhase pushes a synthetic phase (no fraction) to the session's progress
+// sink, if one is attached. Restore has no remote sideband to parse — its wait is
+// reading local storage and rebuilding the repo — so it names its own steps this
+// way, reusing the panel's clone/pull progress display.
+func (s *browsergitSession) emitPhase(phase string) {
+	if s.progress != nil {
+		// The main app forwards Progress.Line to the panel (git_js.go), so the phase
+		// rides in Line; Fraction -1 keeps the bar indeterminate (there is no count).
+		s.progress(gitrpc.Progress{Line: phase, Phase: phase, Fraction: -1})
+	}
+}
+
 // applyProgress points client's sideband callback at the session's current sink,
 // translating each raw git line into a parsed [gitrpc.Progress]. A nil sink
 // detaches forwarding on that client.
@@ -101,10 +113,12 @@ func (s *browsergitSession) Restore(url, branch, token, author, email string) (b
 	})
 	s.applyProgress(client)
 	key := workspaceKey(url, branch)
+	s.emitPhase("Reading saved copy")
 	snap, existed := loadSnapshot(key)
 	if !existed {
 		return false, nil
 	}
+	s.emitPhase("Reopening the repository")
 	repo, err := client.Open(snap, branch)
 	if err != nil {
 		dropSnapshot(key)
