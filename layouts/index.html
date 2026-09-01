@@ -14,7 +14,7 @@
   <p>Pure-Go TeX that runs the real LaTeX classes — in Go and in the browser.</p>
   <div class="btns">
     <a class="btn btn-solid" href="{{ "playground/" | relURL }}">Try it in your browser →</a>
-    <a class="btn btn-ghost" href="https://go-tex.github.io/docs/">Documentation</a>
+    <a class="btn btn-ghost" href="{{ "docs/" | relURL }}">Documentation</a>
     <a class="btn btn-ghost" href="https://github.com/go-tex">GitHub</a>
   </div>
 </section>
@@ -42,7 +42,7 @@
     {{ end }}
   </div>
   <h2 class="section">Scope</h2>
-  <p class="sub">The engine loads and runs the standard base classes; it is functional-parity-oriented and held to real-LaTeX fidelity — not a claim of full TeXLive parity. <code>amsart</code> and heavy packages (<code>tikz</code>, <code>hyperref</code>, …) are not yet run as real files; that is the roadmap.</p>
+  <p class="sub">The engine loads and runs the standard base classes — <code>article</code>, <code>report</code>, <code>book</code> and now <code>amsart</code> as real embedded files — and any resolvable <code>.cls</code>/<code>.sty</code> runs as real TeX macros. It is functional-parity-oriented and held to real-LaTeX fidelity, not a claim of full TeXLive parity: heavy drawing (<code>tikz</code>/<code>pgf</code>) is gated and still in bring-up, <code>biblatex</code> is not yet supported, PDF figures need the <code>pdfrender</code> module, and floats typeset inline unless placement is enabled. Every supported feature — and every remaining gap — is listed in the <a href="{{ "docs/" | relURL }}">capability reference</a>.</p>
 </div>
 <footer>Built with Hugo · Pure Go, CGO=0 · Branding from <a href="https://github.com/go-tex/brand">go-tex/brand</a></footer>
 </body></html>
