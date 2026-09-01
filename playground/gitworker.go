@@ -190,7 +190,10 @@ func (b *workerGitBackend) Clone(cfg gitConfig, done func([]string, error)) {
 // ordinary answer — found is false with no error, and the caller clones.
 func (b *workerGitBackend) Restore(cfg gitConfig, done func([]string, bool, error)) {
 	go func() {
-		reply := b.t.Call(gitrpc.Request{Op: gitrpc.OpRestore, Args: argsFromConfig(cfg)}, nil)
+		// Restore streams two coarse phases of its own (reading the saved copy, then
+		// reopening the repository) through the same sink clone/pull use, so the
+		// panel names the step instead of only saying "Restoring…".
+		reply := b.t.Call(gitrpc.Request{Op: gitrpc.OpRestore, Args: argsFromConfig(cfg)}, b.onProgress)
 		if !reply.OK {
 			done(nil, false, codeToError(reply.Code, reply.Error))
 			return
