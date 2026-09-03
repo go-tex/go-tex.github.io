@@ -83,7 +83,7 @@
     <tr><td><code>amsthm</code> / theorem</td><td><span class="b b-part">Partial</span></td><td><code>\newtheorem</code>, <code>proof</code> with QED.</td></tr>
     <tr><td><code>graphicx</code> / <code>graphics</code></td><td><span class="b b-part">Partial</span></td><td><code>\includegraphics</code> embeds PNG/JPEG/SVG for real, resolves an extension-less reference by searching graphics extensions, and rasterises a PDF figure under <code>GOTEX_PDFRENDER</code>; EPS is a placeholder (see Images).</td></tr>
     <tr><td><code>color</code> / <code>xcolor</code></td><td><span class="b b-part">Partial</span></td><td><code>\color</code>, <code>\textcolor</code>, <code>\colorbox</code>, <code>\fcolorbox</code>, <code>\definecolor</code> (rgb/RGB/gray/HTML).</td></tr>
-    <tr><td><code>hyperref</code></td><td><span class="b b-part">Partial</span></td><td><code>\url</code>, <code>\href</code>, <code>\nolinkurl</code>. SVG output has live clickable links; the <strong>PDF has no link annotations yet</strong>.</td></tr>
+    <tr><td><code>hyperref</code></td><td><span class="b b-part">Partial</span></td><td><code>\url</code>, <code>\href</code>, <code>\nolinkurl</code>, <code>\hyperlink</code>/<code>\hypertarget</code>. Both SVG and PDF carry live clickable links now — the PDF via <code>/Link</code> URI annotations for <code>\href</code>/<code>\url</code> and <code>/GoTo</code> named-destination links for in-document jumps.</td></tr>
     <tr><td><code>geometry</code></td><td><span class="b b-part">Partial</span></td><td>Paper size and margins map to the box model.</td></tr>
     <tr><td><code>fancyhdr</code></td><td><span class="b b-part">Partial</span></td><td>Six header/footer fields; rule widths not modelled.</td></tr>
     <tr><td><code>setspace</code></td><td><span class="b b-part">Partial</span></td><td><code>\singlespacing</code>/<code>\onehalfspacing</code>/<code>\doublespacing</code>/<code>\setstretch</code>/<code>\linespread</code>.</td></tr>
@@ -132,7 +132,7 @@
   <div class="twrap"><table class="cap">
     <tr><th>Concern</th><th>Support</th></tr>
     <tr><td>Fonts</td><td>OpenType via <a href="https://github.com/go-opentype/opentype">go-opentype</a> — measuring, kerning, ligatures, CFF/TrueType outlines. A <strong>built-in default font</strong> so it runs with zero assets; the CLI binds <code>-font</code>/<code>-boldfont</code>/<code>-italicfont</code>/<code>-monofont</code>/<code>-sansfont</code> (<code>.ttf</code>/<code>.otf</code>) to <code>\rm</code>/<code>\bf</code>/<code>\it</code>/<code>\tt</code>/<code>\sf</code>. Type1 and the XeTeX/LuaTeX Unicode engines are not supported.</td></tr>
-    <tr><td>PDF</td><td>Via <a href="https://github.com/go-pdfkit/pdfkit">go-pdfkit</a>, with embedded subset fonts and a selectable text layer over the glyph outlines. No link annotations or named destinations yet.</td></tr>
+    <tr><td>PDF</td><td>Via <a href="https://github.com/go-pdfkit/pdfkit">go-pdfkit</a>, with embedded subset fonts, a selectable text layer over the glyph outlines, and clickable link annotations — external <code>/Link</code> URIs and in-document <code>/GoTo</code> named destinations.</td></tr>
     <tr><td>SVG</td><td>Self-contained pages, glyphs as <code>&lt;path&gt;</code> outlines, carrying a source map for click-to-line and live <code>&lt;a href&gt;</code> links. Multi-page output is written as <code>name-N.svg</code>.</td></tr>
   </table></div>
 
@@ -172,7 +172,7 @@
     <tr><td>LaTeX2e kernel + class/option mechanism</td><td><span class="b b-part">Partial</span> — enough to run the real <code>article</code>/<code>report</code>/<code>book</code>/<code>amsart</code> classes and arbitrary <code>.sty</code>.</td></tr>
     <tr><td>e-TeX extensions</td><td><span class="b b-full">Full</span> — <code>\numexpr</code>/<code>\dimexpr</code>, <code>\protected</code>, <code>\unexpanded</code>, <code>\detokenize</code>, e-TeX ifs.</td></tr>
     <tr><td>OpenType</td><td><span class="b b-full">Full</span> via go-opentype (measuring, kerning, ligatures, CFF Type2 outlines, the MATH table).</td></tr>
-    <tr><td>PDF output</td><td><span class="b b-part">Partial</span> via go-pdfkit — no link annotations / named destinations yet.</td></tr>
+    <tr><td>PDF output</td><td><span class="b b-part">Partial</span> via go-pdfkit — now with clickable <code>/Link</code> URI annotations and named-destination <code>/GoTo</code> links.</td></tr>
     <tr><td>SVG output</td><td><span class="b b-full">Full</span> — self-contained, source-mapped, clickable.</td></tr>
     <tr><td>The TRIP test</td><td><span class="b b-stub">Not yet</span> — on the roadmap.</td></tr>
   </table></div>
@@ -185,7 +185,6 @@
       <li><strong>Full float pagination</strong> — real placement is gated (<code>GOTEX_FLOATS</code>) and off by default; figure/float-heavy documents mis-paginate because floats sit inline.</li>
       <li><strong>Two-column reprint layouts</strong> — revtex / acmart sigconf / IEEEtran conference are behind <code>GOTEX_TWOCOLUMN</code>, with page-count overshoot on full-width <code>figure*</code>/<code>table*</code> bands.</li>
       <li><strong>PDF figures (opt-in) &amp; EPS</strong> — a PDF figure rasterises under <code>GOTEX_PDFRENDER</code> but is a framed placeholder by default; EPS is not decoded at all.</li>
-      <li><strong>Clickable PDF links</strong> — hyperref links render but carry no PDF annotation yet; only the SVG driver produces live navigation.</li>
       <li><strong>biblatex</strong> — unsupported; only BibTeX <code>\bibliography</code> with a plain-ish (non-<code>.bst</code>) style.</li>
       <li><strong>Tables</strong> — paragraph columns (<code>p</code>/<code>m</code>/<code>b</code>) and <code>\cline</code> not yet handled; <code>longtable</code>, <code>tabular*</code>, <code>xtabular</code> drop.</li>
       <li><strong>Assorted environments</strong> — <code>tcolorbox</code>, <code>adjustbox</code>/<code>adjustwidth</code>, <code>widetext</code>, <code>landscape</code>, <code>varwidth</code>, paralist compact lists, and unregistered theorem styles are dropped in lenient mode.</li>
