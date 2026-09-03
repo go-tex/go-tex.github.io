@@ -81,7 +81,7 @@
     <tr><td><code>amsmath</code></td><td><span class="b b-full">Full</span> subset</td><td><code>equation(*)</code>, <code>align(*)</code>, <code>gather(*)</code>, <code>multline(*)</code>, <code>eqnarray(*)</code>, <code>flalign(*)</code>, <code>displaymath</code>; box-level alignment, <code>\tag</code>/<code>\eqref</code>/<code>\label</code>/numbering.</td></tr>
     <tr><td><code>amssymb</code> / <code>amsfonts</code></td><td><span class="b b-part">Partial</span></td><td>Symbol substrate; individual unknown symbols still drop their equation.</td></tr>
     <tr><td><code>amsthm</code> / theorem</td><td><span class="b b-part">Partial</span></td><td><code>\newtheorem</code>, <code>proof</code> with QED.</td></tr>
-    <tr><td><code>graphicx</code> / <code>graphics</code></td><td><span class="b b-part">Partial</span></td><td><code>\includegraphics</code> embeds PNG/JPEG/SVG for real; PDF/EPS become placeholders (see Images).</td></tr>
+    <tr><td><code>graphicx</code> / <code>graphics</code></td><td><span class="b b-part">Partial</span></td><td><code>\includegraphics</code> embeds PNG/JPEG/SVG for real, resolves an extension-less reference by searching graphics extensions, and rasterises a PDF figure under <code>GOTEX_PDFRENDER</code>; EPS is a placeholder (see Images).</td></tr>
     <tr><td><code>color</code> / <code>xcolor</code></td><td><span class="b b-part">Partial</span></td><td><code>\color</code>, <code>\textcolor</code>, <code>\colorbox</code>, <code>\fcolorbox</code>, <code>\definecolor</code> (rgb/RGB/gray/HTML).</td></tr>
     <tr><td><code>hyperref</code></td><td><span class="b b-part">Partial</span></td><td><code>\url</code>, <code>\href</code>, <code>\nolinkurl</code>. SVG output has live clickable links; the <strong>PDF has no link annotations yet</strong>.</td></tr>
     <tr><td><code>geometry</code></td><td><span class="b b-part">Partial</span></td><td>Paper size and margins map to the box model.</td></tr>
@@ -141,7 +141,7 @@
     <tr><th>Format</th><th>Behaviour</th></tr>
     <tr><td>PNG, JPEG (and GIF)</td><td><span class="b b-full">Full</span> — decoded and embedded verbatim (PDF XObject / SVG data-URI); reads pHYs/JFIF DPI.</td></tr>
     <tr><td>SVG</td><td><span class="b b-part">Partial</span> — embedded verbatim in the SVG driver; drawn as native vector paths in the PDF driver (a subset of path/rect/circle with translate/scale).</td></tr>
-    <tr><td>PDF figures</td><td><span class="b b-gate">Opt-in</span> — a framed placeholder unless the host wires a rasteriser; the <a href="https://github.com/go-tex/pdfrender"><code>pdfrender</code></a> module supplies one (pure Go). Placeholders are sized to the true page aspect.</td></tr>
+    <tr><td>PDF figures</td><td><span class="b b-gate">Opt-in</span> — under <code>GOTEX_PDFRENDER</code> the CLI rasterises the figure to real pixels via the pure-Go <a href="https://github.com/go-tex/pdfrender"><code>pdfrender</code></a> module; otherwise (and in the browser build) a framed placeholder sized to the true page aspect. An extension-less reference (<code>{fig}</code>) is resolved by searching <code>.pdf</code>/<code>.png</code>/… as graphicx does.</td></tr>
     <tr><td>EPS</td><td><span class="b b-stub">Placeholder</span> — not decoded.</td></tr>
     <tr><td><code>data:</code> URI</td><td><span class="b b-full">Full</span> — so the browser build needs no filesystem.</td></tr>
   </table></div>
@@ -155,9 +155,10 @@
   <h2 class="section" id="gated">Opt-in features (env flags, off by default)</h2>
   <div class="twrap"><table class="cap">
     <tr><th>Flag</th><th>Effect</th></tr>
-    <tr><td><code>GOTEX_FLOATS</code></td><td>Real single-column float placement (top/bottom/float-page). Off: floats typeset inline where written, so figure-heavy documents under-paginate.</td></tr>
+    <tr><td><code>GOTEX_FLOATS</code></td><td>Real single-column float placement (top/bottom/float-page). Off: floats typeset inline where written, so figure-heavy documents under-paginate. Also evaluates one-column <code>\linewidth</code>/<code>\textwidth</code>-relative figure widths as real dimensions (off: the legacy sub-point read).</td></tr>
+    <tr><td><code>GOTEX_PDFRENDER</code></td><td>Rasterise a PDF figure to real pixels (via the pure-Go <a href="https://github.com/go-tex/pdfrender">pdfrender</a> module) instead of a framed placeholder, so <code>\includegraphics{fig.pdf}</code> renders at its true height. Composes with <code>GOTEX_FLOATS</code> for the faithful figure mode.</td></tr>
     <tr><td><code>GOTEX_TWOCOLUMN</code></td><td>Two-column output routine for non-standard classes. (<code>article</code>/<code>report</code>/<code>book</code> <code>[twocolumn]</code> are live without it.)</td></tr>
-    <tr><td><code>GOTEX_PGF</code></td><td>Load the real pgf/TikZ sources (bring-up incomplete).</td></tr>
+    <tr><td><code>GOTEX_PGF</code></td><td>Load the real pgf/TikZ sources (basic pictures render; heavy libraries such as pgfplots and matrix are incomplete).</td></tr>
     <tr><td><code>GOTEX_PDFASPECT</code></td><td>Size un-rasterizable PDF placeholders to their true aspect ratio.</td></tr>
     <tr><td><code>GOTEX_BEAMER=0</code> · <code>GOTEX_AMSART=0</code></td><td>Force the built-in emulation instead of the real class.</td></tr>
   </table></div>
@@ -180,10 +181,10 @@
   <p class="sub">Named honestly, so nothing goes unlisted. These are the next targets, not hidden limitations.</p>
   <div class="panel">
     <ul class="gaps">
-      <li><strong>TikZ / pgf / pgfplots drawing</strong> — pictures are gobbled to a placeholder by default; real sources are gated behind <code>GOTEX_PGF</code> and bring-up is incomplete. <code>tikzcd</code> and <code>algorithm2e</code> drop.</li>
+      <li><strong>TikZ / pgf / pgfplots drawing</strong> — pictures are gobbled to a placeholder by default. Under <code>GOTEX_PGF</code> a basic <code>tikzpicture</code> (lines, rectangles, circles, fills, node text, arrows, béziers, shades) renders to real vector paths; heavy libraries — pgfplots axes, <code>\matrix</code>, mindmaps — and <code>tikzcd</code>/<code>algorithm2e</code> still drop. (The pgf sources are host-supplied, not embedded, so this path is never on by default.)</li>
       <li><strong>Full float pagination</strong> — real placement is gated (<code>GOTEX_FLOATS</code>) and off by default; figure/float-heavy documents mis-paginate because floats sit inline.</li>
       <li><strong>Two-column reprint layouts</strong> — revtex / acmart sigconf / IEEEtran conference are behind <code>GOTEX_TWOCOLUMN</code>, with page-count overshoot on full-width <code>figure*</code>/<code>table*</code> bands.</li>
-      <li><strong>PDF figures &amp; EPS</strong> — a PDF figure needs the <code>pdfrender</code> module wired in (the CLI wires none by default); EPS is not decoded.</li>
+      <li><strong>PDF figures (opt-in) &amp; EPS</strong> — a PDF figure rasterises under <code>GOTEX_PDFRENDER</code> but is a framed placeholder by default; EPS is not decoded at all.</li>
       <li><strong>Clickable PDF links</strong> — hyperref links render but carry no PDF annotation yet; only the SVG driver produces live navigation.</li>
       <li><strong>biblatex</strong> — unsupported; only BibTeX <code>\bibliography</code> with a plain-ish (non-<code>.bst</code>) style.</li>
       <li><strong>Tables</strong> — paragraph columns (<code>p</code>/<code>m</code>/<code>b</code>) and <code>\cline</code> not yet handled; <code>longtable</code>, <code>tabular*</code>, <code>xtabular</code> drop.</li>
