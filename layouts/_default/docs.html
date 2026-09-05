@@ -67,7 +67,7 @@
     <tr><td><code>article</code> · <code>report</code> · <code>book</code></td><td><span class="b b-full">Full</span></td><td>Real embedded <code>.cls</code> (LPPL, verbatim) with the size option files — numbered title, dotted <code>\tableofcontents</code>, numbered sections/chapters, figure/table captions, lists, math. Passes the conformance and fidelity gates. Runs identically in <code>js/wasm</code>.</td></tr>
     <tr><td><code>amsart</code></td><td><span class="b b-part">Partial</span></td><td>Real embedded class by default; title, sections and theorem heads typeset. <code>GOTEX_AMSART=0</code> forces the older emulation.</td></tr>
     <tr><td><code>beamer</code></td><td><span class="b b-part">Partial</span></td><td>Runs the real <code>beamer.cls</code> when resolvable (measured rendering on 99.9% of 10,025 talks); otherwise a built-in emulation — one page per frame, static overlays, themes gobbled. <code>GOTEX_BEAMER=0</code> forces emulation.</td></tr>
-    <tr><td><code>revtex4</code> / <code>4-1</code> / <code>4-2</code></td><td><span class="b b-part">Partial</span></td><td>Title-block emulation preserving author/affiliation content. Two-column reprint layout only under <code>GOTEX_TWOCOLUMN</code>; the superscript-address layout is not reproduced.</td></tr>
+    <tr><td><code>revtex4</code> / <code>4-1</code> / <code>4-2</code></td><td><span class="b b-part">Partial</span></td><td>Title-block emulation preserving author/affiliation content. The two-column reprint layout is set by default (<code>GOTEX_TWOCOLUMN=0</code> turns it off); the superscript-address layout is not reproduced.</td></tr>
     <tr><td><code>acmart</code></td><td><span class="b b-part">Partial</span></td><td>Runs an <code>amsart</code>-shaped path with metadata stubs; content is clean, render is single-column, geometry approximated.</td></tr>
     <tr><td><code>IEEEtran</code>, <code>elsarticle</code>, <code>aastex</code></td><td><span class="b b-stub">Stub</span></td><td>Geometry floor plus an article-shaped fallback; class-specific front-matter macros are dropped.</td></tr>
     <tr><td><code>letter</code>, <code>proc</code>, <code>slides</code>, <code>minimal</code></td><td><span class="b b-stub">Stub</span></td><td>Built-in emulation.</td></tr>
@@ -152,15 +152,16 @@
     <p class="note"><code>-report-skipped</code> prints (frequency-sorted) the skipped commands, dropped equations, undefined environments and silent-swallow alarms after a run. <code>-offline</code> never fetches a support tree — embedded set, local cache and <code>TEXINPUTS</code>/<code>GOTEX_TEXMF</code> only. <code>-format pdf|svg</code>, <code>-size</code>, <code>-margin</code>, <code>-o</code>/<code>-outdir</code>. A runaway-expansion guard bounds macro expansion so no file can hang. Lenient mode is a preview aid, not a fidelity claim.</p>
   </div>
 
-  <h2 class="section" id="gated">Opt-in features (env flags, off by default)</h2>
+  <h2 class="section" id="gated">Environment flags</h2>
+  <p>Float placement and two columns are <strong>on by default</strong> and are turned off with <code>=0</code>; the rest are opt-in and off until set.</p>
   <div class="twrap"><table class="cap">
     <tr><th>Flag</th><th>Effect</th></tr>
-    <tr><td><code>GOTEX_FLOATS</code></td><td>Real single-column float placement (top/bottom/float-page). Off: floats typeset inline where written, so figure-heavy documents under-paginate. Also evaluates one-column <code>\linewidth</code>/<code>\textwidth</code>-relative figure widths as real dimensions (off: the legacy sub-point read).</td></tr>
-    <tr><td><code>GOTEX_PDFRENDER</code></td><td>Rasterise a PDF figure to real pixels (via the pure-Go <a href="https://github.com/go-tex/pdfrender">pdfrender</a> module) instead of a framed placeholder, so <code>\includegraphics{fig.pdf}</code> renders at its true height. Composes with <code>GOTEX_FLOATS</code> for the faithful figure mode.</td></tr>
-    <tr><td><code>GOTEX_TWOCOLUMN</code></td><td>Two-column output routine for non-standard classes. (<code>article</code>/<code>report</code>/<code>book</code> <code>[twocolumn]</code> are live without it.)</td></tr>
-    <tr><td><code>GOTEX_PGF</code></td><td>Load the real pgf/TikZ sources (basic pictures render; heavy libraries such as pgfplots and matrix are incomplete).</td></tr>
-    <tr><td><code>GOTEX_PDFASPECT</code></td><td>Size un-rasterizable PDF placeholders to their true aspect ratio.</td></tr>
+    <tr><td><code>GOTEX_FLOATS=0</code></td><td><strong>On by default.</strong> Turns off real single-column float placement (top/bottom/float-page) and restores the inline path, where floats typeset where written and figure-heavy documents under-paginate. The default also evaluates one-column <code>\linewidth</code>/<code>\textwidth</code>-relative figure widths as real dimensions.</td></tr>
+    <tr><td><code>GOTEX_TWOCOLUMN=0</code></td><td><strong>On by default.</strong> Turns off the two-column output routine for the classes that set two columns themselves (revtex reprint, acmart <code>sigconf</code>/<code>sigplan</code>, IEEEtran). <code>article</code>/<code>report</code>/<code>book</code> <code>[twocolumn]</code> are live either way.</td></tr>
     <tr><td><code>GOTEX_BEAMER=0</code> · <code>GOTEX_AMSART=0</code></td><td>Force the built-in emulation instead of the real class.</td></tr>
+    <tr><td><code>GOTEX_PDFRENDER</code></td><td>Opt-in. Rasterise a PDF figure to real pixels (via the pure-Go <a href="https://github.com/go-tex/pdfrender">pdfrender</a> module) instead of a framed placeholder, so <code>\includegraphics{fig.pdf}</code> renders at its true height.</td></tr>
+    <tr><td><code>GOTEX_PGF</code></td><td>Opt-in. Load the real pgf/TikZ sources (basic pictures render; heavy libraries such as pgfplots and matrix are incomplete).</td></tr>
+    <tr><td><code>GOTEX_PDFASPECT</code></td><td>Opt-in. Size un-rasterizable PDF placeholders to their true aspect ratio.</td></tr>
   </table></div>
 
   <h2 class="section" id="standards">Standards targeted</h2>
@@ -182,8 +183,8 @@
   <div class="panel">
     <ul class="gaps">
       <li><strong>TikZ / pgf / pgfplots drawing</strong> — pictures are gobbled to a placeholder by default. Under <code>GOTEX_PGF</code> a basic <code>tikzpicture</code> (lines, rectangles, circles, fills, node text, arrows, béziers, shades) renders to real vector paths; heavy libraries — pgfplots axes, <code>\matrix</code>, mindmaps — and <code>tikzcd</code>/<code>algorithm2e</code> still drop. (The pgf sources are host-supplied, not embedded, so this path is never on by default.)</li>
-      <li><strong>Full float pagination</strong> — real placement is gated (<code>GOTEX_FLOATS</code>) and off by default; figure/float-heavy documents mis-paginate because floats sit inline.</li>
-      <li><strong>Two-column reprint layouts</strong> — revtex / acmart sigconf / IEEEtran conference are behind <code>GOTEX_TWOCOLUMN</code>, with page-count overshoot on full-width <code>figure*</code>/<code>table*</code> bands.</li>
+      <li><strong>Float geometry</strong> — real placement (top/bottom/float-page) is now the default, but a figure's true size still does not pay for itself: giving un-rasterisable figures their real aspect ratio leaves the total page error unchanged, improving only the systematic bias. The page builder also has no insertions and no user <code>\output</code>, which is what real float and footnote placement is built on.</li>
+      <li><strong>Two-column completeness</strong> — the classes that set two columns themselves (revtex reprint, acmart <code>sigconf</code>/<code>sigplan</code>, IEEEtran) now do so by default, bundled class or not. Full-width <code>figure*</code>/<code>table*</code> spanning bands remain the rough edge.</li>
       <li><strong>PDF figures (opt-in) &amp; EPS</strong> — a PDF figure rasterises under <code>GOTEX_PDFRENDER</code> but is a framed placeholder by default; EPS is not decoded at all.</li>
       <li><strong>biblatex</strong> — unsupported; only BibTeX <code>\bibliography</code> with a plain-ish (non-<code>.bst</code>) style.</li>
       <li><strong>Tables</strong> — <code>longtable</code>, <code>tabular*</code> and <code>xtabular</code> drop (paragraph columns <code>p</code>/<code>m</code>/<code>b</code> and <code>\cline</code> are supported).</li>
