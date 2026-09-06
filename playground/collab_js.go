@@ -178,7 +178,7 @@ func (b *webrtcBackend) Host(name string, color toolkit.RGBA, done func(string, 
 		b.session()
 		src := b.s.Source()
 
-		b.server = collab.NewServer(collab.Config{Store: collab.NewMemoryStore()})
+		b.server = collab.NewServer(roomConfig(collab.NewMemoryStore()))
 		// The host's own editor is an ordinary participant of the document it
 		// serves, so it joins over an in-process [collab.Pipe] — a Transport backed
 		// by two Go channels — rather than a loopback WebRTC connection to itself.
@@ -323,7 +323,7 @@ func (b *webrtcBackend) LocalConnect(name string, color toolkit.RGBA, done func(
 // until the session is torn down (ctx cancelled by Disconnect).
 func (b *webrtcBackend) localHost(bs *collab.BroadcastSession, name string, color toolkit.RGBA, done func(error)) {
 	src := b.s.Source()
-	b.server = collab.NewServer(collab.Config{Store: collab.NewMemoryStore()})
+	b.server = collab.NewServer(roomConfig(collab.NewMemoryStore()))
 	client, server := collab.Pipe()
 	go func() { _ = b.server.ServePipe(b.ctx, server) }()
 
