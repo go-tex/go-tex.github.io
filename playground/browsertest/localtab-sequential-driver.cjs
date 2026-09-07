@@ -60,6 +60,11 @@ const MARKER_B = "BRAVO";
     const openTab = async (tag) => {
       const page = await browser.newPage();
       await page.setViewport({ width: 1200, height: 860, deviceScaleFactor: 2 });
+      const throttle = parseInt(process.env.CPU_THROTTLE || "1", 10);
+      if (throttle > 1) {
+        const cdp = await page.createCDPSession();
+        await cdp.send("Emulation.setCPUThrottlingRate", { rate: throttle });
+      }
       page.on("console", (m) => console.log("[" + tag + "] " + m.text()));
       page.on("pageerror", (e) => console.log("[" + tag + " pageerror] " + e.message));
       await page.goto(url, { waitUntil: "load", timeout: 30000 });
@@ -93,9 +98,31 @@ const MARKER_B = "BRAVO";
     };
     const openPanelAndConnect = async (p) => {
       await clickButton(p, "launcher");
-      const deadline = Date.now() + 4000;
-      while (Date.now() < deadline && !(await state(p)).open) await sleep(60);
-      await clickButton(p, "localConnect");
+      const opened = Date.now() + 8000;
+      while (Date.now() < opened && !(await state(p)).open) await sleep(60);
+      // Click until it takes, rather than once and hope.
+      //
+      // The panel reports open before it is finished being open, so on a slow
+      // renderer the click lands where the button is about to be and nothing
+      // happens; the proof then waited thirty seconds for a session nobody had
+      // started. Measured by throttling this browser's CPU, which is what a CI
+      // runner is next to a laptop.
+      //
+      // The state says whether the click took, so ask it rather than assume.
+      // The loop also ends when the button is gone, which is the page saying
+      // the same thing.
+      const deadline = Date.now() + 20000;
+      for (;;) {
+        const r = await rects(p);
+        if (!r.localConnect) return;
+        const st = await state(p);
+        if (st.phase !== 0 || st.connecting || st.connected) return;
+        if (Date.now() > deadline) {
+          throw new Error("localConnect never took; last state=" + JSON.stringify(st));
+        }
+        await clickRect(p, r.localConnect);
+        await sleep(200);
+      }
     };
     const waitState = async (p, pred, ms, label) => {
       const deadline = Date.now() + ms;
