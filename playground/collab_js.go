@@ -294,7 +294,7 @@ func (b *webrtcBackend) Join(name string, color toolkit.RGBA, offer string, done
 // [collab.JoinBroadcastChannel]. This reuses [webrtcBackend.bind] and the same
 // Server+Pipe+editor wiring as [webrtcBackend.Host].
 func (b *webrtcBackend) LocalConnect(name string, color toolkit.RGBA, done func(error)) {
-	b.localConnect(name, color, done, 0)
+	b.localConnect(name, color, done, 0, nil, 0)
 }
 
 // maxLocalRejoins bounds the re-joins a superseded host will attempt. One is
@@ -304,7 +304,15 @@ const maxLocalRejoins = 3
 
 // localConnect is [webrtcBackend.LocalConnect], carrying how many times this tab
 // has already stood down and re-joined.
-func (b *webrtcBackend) localConnect(name string, color toolkit.RGBA, done func(error), rejoins int) {
+// resume, when this tab is coming back from a supersede, is the document it was
+// holding: collab's contract on ErrHostSuperseded is to re-join CARRYING WHAT
+// WAS HELD, since this tab was the room and its buffer was the seed.
+// as is the site to come back under. It matters: the work in resume was written
+// by that site, and a server running collab.OwnSiteOnly refuses operations a
+// session did not make -- so coming back under a fresh identity means the work
+// is silently left behind while this tab still shows it. Measured: with the
+// policy the server ends up holding only its own text, and without it both.
+func (b *webrtcBackend) localConnect(name string, color toolkit.RGBA, done func(error), rejoins int, resume []byte, as crdt.SiteID) {
 	go func() {
 		b.session()
 		// OpenBroadcastSession elects AND goes live on one bus: an elected host is
@@ -322,7 +330,7 @@ func (b *webrtcBackend) localConnect(name string, color toolkit.RGBA, done func(
 		if bs.Role() == collab.RoleHost {
 			b.localHost(bs, name, color, done, rejoins)
 		} else {
-			b.localJoin(bs, name, color, done)
+			b.localJoin(bs, name, color, done, resume, as)
 		}
 	}()
 }
@@ -338,8 +346,9 @@ func (b *webrtcBackend) localHost(bs *collab.BroadcastSession, name string, colo
 	client, server := collab.Pipe()
 	go func() { _ = b.server.ServePipe(b.ctx, server) }()
 
+	site := randSite()
 	hostClient, err := collab.Join(b.ctx, client,
-		collab.ClientConfig{Document: docName, Site: randSite()})
+		collab.ClientConfig{Document: docName, Site: site})
 	if err != nil {
 		bs.Close()
 		b.reportLocalErr(done, err)
@@ -380,11 +389,19 @@ func (b *webrtcBackend) localHost(bs *collab.BroadcastSession, name string, colo
 		// window closes, and both tabs elect themselves. Reproduced on a laptop
 		// by throttling the CPU 6x, 12x and 20x -- identical failure, and never
 		// unthrottled.
+		// Taken BEFORE the teardown: this is the document this tab was
+		// holding, and re-joining without it means adopting the survivor's and
+		// losing whatever was typed here. collab.ClientConfig.Resume is what
+		// carries it; the union keeps both seeds.
+		var held []byte
+		if b.client != nil {
+			held = b.client.Snapshot()
+		}
 		if b.cancel != nil {
 			b.cancel() // tear this half-built host down before electing again
 		}
 		if rejoins < maxLocalRejoins {
-			b.localConnect(name, color, nil, rejoins+1)
+			b.localConnect(name, color, nil, rejoins+1, held, site)
 		}
 	}
 }
@@ -392,9 +409,13 @@ func (b *webrtcBackend) localHost(bs *collab.BroadcastSession, name string, colo
 // localJoin joins the tab that is holding the document for the same-browser room
 // over the connection bs already dialled during the election, and binds the
 // editor to the shared document.
-func (b *webrtcBackend) localJoin(bs *collab.BroadcastSession, name string, color toolkit.RGBA, done func(error)) {
+func (b *webrtcBackend) localJoin(bs *collab.BroadcastSession, name string, color toolkit.RGBA, done func(error), resume []byte, as crdt.SiteID) {
+	site := as
+	if site == 0 {
+		site = randSite()
+	}
 	client, err := collab.Join(b.ctx, bs.Transport(),
-		collab.ClientConfig{Document: docName, Site: randSite()})
+		collab.ClientConfig{Document: docName, Site: site, Resume: resume})
 	if err != nil {
 		bs.Close()
 		b.reportLocalErr(done, err)
