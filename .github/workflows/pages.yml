@@ -63,7 +63,7 @@ jobs:
           # wasmsha cache-busts the freshly-built Pages copy of the wasm (the primary
           # source) and pins the jsDelivr fallback to this commit.
           HUGO_PARAMS_WASMSHA: ${{ github.sha }}
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: ./public
   deploy:
