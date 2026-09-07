@@ -178,7 +178,7 @@ func (b *webrtcBackend) Host(name string, color toolkit.RGBA, done func(string, 
 		b.session()
 		src := b.s.Source()
 
-		b.server = collab.NewServer(collab.Config{Store: collab.NewMemoryStore()})
+		b.server = collab.NewServer(roomConfig(collab.NewMemoryStore()))
 		// The host's own editor is an ordinary participant of the document it
 		// serves, so it joins over an in-process [collab.Pipe] — a Transport backed
 		// by two Go channels — rather than a loopback WebRTC connection to itself.
@@ -294,6 +294,17 @@ func (b *webrtcBackend) Join(name string, color toolkit.RGBA, offer string, done
 // [collab.JoinBroadcastChannel]. This reuses [webrtcBackend.bind] and the same
 // Server+Pipe+editor wiring as [webrtcBackend.Host].
 func (b *webrtcBackend) LocalConnect(name string, color toolkit.RGBA, done func(error)) {
+	b.localConnect(name, color, done, 0)
+}
+
+// maxLocalRejoins bounds the re-joins a superseded host will attempt. One is
+// enough for the race it exists for -- the survivor is already answering -- and
+// a bound is what keeps a pathological room from becoming a loop.
+const maxLocalRejoins = 3
+
+// localConnect is [webrtcBackend.LocalConnect], carrying how many times this tab
+// has already stood down and re-joined.
+func (b *webrtcBackend) localConnect(name string, color toolkit.RGBA, done func(error), rejoins int) {
 	go func() {
 		b.session()
 		// OpenBroadcastSession elects AND goes live on one bus: an elected host is
@@ -309,7 +320,7 @@ func (b *webrtcBackend) LocalConnect(name string, color toolkit.RGBA, done func(
 			return
 		}
 		if bs.Role() == collab.RoleHost {
-			b.localHost(bs, name, color, done)
+			b.localHost(bs, name, color, done, rejoins)
 		} else {
 			b.localJoin(bs, name, color, done)
 		}
@@ -321,9 +332,9 @@ func (b *webrtcBackend) LocalConnect(name string, color toolkit.RGBA, done func(
 // shared text with the current source, then attaches that Server to the answerer
 // bs has been running since the election and serves the other tabs over the bus
 // until the session is torn down (ctx cancelled by Disconnect).
-func (b *webrtcBackend) localHost(bs *collab.BroadcastSession, name string, color toolkit.RGBA, done func(error)) {
+func (b *webrtcBackend) localHost(bs *collab.BroadcastSession, name string, color toolkit.RGBA, done func(error), rejoins int) {
 	src := b.s.Source()
-	b.server = collab.NewServer(collab.Config{Store: collab.NewMemoryStore()})
+	b.server = collab.NewServer(roomConfig(collab.NewMemoryStore()))
 	client, server := collab.Pipe()
 	go func() { _ = b.server.ServePipe(b.ctx, server) }()
 
@@ -351,12 +362,30 @@ func (b *webrtcBackend) localHost(bs *collab.BroadcastSession, name string, colo
 	// during setup gets its session now, and any that join later get theirs at once.
 	err = bs.Serve(b.server) // blocks until torn down
 	b.setConnected(false)
-	if errors.Is(err, collab.ErrHostSuperseded) && b.cancel != nil {
-		// Another tab with priority took the room — a race the gap-free election
-		// makes vanishingly unlikely, kept as a backstop. Abandon this duplicate host
-		// so the room keeps exactly one document; cancelling tears the half-built host
-		// down and the user can reconnect, which now joins the survivor.
-		b.cancel()
+	if errors.Is(err, collab.ErrHostSuperseded) {
+		// Another tab with priority took the room. collab's contract is to
+		// RE-JOIN on this rather than treat it as a failure: the survivor is
+		// answering by the time this arrives, so the room is one document again
+		// as soon as this tab asks to be in it.
+		//
+		// Tearing down and waiting for a human was not that. It left the tab
+		// showing nothing, holding nobody, until somebody clicked again -- the
+		// same-browser "both Connected but no sync" the whole path exists to
+		// prevent, arrived at from the other side.
+		//
+		// And the race is not rare. The comment here used to call it vanishingly
+		// unlikely; browser-proofs met it on EVERY run for a week, because a
+		// slow renderer starves the election's window: the hellos are posted and
+		// re-posted, but a saturated event loop does not read them before the
+		// window closes, and both tabs elect themselves. Reproduced on a laptop
+		// by throttling the CPU 6x, 12x and 20x -- identical failure, and never
+		// unthrottled.
+		if b.cancel != nil {
+			b.cancel() // tear this half-built host down before electing again
+		}
+		if rejoins < maxLocalRejoins {
+			b.localConnect(name, color, nil, rejoins+1)
+		}
 	}
 }
 
