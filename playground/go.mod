@@ -17,7 +17,7 @@ require (
 	github.com/go-richdoc/latex v0.2.0
 	github.com/go-richdoc/markdown v0.2.0
 	github.com/go-richdoc/richdoc v0.3.0
-	github.com/go-tex/engine v0.208.0
+	github.com/go-tex/engine v0.209.0
 	github.com/go-widgets/mvvm v0.9.0
 	github.com/go-widgets/painter v0.12.0
 	github.com/go-widgets/toolkit v0.301.0
@@ -44,7 +44,7 @@ require (
 	github.com/go-regexp/engine v0.1.0 // indirect
 	github.com/go-rouge/rouge v0.2.0 // indirect
 	github.com/go-ruby-regexp/regexp v0.0.0-20260807185050-0533785e97b7 // indirect
-	github.com/go-tex/math v0.30.0 // indirect
+	github.com/go-tex/math v0.31.0 // indirect
 	github.com/go-typeset/bidi v0.3.0 // indirect
 	github.com/go-typeset/hyphenation v1.0.0 // indirect
 	github.com/go-typeset/linebreak v1.1.0 // indirect
