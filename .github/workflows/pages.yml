@@ -13,8 +13,21 @@ permissions:
   contents: read
   pages: read
 
+# Keyed by ref, not a single global group. GitHub keeps at most ONE pending
+# run per concurrency group: when a third arrives, the one already waiting is
+# CANCELLED. With every pull request and every push to main sharing the group
+# `pages`, three runs starting in the same minute leave one of them cancelled
+# -- and a cancelled run reports no check at all, so that pull request sits
+# with nothing to judge it until something re-triggers it. Measured on
+# 2026-09-04T19:08: three runs started together and
+# renovate/actions-upload-pages-artifact (#135) was the one cancelled; it still
+# had no checks three days later. #127 sat the same way.
+#
+# Per-ref keeps that from happening between branches. Deployment is still
+# serialised, because deploy only runs on main and every main run shares
+# `pages-refs/heads/main`.
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
