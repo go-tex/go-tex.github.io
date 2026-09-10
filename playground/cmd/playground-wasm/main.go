@@ -255,6 +255,64 @@ func main() {
 	// so its Log entries carry the same clock format as every later compile.
 	state.CompilePending()
 
+	// A composition — a dead key, an IME candidate — needs something EDITABLE to
+	// compose into. With the focus on a canvas the browser never starts one, so
+	// the ^ of a French keyboard is dropped on the floor and the space that
+	// follows it (the usual way to type a bare ^) arrives as a space. The keydown
+	// handler below has always ignored key="Dead" and isComposing "because a
+	// composition event will commit it" — this is the composition it was waiting
+	// for.
+	//
+	// So the page keeps one transparent, one-pixel textarea focused, reads the
+	// composition off it and throws its content away. The app's own editor stays
+	// the only place text lives.
+	ime := doc.Call("createElement", "textarea")
+	ime.Set("id", "gotex-ime")
+	for k, v := range map[string]string{
+		"aria-hidden":    "true",
+		"autocomplete":   "off",
+		"autocorrect":    "off",
+		"autocapitalize": "off",
+		"spellcheck":     "false",
+		"tabindex":       "-1",
+	} {
+		ime.Call("setAttribute", k, v)
+	}
+	// Not display:none and not visibility:hidden — either would make it
+	// unfocusable, and an unfocused element composes nothing.
+	ime.Get("style").Set("cssText", "position:fixed;top:0;left:0;width:1px;height:1px;"+
+		"padding:0;border:0;opacity:0;pointer-events:none;z-index:-1;resize:none;overflow:hidden")
+	doc.Get("body").Call("appendChild", ime)
+	focusIME := func() {
+		ime.Call("focus", map[string]any{"preventScroll": true})
+	}
+	focusIME()
+	compositionData := func(args []js.Value) string {
+		if len(args) == 0 {
+			return ""
+		}
+		if d := args[0].Get("data"); d.Type() == js.TypeString {
+			return d.String()
+		}
+		return ""
+	}
+	for _, kind := range []string{"compositionstart", "compositionupdate"} {
+		ime.Call("addEventListener", kind, js.FuncOf(func(_ js.Value, args []js.Value) any {
+			if state.HandleCompositionPreview(compositionData(args)) {
+				render()
+			}
+			return nil
+		}))
+	}
+	ime.Call("addEventListener", "compositionend", js.FuncOf(func(_ js.Value, args []js.Value) any {
+		text := compositionData(args)
+		ime.Set("value", "") // the browser wrote the result in here; we keep none of it
+		if state.HandleCompositionCommit(text) {
+			render()
+		}
+		return nil
+	}))
+
 	// coords maps a mouse event to DEVICE-pixel canvas coordinates: dividing the
 	// CSS offset by (cssWidth/backingWidth) scales it up by dpr, which is exactly
 	// the space State is laid out in.
@@ -277,6 +335,9 @@ func main() {
 		if len(args) == 0 || args[0].Get("button").Int() != 0 {
 			return nil
 		}
+		// A click on the canvas moves the browser's focus off the textarea that
+		// receives compositions; put it back, or the next dead key is lost.
+		focusIME()
 		x, y := coords(args[0])
 		if state.HandleClick(x, y) {
 			render()
