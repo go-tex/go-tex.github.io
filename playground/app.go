@@ -1652,6 +1652,87 @@ func (s *State) HandleChar(code string) bool {
 	return true
 }
 
+// --- IME composition -------------------------------------------------------
+//
+// A composition is how a keyboard without one key per character produces one: a
+// French keyboard writes î as ^ then i, a German one ö as ¨ then o, a CJK input
+// method turns a run of latin letters into a candidate. The browser reports it
+// as compositionstart / compositionupdate / compositionend and NOT as a keydown
+// — the keydown that begins one carries key="Dead", and the ones that continue
+// it carry isComposing.
+//
+// The host dropped both of those keydowns and waited for a commit that nothing
+// was listening for, so a dead key produced NOTHING and the space that follows
+// one (the usual way to type a bare ^) produced a space. On a French keyboard
+// that makes the circumflex unreachable — and the circumflex is not a nicety
+// here, it is how a superscript is written.
+
+// compositionTarget is the widget an in-flight composition should preview in: the
+// one that would take the characters when it commits.
+//
+// Not every field can show a preview. The git and collab panels hold their text
+// in an observable rather than a widget that takes events, so a composition
+// aimed at one of them previews nowhere — but it must not preview in the EDITOR
+// either, which is why they answer here rather than being skipped.
+func (s *State) compositionTarget() (fieldEventer, bool) {
+	switch {
+	case s.fr.shown:
+		return s.fr.focusedField(), true
+	case s.collab.open || s.git.open:
+		return nil, false // takes the text, cannot show it coming
+	case s.wysiwyg().active() && s.wysiwyg().editor.Focused().Get():
+		return s.wysiwyg().editor, true
+	case s.renderFocused():
+		return nil, false
+	case s.editor.Focused().Get():
+		return s.editor, true
+	}
+	return nil, false
+}
+
+// HandleCompositionPreview shows an IME's pending text where it will land —
+// the ^ of a dead key, a half-typed CJK candidate — WITHOUT putting it in the
+// document. The document changes only when the composition commits, so this
+// deliberately leaves the dirty latch alone: a pending accent must not start a
+// recompile.
+func (s *State) HandleCompositionPreview(text string) bool {
+	w, ok := s.compositionTarget()
+	if !ok {
+		return false
+	}
+	w.OnEvent(toolkit.Event{Kind: toolkit.EventCompositionUpdate, Code: text})
+	return true
+}
+
+// HandleCompositionCancel drops a pending preview: the composition was abandoned
+// (Escape, a click elsewhere) and nothing is to be inserted.
+func (s *State) HandleCompositionCancel() bool {
+	w, ok := s.compositionTarget()
+	if !ok {
+		return false
+	}
+	w.OnEvent(toolkit.Event{Kind: toolkit.EventCompositionEnd})
+	return true
+}
+
+// HandleCompositionCommit inserts what a composition finally produced.
+//
+// It goes in one character at a time through the same door as a keystroke, so
+// every field the playground has — the editor, the find bar, the git and collab
+// panels — takes it the way it takes typing, and a selection is replaced exactly
+// once. A commit can be several characters long (a CJK candidate, or ^ followed
+// by a letter that does not combine with it).
+func (s *State) HandleCompositionCommit(text string) bool {
+	s.HandleCompositionCancel() // the preview is replaced by the real thing
+	changed := false
+	for _, r := range text {
+		if s.HandleChar(string(r)) {
+			changed = true
+		}
+	}
+	return changed
+}
+
 // navBase maps a navigation key that can be Shift-extended to its bare form, or
 // "" when the key is not a Shift-selectable navigation key.
 func navBase(code string) string {

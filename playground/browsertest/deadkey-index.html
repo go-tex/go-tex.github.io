@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>go-tex playground — regex find/replace proof</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #ffffff;
+      }
+      /* A fixed CSS box the canvas app lays itself out into; the backing store is
+         this box × devicePixelRatio (2 under the driver), so the toolkit paints at
+         2x and the find bar floats crisp over the editor. */
+      #gotex-canvas {
+        display: block;
+        width: 1100px;
+        height: 820px;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="gotex-canvas"></canvas>
+    <!-- The Go toolchain's own loader, copied beside the wasm by the test. -->
+    <script src="wasm_exec.js"></script>
+    <script>
+      (async () => {
+        try {
+          const go = new Go();
+          const result = await WebAssembly.instantiateStreaming(
+            fetch("client.wasm"),
+            go.importObject,
+          );
+          go.run(result.instance);
+        } catch (err) {
+          console.log("DONE page failed to run the wasm: " + err);
+          globalThis.__bootError = String(err);
+        }
+      })();
+    </script>
+  </body>
+</html>
