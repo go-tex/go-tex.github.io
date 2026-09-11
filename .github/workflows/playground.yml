@@ -39,8 +39,9 @@ jobs:
     #
     # The -run selector includes only the same-origin, deterministic proofs:
     # BroadcastChannel local collab, find/replace, sidebar, zones, text layer,
-    # toolbar, WYSIWYG, and the two-wasm git worker (a local CORS origin, no
-    # external network). It deliberately EXCLUDES the live-WebRTC collab proofs
+    # toolbar, WYSIWYG, the dead-key/IME path (Chrome's own input method, driven
+    # over CDP), and the two-wasm git worker (a local CORS origin, no external
+    # network). It deliberately EXCLUDES the live-WebRTC collab proofs
     # (TestCollabBrowserConvergence, TestCollabTwoTabConvergence) and the STUN/ICE
     # config proofs (TestCollabICEFieldBrowser, TestCollabFailureBrowser): those
     # need STUN network egress and are known-flaky in CI sandboxes.
@@ -73,7 +74,7 @@ jobs:
           GOTEX_BROWSER_NODE_PATH: ${{ runner.temp }}/puppeteer/node_modules
         run: >
           go test -v -count=1
-          -run '^(TestFindReplaceBrowserWiring|TestFindReplaceWysiwygBrowserWiring|TestSidebarLayoutBrowser|TestSidebarBuffersBrowser|TestRenderIsSearchableInABrowser|TestToolbarBrowserWiring|TestWysiwygV02BrowserProof|TestZonesFullHeightBrowser|TestCollabLocalTabConvergence|TestCollabLocalTabSequentialConvergence|TestGitWorkerTwoWasmE2E)$'
+          -run '^(TestFindReplaceBrowserWiring|TestFindReplaceWysiwygBrowserWiring|TestSidebarLayoutBrowser|TestSidebarBuffersBrowser|TestRenderIsSearchableInABrowser|TestToolbarBrowserWiring|TestWysiwygV02BrowserProof|TestZonesFullHeightBrowser|TestCollabLocalTabConvergence|TestCollabLocalTabSequentialConvergence|TestGitWorkerTwoWasmE2E|TestDeadKeyBrowserWiring)$'
           .
 
   bricolint:
