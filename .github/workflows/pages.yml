@@ -69,7 +69,7 @@ jobs:
         run: GOOS=js GOARCH=wasm go build -trimpath -o ../static/git-worker.wasm ./cmd/git-worker
       - uses: peaceiris/actions-hugo@v3
         with:
-          hugo-version: "0.161.1"
+          hugo-version: "0.166.0"
           extended: true
       - run: hugo --gc --minify
         env:
