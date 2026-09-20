@@ -294,25 +294,20 @@ func (b *webrtcBackend) Join(name string, color toolkit.RGBA, offer string, done
 // [collab.JoinBroadcastChannel]. This reuses [webrtcBackend.bind] and the same
 // Server+Pipe+editor wiring as [webrtcBackend.Host].
 func (b *webrtcBackend) LocalConnect(name string, color toolkit.RGBA, done func(error)) {
-	b.localConnect(name, color, done, 0, nil, 0)
+	b.localConnect(name, color, done, nil, 0)
 }
 
-// maxLocalRejoins bounds the re-joins a superseded host will attempt. One is
-// enough for the race it exists for -- the survivor is already answering -- and
-// a bound is what keeps a pathological room from becoming a loop.
-const maxLocalRejoins = 3
-
-// localConnect is [webrtcBackend.LocalConnect], carrying how many times this tab
-// has already stood down and re-joined.
-// resume, when this tab is coming back from a supersede, is the document it was
-// holding: collab's contract on ErrHostSuperseded is to re-join CARRYING WHAT
+// localConnect is [webrtcBackend.LocalConnect], carrying what a tab coming back
+// from a supersede holds and who it is.
+//
+// resume is that document: collab's contract on ErrHostSuperseded is to re-join CARRYING WHAT
 // WAS HELD, since this tab was the room and its buffer was the seed.
 // as is the site to come back under. It matters: the work in resume was written
 // by that site, and a server running collab.OwnSiteOnly refuses operations a
 // session did not make -- so coming back under a fresh identity means the work
 // is silently left behind while this tab still shows it. Measured: with the
 // policy the server ends up holding only its own text, and without it both.
-func (b *webrtcBackend) localConnect(name string, color toolkit.RGBA, done func(error), rejoins int, resume []byte, as crdt.SiteID) {
+func (b *webrtcBackend) localConnect(name string, color toolkit.RGBA, done func(error), resume []byte, as crdt.SiteID) {
 	go func() {
 		b.session()
 		// OpenBroadcastSession elects AND goes live on one bus: an elected host is
@@ -328,7 +323,7 @@ func (b *webrtcBackend) localConnect(name string, color toolkit.RGBA, done func(
 			return
 		}
 		if bs.Role() == collab.RoleHost {
-			b.localHost(bs, name, color, done, rejoins)
+			b.localHost(bs, name, color, done, as)
 		} else {
 			b.localJoin(bs, name, color, done, resume, as)
 		}
@@ -340,13 +335,23 @@ func (b *webrtcBackend) localConnect(name string, color toolkit.RGBA, done func(
 // shared text with the current source, then attaches that Server to the answerer
 // bs has been running since the election and serves the other tabs over the bus
 // until the session is torn down (ctx cancelled by Disconnect).
-func (b *webrtcBackend) localHost(bs *collab.BroadcastSession, name string, color toolkit.RGBA, done func(error), rejoins int) {
+// as is the site to host under, honoured for the same reason [webrtcBackend.localJoin]
+// honours it: a tab coming back after a supersede carries work written by the
+// site it held, and a room running [collab.OwnSiteOnly] refuses operations that
+// arrive under a fresh identity -- silently, while this tab keeps showing them.
+// It used to be dropped here, so a re-join that elected host came back as a
+// stranger to its own edits; measured under an 8x throttle, where a starved tab
+// re-elected host three times and arrived under a different site each time.
+func (b *webrtcBackend) localHost(bs *collab.BroadcastSession, name string, color toolkit.RGBA, done func(error), as crdt.SiteID) {
 	src := b.s.Source()
 	b.server = collab.NewServer(roomConfig(collab.NewMemoryStore()))
 	client, server := collab.Pipe()
 	go func() { _ = b.server.ServePipe(b.ctx, server) }()
 
-	site := randSite()
+	site := as
+	if site == 0 {
+		site = randSite()
+	}
 	hostClient, err := collab.Join(b.ctx, client,
 		collab.ClientConfig{Document: docName, Site: site})
 	if err != nil {
@@ -370,7 +375,6 @@ func (b *webrtcBackend) localHost(bs *collab.BroadcastSession, name string, colo
 	// Attach the Server to the already-answering bus and serve; every tab welcomed
 	// during setup gets its session now, and any that join later get theirs at once.
 	err = bs.Serve(b.server) // blocks until torn down
-	b.setConnected(false)
 	if errors.Is(err, collab.ErrHostSuperseded) {
 		// Another tab with priority took the room. collab's contract is to
 		// RE-JOIN on this rather than treat it as a failure: the survivor is
@@ -400,10 +404,88 @@ func (b *webrtcBackend) localHost(bs *collab.BroadcastSession, name string, colo
 		if b.cancel != nil {
 			b.cancel() // tear this half-built host down before electing again
 		}
-		if rejoins < maxLocalRejoins {
-			b.localConnect(name, color, nil, rejoins+1, held, site)
-		}
+		// Deliberately WITHOUT reporting a drop: this tab is changing seats, not
+		// leaving. Reporting one runs onBackendChange's "the peer disconnected"
+		// arm, which returns the panel to phaseIdle -- and a panel that says idle
+		// invites a SECOND connect on this same tab, from a human who sees the
+		// button come back or from the proof's click-until-it-takes loop, which is
+		// exactly what it does. That second connect holds its own election while
+		// the re-join is in flight and the two land in different rooms: measured
+		// as both tabs reporting connected with peers=0 and neither converging,
+		// the split-brain this whole path exists to prevent.
+		//
+		// localRejoinSurvivor reports the drop itself if it cannot get back in.
+		b.localRejoinSurvivor(name, color, held, site)
+		return
 	}
+	b.setConnected(false)
+}
+
+// maxRejoinAttempts bounds the asks a superseded tab makes of the survivor. More
+// than one is needed because the reason this tab was superseded is that its event
+// loop is saturated, and the sleep between attempts is what lets the bus deliver.
+const maxRejoinAttempts = 5
+
+// rejoinBackoff is the pause between asks. On a starved renderer it is not a
+// politeness delay: yielding is how the BroadcastChannel frames this tab has not
+// read yet get read.
+const rejoinBackoff = 150 * time.Millisecond
+
+// localRejoinSurvivor joins the tab that superseded this one, WITHOUT holding
+// another election.
+//
+// Re-electing was the mistake, and it is not a small one: the election cannot
+// see a host it has not read a beacon from, and not reading is precisely this
+// tab's condition. Measured under an 8x CPU throttle, a superseded tab re-elected
+// HOST on every one of its three retries and was superseded every time, then gave
+// up -- the room stayed split with both tabs reporting connected and peers=0.
+//
+// collab says it plainly: use JoinBroadcastChannel "directly when the page
+// already knows it is joining; use HostOrJoin when it should discover whether to
+// host or join". A superseded tab knows -- being superseded is what a host beacon
+// told it -- so it asks to be let in rather than running the discovery that
+// produced the supersede.
+//
+// The document travels, as [collab.ErrHostSuperseded]'s contract asks, and under
+// the site that wrote it: see [collab.OwnSiteOnly], which this room installs and
+// which refuses work arriving under a fresh identity.
+func (b *webrtcBackend) localRejoinSurvivor(name string, color toolkit.RGBA, held []byte, site crdt.SiteID) {
+	go func() {
+		b.session()
+		var last error
+		for attempt := 0; attempt < maxRejoinAttempts; attempt++ {
+			if attempt > 0 {
+				time.Sleep(rejoinBackoff)
+			}
+			client, err := b.askSurvivor(name, color, held, site)
+			if err == nil {
+				b.setConnected(true)
+				go func() { <-client.Done(); b.setConnected(false) }()
+				return
+			}
+			last = err
+			if b.ctx.Err() != nil {
+				return // torn down by the user while we were asking
+			}
+		}
+		// Out of asks. Nobody is waiting on a done handler here, so reportLocalErr
+		// returns the panel to idle -- which is honest: this tab is not in the room.
+		b.reportLocalErr(nil, last)
+	}()
+}
+
+// askSurvivor is one ask: join the room's host over the bus and bind the editor
+// to the shared document.
+func (b *webrtcBackend) askSurvivor(name string, color toolkit.RGBA, held []byte, site crdt.SiteID) (*collab.Client, error) {
+	client, err := collab.Join(b.ctx, collab.JoinBroadcastChannel(collabLocalRoom),
+		collab.ClientConfig{Document: docName, Site: site, Resume: held})
+	if err != nil {
+		return nil, err
+	}
+	if err := b.bind(client, name, color); err != nil {
+		return nil, err
+	}
+	return client, nil
 }
 
 // localJoin joins the tab that is holding the document for the same-browser room
@@ -442,7 +524,14 @@ func (b *webrtcBackend) reportLocalErr(done func(error), err error) {
 	}
 	if done != nil {
 		done(err)
+		return
 	}
+	// Nobody is listening, which means this is a re-join after a supersede: the
+	// panel is still showing the session this tab was holding, because the
+	// supersede path deliberately did not report a drop. Nothing else will
+	// correct it, so report the drop here -- a tab must not claim a room it
+	// failed to get back into.
+	b.setConnected(false)
 }
 
 // bind wires the editor to a client's shared text part and starts draining the
