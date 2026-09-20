@@ -858,6 +858,7 @@ func main() {
 			"phase":       state.CollabPhase(),
 			"connected":   state.CollabConnected(),
 			"connecting":  state.CollabConnecting(),
+			"error":       state.CollabErrorMessage(),
 			"peers":       state.CollabPeerCount(),
 			"open":        state.CollabActive(),
 			"offer":       state.CollabOffer(),
