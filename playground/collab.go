@@ -1119,6 +1119,15 @@ func (s *State) CollabFailureMessage() string {
 	return ""
 }
 
+// CollabErrorMessage is the panel's error lane — the last error a collab step
+// reported, the text rendered next to the ⚠ and cleared when a step starts. It
+// is distinct from [State.CollabFailureMessage], which is the fixed TURN hint
+// the failed phase shows: this one carries what actually went wrong, in any
+// phase, including a setup error that returned the panel to idle. A headless
+// proof reads it so a failure names itself rather than being inferred from a
+// phase that has already been reset.
+func (s *State) CollabErrorMessage() string { return s.collab.errMsg }
+
 // CollabActive reports whether the panel is open.
 func (s *State) CollabActive() bool { return s.collab.open }
 

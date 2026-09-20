@@ -111,24 +111,38 @@ const MARKER_B = "BRAVO";
       // The state says whether the click took, so ask it rather than assume.
       // The loop also ends when the button is gone, which is the page saying
       // the same thing.
+      //
+      // It also reports the panel's error lane on every attempt. Without it this
+      // loop cannot tell "the click never landed" from "the click landed, the
+      // connect failed in under 200ms, and the panel returned to idle" -- both
+      // read as phase 0 with connecting false, because CollabLocalConnect sets
+      // that phase SYNCHRONOUSLY and the error path resets it. The two have
+      // different causes and only one of them is a harness problem.
       const deadline = Date.now() + 20000;
+      let tries = 0;
       for (;;) {
         const r = await rects(p);
         if (!r.localConnect) return;
         const st = await state(p);
         if (st.phase !== 0 || st.connecting || st.connected) return;
+        if (st.error) console.log(`WITNESS connect attempt ${tries}: error=${JSON.stringify(st.error)}`);
         if (Date.now() > deadline) {
-          throw new Error("localConnect never took; last state=" + JSON.stringify(st));
+          throw new Error(`localConnect did not stick after ${tries} clicks; last state=` + JSON.stringify(st));
         }
         await clickRect(p, r.localConnect);
+        tries++;
         await sleep(200);
       }
     };
     const waitState = async (p, pred, ms, label) => {
       const deadline = Date.now() + ms;
-      let last;
+      let last, seen = "";
       while (Date.now() < deadline) {
         last = await state(p);
+        // WITNESS: log every change of the fields that decide this wait, so a
+        // timeout says what the tab DID rather than only where it ended.
+        const now = `phase=${last.phase} connecting=${last.connecting} connected=${last.connected} peers=${last.peers} open=${last.open} error=${JSON.stringify(last.error || "")}`;
+        if (now !== seen) { console.log(`WITNESS ${label}: ${now}`); seen = now; }
         if (pred(last)) return last;
         await sleep(120);
       }
