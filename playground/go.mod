@@ -17,7 +17,7 @@ require (
 	github.com/go-richdoc/latex v0.3.0
 	github.com/go-richdoc/markdown v0.7.0
 	github.com/go-richdoc/richdoc v0.3.0
-	github.com/go-tex/engine v0.222.0
+	github.com/go-tex/engine v0.225.0
 	github.com/go-widgets/mvvm v0.9.0
 	github.com/go-widgets/painter v0.13.0
 	github.com/go-widgets/toolkit v0.316.0
@@ -34,13 +34,13 @@ require (
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/cyphar/filepath-securejoin v0.6.1 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
-	github.com/go-gfx/gfx v0.19.0 // indirect
+	github.com/go-gfx/gfx v0.24.0 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-icons/iconoir v0.2.0 // indirect
 	github.com/go-images/images v0.0.0-20260831115433-23d959d868e3 // indirect
 	github.com/go-opentype/opentype v0.12.0 // indirect
 	github.com/go-opentype/shape v0.5.0 // indirect
-	github.com/go-pdfkit/pdfkit v0.11.0 // indirect
+	github.com/go-pdfkit/pdfkit v0.12.0 // indirect
 	github.com/go-regexp/engine v0.1.0 // indirect
 	github.com/go-rouge/rouge v0.2.0 // indirect
 	github.com/go-ruby-regexp/regexp v0.0.0-20260807185050-0533785e97b7 // indirect
@@ -61,10 +61,10 @@ require (
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	github.com/yuin/goldmark v1.8.5 // indirect
 	golang.org/x/crypto v0.55.0 // indirect
-	golang.org/x/image v0.45.0 // indirect
+	golang.org/x/image v0.46.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/grpc v1.83.2 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
