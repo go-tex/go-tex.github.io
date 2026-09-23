@@ -17,7 +17,7 @@ require (
 	github.com/go-richdoc/latex v0.3.0
 	github.com/go-richdoc/markdown v0.7.0
 	github.com/go-richdoc/richdoc v0.3.0
-	github.com/go-tex/engine v0.226.0
+	github.com/go-tex/engine v0.227.0
 	github.com/go-widgets/mvvm v0.9.0
 	github.com/go-widgets/painter v0.13.0
 	github.com/go-widgets/toolkit v0.316.0
@@ -29,15 +29,15 @@ require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
 	github.com/ajroetker/go-highway v0.0.4 // indirect
-	github.com/ajroetker/go-jpeg2000 v0.0.2 // indirect
 	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/cyphar/filepath-securejoin v0.6.1 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
-	github.com/go-gfx/gfx v0.24.0 // indirect
+	github.com/go-gfx/gfx v0.26.0 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-icons/iconoir v0.2.0 // indirect
 	github.com/go-images/images v0.0.0-20260831115433-23d959d868e3 // indirect
+	github.com/go-images/jpeg2000 v0.1.0 // indirect
 	github.com/go-opentype/opentype v0.12.0 // indirect
 	github.com/go-opentype/shape v0.5.0 // indirect
 	github.com/go-pdfkit/pdfkit v0.12.0 // indirect
