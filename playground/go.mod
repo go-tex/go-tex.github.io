@@ -3,9 +3,9 @@ module github.com/go-tex/go-tex.github.io/playground
 go 1.26.4
 
 require (
-	github.com/andybalholm/brotli v1.2.4
+	github.com/andybalholm/brotli v1.2.5
 	github.com/go-crdt/collab v0.65.0
-	github.com/go-crdt/crdt v0.49.0
+	github.com/go-crdt/crdt v0.50.0
 	github.com/go-gfx/qr v0.1.0
 	github.com/go-git/go-billy/v5 v5.9.1
 	github.com/go-git/go-git/v5 v5.19.2
@@ -13,14 +13,14 @@ require (
 	github.com/go-icons/material v0.1.1
 	github.com/go-icons/seti v0.1.1
 	github.com/go-icons/vscode-icons v0.1.2
-	github.com/go-opentype/fonts v0.9.0
+	github.com/go-opentype/fonts v0.10.0
 	github.com/go-richdoc/latex v0.3.0
 	github.com/go-richdoc/markdown v0.7.0
 	github.com/go-richdoc/richdoc v0.3.0
 	github.com/go-tex/engine v0.228.0
 	github.com/go-widgets/mvvm v0.9.0
 	github.com/go-widgets/painter v0.13.0
-	github.com/go-widgets/toolkit v0.316.0
+	github.com/go-widgets/toolkit v0.320.0
 	github.com/go-widgets/toolkit/rougelex v0.2.0
 )
 
