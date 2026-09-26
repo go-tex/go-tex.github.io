@@ -1,0 +1,24 @@
+# Does this organisation advertise what it has?
+#
+# The landing drifts silently: a repository is created, and nothing in any
+# repository fails because no page mentions it. Five modules, four cards — tex,
+# the HTML path, was on the profile only.
+#
+# ⛔ NOT `on: [push, pull_request]`: both fire for a branch with a pull request
+# open, so every push runs the check twice.
+#
+# ⛔ It needs NO secret. Listing a public organisation and reading its surfaces
+# are public reads, so this runs on github.token.
+name: docs
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  current:
+    uses: go-fleettools/fleettools/.github/workflows/docs-current.yml@main
