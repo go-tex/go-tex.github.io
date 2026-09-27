@@ -189,7 +189,7 @@ func (b *webrtcBackend) Host(name string, color toolkit.RGBA, done func(string, 
 		go func() { _ = b.server.ServePipe(b.ctx, server) }()
 
 		hostClient, err := collab.Join(b.ctx, client,
-			collab.ClientConfig{Document: docName, Site: randSite()})
+			sessionConfig(docName, randSite(), nil))
 		if err != nil {
 			done("", err)
 			return
@@ -265,7 +265,7 @@ func (b *webrtcBackend) Join(name string, color toolkit.RGBA, offer string, done
 			return
 		}
 		client, err := collab.Join(b.ctx, collab.DataChannel(ch),
-			collab.ClientConfig{Document: docName, Site: randSite()})
+			sessionConfig(docName, randSite(), nil))
 		if err != nil {
 			b.fail(err)
 			return
@@ -353,7 +353,7 @@ func (b *webrtcBackend) localHost(bs *collab.BroadcastSession, name string, colo
 		site = randSite()
 	}
 	hostClient, err := collab.Join(b.ctx, client,
-		collab.ClientConfig{Document: docName, Site: site})
+		sessionConfig(docName, site, nil))
 	if err != nil {
 		bs.Close()
 		b.reportLocalErr(done, err)
@@ -478,7 +478,7 @@ func (b *webrtcBackend) localRejoinSurvivor(name string, color toolkit.RGBA, hel
 // to the shared document.
 func (b *webrtcBackend) askSurvivor(name string, color toolkit.RGBA, held []byte, site crdt.SiteID) (*collab.Client, error) {
 	client, err := collab.Join(b.ctx, collab.JoinBroadcastChannel(collabLocalRoom),
-		collab.ClientConfig{Document: docName, Site: site, Resume: held})
+		sessionConfig(docName, site, held))
 	if err != nil {
 		return nil, err
 	}
@@ -497,7 +497,7 @@ func (b *webrtcBackend) localJoin(bs *collab.BroadcastSession, name string, colo
 		site = randSite()
 	}
 	client, err := collab.Join(b.ctx, bs.Transport(),
-		collab.ClientConfig{Document: docName, Site: site, Resume: resume})
+		sessionConfig(docName, site, resume))
 	if err != nil {
 		bs.Close()
 		b.reportLocalErr(done, err)
