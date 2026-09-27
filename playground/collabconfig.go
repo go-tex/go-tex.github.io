@@ -23,5 +23,25 @@ func roomConfig(store collab.Store) collab.Config {
 		// wire tells the two apart. A room federates nothing, so here the
 		// answer is simple.
 		AuthorizeOperations: collab.OwnSiteOnly,
+		// And a bound on what ONE message may ask this browser to reserve.
+		//
+		// The guest is another person. It is not this tab's other window and
+		// not a server the same operator runs -- the offer is handed over out
+		// of band precisely so somebody else can join -- so what arrives is
+		// whatever their browser chose to send.
+		//
+		// The unit is operations rather than bytes because bytes are the
+		// sender's choice: crdt allocates a flat 80 bytes per operation, which
+		// is 6.2 times a realistic single-character insert and 20 times the
+		// four-byte floor an operation can encode in. A limit written in bytes
+		// would be a different limit for every peer.
+		//
+		// A million of them is about 80 MB, and it is chosen to be far above
+		// any honest catch-up: a document has roughly one operation per
+		// character ever typed in it, and one too large for this is one too
+		// large to edit in a browser tab. Without it the ceiling is the
+		// message size collab documents, a gibibyte, which decodes into
+		// something no tab survives.
+		MaxOperations: 1_000_000,
 	}
 }
