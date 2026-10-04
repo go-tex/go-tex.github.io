@@ -32,7 +32,7 @@
     <div class="card"><div class="nm">Math &amp; fonts</div><div class="ds">Math via go-tex/math (vector output); OpenType fonts with a built-in default font, kerning and ligatures — runs with no assets.</div></div>
     <div class="card"><div class="nm">PDF &amp; SVG output</div><div class="ds">Embedded-subset-font PDF with selectable text, and self-contained SVG pages carrying a source map for click-to-line.</div></div>
     <div class="card"><div class="nm">In the browser</div><div class="ds">A self-contained <code>js/wasm</code> build renders real LaTeX classes client-side — no TeXLive, no server.</div></div>
-    <div class="card"><div class="nm">Held to fidelity</div><div class="ds">A byte-exact conformance ratchet plus a whole-document prose check against a real LaTeX engine (tectonic): ~90% median of the reference's prose words on real arXiv article papers.</div></div>
+    <div class="card"><div class="nm">Held to fidelity</div><div class="ds">A byte-exact conformance ratchet plus a whole-document prose check against a real LaTeX engine (tectonic): on 154 real arXiv papers the median is 101% of the reference's prose words, with 10 of them below 95%. Above 100% is expected, not flattering — each formula's source is emitted as an invisible text layer so the maths can be found and read aloud, and the word census counts it.</div></div>
   </div>
   <h2 class="section">Packages</h2>
   <p class="sub">{{ len site.Data.pkgs.packages }} module(s) — generated from the org's repos.</p>
