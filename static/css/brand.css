@@ -24,6 +24,7 @@ a{color:var(--to);text-decoration:none}
 .hero p{font-size:19px;max-width:640px;margin:0 auto 26px;opacity:.95}
 .btns{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
 .btn{padding:13px 26px;border-radius:10px;font-weight:600}
+  .btn .icon{display:inline-block;vertical-align:-0.15em;margin-right:.45em}
 .btn-solid{background:#fff;color:var(--to)}
 .btn-ghost{border:2px solid rgba(255,255,255,.7);color:#fff}
 .theme{position:absolute;top:16px;right:18px;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.35);
