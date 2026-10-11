@@ -2,3 +2,21 @@ baseURL = "https://go-tex.github.io/"
 locale = "en-us"
 title = "go-tex"
 disableKinds = ["taxonomy", "term", "RSS", "sitemap"]
+
+# The go-* landings' shared design, as a Hugo module. A landing that imports it
+# cannot drift from the reference; it can only fall behind a version, and
+# Renovate proposes the bump. See go-fleettools/landingkit.
+[module]
+  [[module.imports]]
+    path = "github.com/go-fleettools/landingkit"
+
+# Read from static/favicon.svg's gradient by `landingkit brand`, never chosen.
+# Neutrals — backgrounds, surfaces, greys — belong to the shared sheet and are
+# deliberately not configurable. Contrast: base on white 15.99:1, bright on the
+# dark background 3.07:1.
+[params.brand]
+  base = "#1e1b4b"
+  deep = "#12102e"
+  bright = "#4f46e5"
+  shadow = "rgba(30,27,75,.7)"
+  glow = "rgba(30,27,75,.6)"
