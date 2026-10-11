@@ -122,16 +122,35 @@ const (
 )
 
 // SetupText installs the toolkit's anti-aliased text and metric scale for a
-// device-pixel ratio: text renders at baseFontPx*scale and every box metric is
-// scaled to match, so the UI is crisp on a HiDPI panel and byte-identical at
-// scale 1. The driver calls it (with window.devicePixelRatio) before building
-// the State; tests call SetupText(1).
+// device-pixel ratio: every box metric is scaled, the text face with them, so the
+// UI is crisp on a HiDPI panel and byte-identical at scale 1. The driver calls it
+// (with window.devicePixelRatio) before building the State; tests call
+// SetupText(1).
+//
+// ⛔⛔ The SIZE HERE IS LOGICAL. SetMetricScale scales the text too — "The text
+// follows", says its own comment, and it calls rescaleText() — so multiplying the
+// size by the scale as well applied the device ratio TWICE to everything a reader
+// reads, while the padding around it was scaled once. Measured with the toolkit:
+//
+//	metricScale 1, size 16   TextWidth("Source") =  50
+//	metricScale 1, size 32   TextWidth("Source") =  98
+//	metricScale 2, size 16   TextWidth("Source") =  98   ← correct at dpr 2
+//	metricScale 2, size 32   TextWidth("Source") = 195   ← what this did
+//
+// On a Retina panel the four workspace tabs came out 60–73% too wide for their
+// labels — a real browser at deviceScaleFactor 1 against 2 measured sourceTab at
+// 92 against 159 CSS pixels, while their HEIGHTS matched exactly, which is what
+// pins it on the text and not the boxes.
+//
+// It is the shape of a dependency that grew a feature: the toolkit did not rescale
+// text when this was written, so the application did it, and when the toolkit
+// started doing it the application's compensation became the defect.
 func SetupText(scale float64) {
 	if scale <= 0 {
 		scale = 1
 	}
 	toolkit.SetMetricScale(scale)
-	_ = toolkit.UseOpenTypeTextSize(int(float64(baseFontPx)*scale + 0.5))
+	_ = toolkit.UseOpenTypeTextSize(baseFontPx)
 }
 
 // State is the whole playground: the widget tree, the current theme, the last
