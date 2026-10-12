@@ -15,6 +15,8 @@
 <!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+{{/* Dark Reader repaints pages that already draw their own dark theme, as this one does: ask it to stand aside. */}}
+<meta name="darkreader-lock">
 <title>{{ .Site.Title }} — Pure-Go TeX that runs the real LaTeX classes</title>
 <meta name="description" content="Pure-Go (CGO=0) TeX that loads and runs the genuine LaTeX classes — article, report and book — in Go and in the browser, with no TeXLive and no server.">
 <link rel="icon" type="image/svg+xml" href="{{ "favicon.svg" | relURL }}">
