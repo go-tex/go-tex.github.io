@@ -17,7 +17,7 @@ require (
 	github.com/go-richdoc/latex v0.7.0
 	github.com/go-richdoc/markdown v0.10.0
 	github.com/go-richdoc/richdoc v0.6.0
-	github.com/go-tex/engine v0.255.0
+	github.com/go-tex/engine v0.256.0
 	github.com/go-widgets/mvvm v0.15.0
 	github.com/go-widgets/painter v0.16.0
 	github.com/go-widgets/toolkit v0.329.0
