@@ -1,22 +1,106 @@
 baseURL = "https://go-tex.github.io/"
 locale = "en-us"
 title = "go-tex"
-disableKinds = ["taxonomy", "term", "RSS", "sitemap"]
+# No theme -- the layout is the go-* family template go-fft.github.io uses: one
+# self-contained layouts/index.html, with the design coming from the landing kit.
 
-# The go-* landings' shared design, as a Hugo module. A landing that imports it
-# cannot drift from the reference; it can only fall behind a version, and
-# Renovate proposes the bump. See go-fleettools/landingkit.
+disableKinds = ['taxonomy', 'term', 'rss', 'sitemap', '404']
+
+[markup.goldmark.renderer]
+  unsafe = true
+
+# The design -- layouts/partials/styles.html, theme-toggle.html, fork-ribbon.html
+# and icons/{github,book}.html -- comes from the shared Hugo module
+# github.com/go-fleettools/landingkit, not from copies here: the copies drifted.
+# Its version is pinned in go.mod (Renovate bumps it), and kit.go keeps
+# `go mod tidy` from deleting that requirement. A file of the same name under
+# layouts/partials/ would silently override the module's.
 [module]
   [[module.imports]]
     path = "github.com/go-fleettools/landingkit"
 
-# Read from static/favicon.svg's gradient by `landingkit brand`, never chosen.
-# Neutrals — backgrounds, surfaces, greys — belong to the shared sheet and are
-# deliberately not configurable. Contrast: base on white 15.99:1, bright on the
-# dark background 3.07:1.
+[params]
+  description = "go-tex is a pure-Go (CGO=0) TeX engine that loads and runs the genuine LaTeX classes — article, report and book — in Go and in the browser, with no TeXLive and no server."
+
+# The repository cards (#repos) and the count in the strip come from this list,
+# never from a number typed beside it.
+[[params.repos]]
+  name  = "engine"
+  kind  = "engine"
+  href  = "https://github.com/go-tex/engine"
+  blurb = "The pure-Go TeX engine: a faithful mouth and gullet, a scaled-point stomach with Knuth–Plass line breaking and a cost-based page builder, <code>\\halign</code> tables, e-TeX, math, OpenType fonts, PDF and SVG output, and the real embedded LaTeX classes (article, report, book, amsart), native and <code>js/wasm</code>."
+[[params.repos]]
+  name  = "math"
+  kind  = "library"
+  href  = "https://github.com/go-tex/math"
+  blurb = "Pure-Go TeX math-mode typesetter to self-contained SVG, through the OpenType MATH table: fractions, radicals, matrices, big operators with limits, stretchy delimiters, scripts. Ships STIX Two Math; wasm-ready."
+[[params.repos]]
+  name  = "pdfrender"
+  kind  = "library"
+  href  = "https://github.com/go-tex/pdfrender"
+  blurb = "Pure-Go (CGO=0) rasteriser for PDF figures. Plugs into the engine's <code>RasterizePDF</code> seam so <code>\\includegraphics{fig.pdf}</code> renders pixels instead of a framed placeholder. A separate module, to keep the engine and wasm core free of a heavy dependency."
+[[params.repos]]
+  name  = "texmf"
+  kind  = "library"
+  href  = "https://github.com/go-tex/texmf"
+  blurb = "On-demand TeX support-tree fetcher for machines with no TeX distribution. Redistributes nothing: it fetches pinned, SHA-256-verified upstream macro source into a user cache and supplies <code>Tree.Resolve</code> to the engine. Never fetches speculatively."
+[[params.repos]]
+  name  = "tex"
+  kind  = "library"
+  href  = "https://github.com/go-tex/tex"
+  blurb = "Pure-Go (CGO=0) processor for a subset of LaTeX documents: macro expansion, structure and math to semantic HTML rather than to a page. Where the engine typesets, this one reads — a foundation for full LaTeX on the HTML path."
+[[params.repos]]
+  name  = "docs"
+  kind  = "site"
+  href  = "https://go-tex.github.io/docs/"
+  blurb = "The documentation site (MkDocs Material + mike): every supported feature, and every remaining gap, in the capability reference. <a href=\"https://github.com/go-tex/docs\">Source →</a>"
+[[params.repos]]
+  name  = "brand"
+  kind  = "assets"
+  href  = "https://github.com/go-tex/brand"
+  blurb = "Logos and icons for the organization."
+
+# The capability cards (#capabilities) and the count in the heading come from
+# this list.
+[[params.families]]
+  name = "Real base classes"
+  what = "`article`, `report` and `book` load and run the genuine embedded LaTeX `.cls` files — numbered title, dotted TOC, numbered sections and chapters, figure and table captions, lists, math."
+[[params.families]]
+  name = "Faithful engine"
+  what = "Category-code mouth and gullet, a scaled-point stomach with Knuth–Plass line breaking, a cost-based page builder, and `\\halign` tables."
+[[params.families]]
+  name = "Math and fonts"
+  what = "Math via go-tex/math (vector output); OpenType fonts with a built-in default font, kerning and ligatures — runs with no assets, and a full family (roman, bold, italic, slanted, typewriter, sans) when one is given."
+[[params.families]]
+  name = "PDF and SVG output"
+  what = "Embedded-subset-font PDF with selectable text, and self-contained SVG pages carrying a source map for click-to-line."
+[[params.families]]
+  name = "In the browser"
+  what = "A self-contained `js/wasm` build renders real LaTeX classes client-side — no TeXLive, no server."
+[[params.families]]
+  name = "Safe on untrusted input"
+  what = "A `.tex` is a program, and the playground runs whatever you paste. A document compiled by the engine cannot run a process, cannot write a file, cannot read one outside the search roots (TeX Live's `openin_any=p`, with `GOTEX_READ_ANY=1` as a named opt-out), and cannot exhaust memory or run forever: one paragraph is capped at 200 000 nodes."
+[[params.families]]
+  name = "Held to fidelity"
+  what = "A byte-exact conformance ratchet plus a whole-document prose check against a real LaTeX engine (tectonic): on 154 real arXiv papers the median is 101% of the reference's prose words, with 10 of them below 95%."
+
 [params.brand]
+# Generated by go-fleettools/landingkit from static/favicon.svg: the colours are
+# READ from the logo's gradient, never chosen. Do not add other keys:
+# neutrals (backgrounds, surfaces, greys) belong to the shared sheet.
+# Contrast: base on white 15.99:1, bright on the dark background 3.07:1.
   base = "#1e1b4b"
   deep = "#12102e"
   bright = "#4f46e5"
   shadow = "rgba(30,27,75,.7)"
   glow = "rgba(30,27,75,.6)"
+  wash = "rgba(30,27,75,.10)"
+  washDeep = "rgba(18,16,46,.06)"
+  chipBg = "#eae9fc"
+  chipBorder = "#cac8f7"
+  chipFg = "#12102e"
+  chipBgDark = "rgba(79,70,229,.14)"
+  chipBorderDark = "rgba(79,70,229,.32)"
+  chipFgDark = "#9e99f1"
+  statsEnd = "#d5d3f9"
+  bandText = "#e3e1fb"
