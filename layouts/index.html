@@ -1,85 +1,87 @@
-{{/* The go-tex landing, on go-fleettools/landingkit: the design is the module's
-     partials, the brand is this org's own logo gradient (hugo.toml
-     [params.brand], read by `landingkit brand` from static/favicon.svg), and
-     nothing else differs from the reference landing.
-
-     The vocabulary is the kit's: .nav/.hero/.cta/.btn-primary/.band/.grid/.card
-     with h3+p inside, .pcards/.pcard for the package list, .sub for a section's
-     deck. The page's own stylesheet and theme script are gone — the kit's
-     styles.html and theme-toggle.html replace them.
-
-     ⚠ docs/ and playground/ still carry static/css/brand.css: they are an
-     application and a reference table, not landings, and the kit is about
-     landings. That is a transitional state and it is deliberate, not an
-     oversight. */}}
-<!doctype html>
-<html lang="en"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-{{/* Dark Reader repaints pages that already draw their own dark theme, as this one does: ask it to stand aside. */}}
-<meta name="darkreader-lock">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ .Site.Title }} — Pure-Go TeX that runs the real LaTeX classes</title>
-<meta name="description" content="Pure-Go (CGO=0) TeX that loads and runs the genuine LaTeX classes — article, report and book — in Go and in the browser, with no TeXLive and no server.">
-<link rel="icon" type="image/svg+xml" href="{{ "favicon.svg" | relURL }}">
+<meta name="description" content="{{ .Site.Params.description }}">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 {{ partial "styles.html" . }}
-</head><body class="lm">
-{{ partial "fork-ribbon.html" "https://github.com/go-tex/engine" }}
-<header class="nav"><div class="wrap">
-  <a class="brand" href="{{ "" | relURL }}">
-    <img src="{{ "favicon.svg" | relURL }}" alt="" width="28" height="28">go-tex</a>
-  <nav>
-    <a href="{{ "docs/" | relURL }}">Documentation</a>
-    <a href="{{ "playground/" | relURL }}">Playground</a>
-    <a href="https://github.com/go-tex">GitHub</a>
+</head>
+<body class="lm">
+  <header class="nav"><div class="wrap">
+    <a class="brand" href="/"><img class="glyph" src="/favicon.svg" width="32" height="32" alt="go-tex logo"> go-tex</a>
+    <nav><a href="#features">Why</a><a href="#capabilities">Capabilities</a><a href="#scope">Scope</a><a href="#repos">Repositories</a></nav>
     {{ partial "theme-toggle.html" . }}
-  </nav>
-</div></header>
+  </div></header>
+  {{ partial "fork-ribbon.html" "https://github.com/go-tex/engine" }}
 
-<section class="hero"><div class="wrap">
-  <p class="eyebrow">CGO_ENABLED=0</p>
-  <h1>Pure-Go TeX that runs the real LaTeX classes</h1>
-  <p class="lead">In Go and in the browser — no TeXLive, no server.</p>
-  <div class="cta">
-    <a class="btn btn-primary" href="{{ "playground/" | relURL }}">Try it in your browser</a>
-    <a class="btn btn-ghost" href="{{ "docs/" | relURL }}">{{ partial "icons/book.html" . }} Documentation</a>
-    <a class="btn btn-ghost" href="https://github.com/go-tex">{{ partial "icons/github.html" . }} Source</a>
-  </div>
-</div></section>
+  <div class="hero"><div class="wrap">
+    <div>
+      <h1 class="head">Pure-Go TeX that runs the real LaTeX classes.<br><span class="accent">In Go and in the browser, no TeXLive.</span></h1>
+      <p class="sub"><b>go-tex</b> is a pure-Go (<code>CGO_ENABLED=0</code>) TeX effort. Its engine is a faithful re-implementation of TeX, and on top of it <b>it loads and runs the genuine LaTeX classes</b>: <code>\documentclass{article}</code>, <code>{report}</code> and <code>{book}</code> execute the real, embedded <code>.cls</code> files (LPPL, verbatim) — not an emulation. They also run in the browser through <code>js/wasm</code>, with no server.</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="https://go-tex.github.io/docs/">{{ partial "icons/book.html" . }}Read the documentation →</a>
+        <a class="btn btn-ghost" href="/playground/">Try it in your browser</a>
+      </div>
+      <div class="trust"><span><b>{{ len .Site.Params.families }}</b> capability areas</span><span><b>{{ len .Site.Params.repos }}</b> repositories</span><span><b>CGO=0</b> no TeXLive</span></div>
+    </div>
+    {{/* Lines taken verbatim from the engine README of go-tex/engine. */}}
+    <div class="term">
+      <div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span class="t">main.go</span></div>
+<pre>out, _ := engine.New().Run(`\def\twice#1{#1#1}\message{\twice{\twice A}}`)
+<span class="c-com">// out == "AAAA"</span></pre>
+    </div>
+  </div></div>
 
-<section class="band"><div class="wrap">
-  <h2>Genuine LaTeX classes, in pure Go</h2>
-  <p>go-tex is a pure-Go (<code>CGO_ENABLED=0</code>) TeX effort. Its engine is a faithful re-implementation of TeX — the category-code mouth and gullet, a scaled-point stomach with Knuth–Plass line breaking and a cost-based page builder, <code>\halign</code> tables, math, OpenType fonts, and PDF/SVG output — and on top of it, it <strong>loads and runs the genuine LaTeX classes</strong>: <code>\documentclass{article}</code>, <code>{report}</code> and <code>{book}</code> execute the real, embedded <code>.cls</code> files (LPPL, verbatim) — not an emulation. They typeset a numbered title, a dotted <code>\tableofcontents</code>, numbered sections, <code>\chapter</code>, numbered figure/table captions, lists, and math.</p>
-  <p>Because the class files are embedded and the resolver needs no filesystem, the real classes <strong>also run in the browser via <code>js/wasm</code></strong> — genuine LaTeX class rendering client-side, with no TeXLive and no server.</p>
-</div></section>
+  <div class="strip"><div class="wrap">
+    <span class="lead-line">{{ len .Site.Params.repos }} repositories — <b>pure Go, no cgo</b>, native and <code>js/wasm</code></span>
+    <div class="mods">{{ range .Site.Params.repos }}<a href="{{ .href }}">{{ .name }}</a>{{ end }}</div>
+  </div></div>
 
-<section><div class="wrap">
-  <h2>Capabilities</h2>
-  <p class="sub">A full pipeline, gated by objective oracles.</p>
-  <div class="grid">
-    <div class="card"><h3>Real base classes</h3><p>article, report and book load and run the genuine embedded LaTeX <code>.cls</code> files — numbered title, dotted TOC, numbered sections/chapters, figure/table captions, lists, math.</p></div>
-    <div class="card"><h3>Faithful engine</h3><p>Category-code mouth and gullet, a scaled-point stomach with Knuth–Plass line breaking, a cost-based page builder, and <code>\halign</code> tables.</p></div>
-    <div class="card"><h3>Math &amp; fonts</h3><p>Math via go-tex/math (vector output); OpenType fonts with a built-in default font, kerning and ligatures — runs with no assets, and a full family (roman, bold, italic, slanted, typewriter, sans) when one is given.</p></div>
-    <div class="card"><h3>PDF &amp; SVG output</h3><p>Embedded-subset-font PDF with selectable text, and self-contained SVG pages carrying a source map for click-to-line.</p></div>
-    <div class="card"><h3>In the browser</h3><p>A self-contained <code>js/wasm</code> build renders real LaTeX classes client-side — no TeXLive, no server.</p></div>
-    <div class="card"><h3>Safe on untrusted input</h3><p>A <code>.tex</code> is a program, and the playground runs whatever you paste. A document compiled by the engine <strong>cannot run a process</strong> (TeX&rsquo;s <code>\write18</code> has no implementation here), <strong>cannot write a file</strong>, and <strong>cannot read one outside the search roots</strong> &mdash; TeX Live&rsquo;s <code>openin_any=p</code>, with <code>GOTEX_READ_ANY=1</code> as a named opt-out. The first two are asserted by a scan of the package&rsquo;s own source, since no API could express them. Fonts and images still load by absolute path, on purpose: each decodes its file, so a path that is neither puts nothing on the page. It also cannot <strong>exhaust memory or run forever</strong>: one paragraph is capped (200&nbsp;000 nodes, against a largest-real-paragraph of 8&nbsp;881 measured over the fidelity corpus) and the run ends as TeX&rsquo;s capacity error does; and no word longer than 63 letters is hyphenated, which is TeX&rsquo;s own limit and where 98.6% of the time was going.</p></div>
-    <div class="card"><h3>Held to fidelity</h3><p>A byte-exact conformance ratchet plus a whole-document prose check against a real LaTeX engine (tectonic): on 154 real arXiv papers the median is 101% of the reference&rsquo;s prose words, with 10 of them below 95%. Above 100% is expected, not flattering — each formula&rsquo;s source is emitted as an invisible text layer so the maths can be found and read aloud, and the word census counts it.</p></div>
-  </div>
-</div></section>
+  <section id="features"><div class="wrap">
+    <span class="eyebrow">Why go-tex</span>
+    <h2>Genuine LaTeX classes, <i>in pure Go</i>.</h2>
+    <p class="lead">The engine is a faithful re-implementation of TeX — the category-code mouth and gullet, a scaled-point stomach with Knuth–Plass line breaking and a cost-based page builder, <code>\halign</code> tables, math, OpenType fonts, and PDF/SVG output. The class files are embedded and the resolver needs no filesystem, so the real classes <b>also run in the browser</b> — genuine LaTeX class rendering client-side, with no TeXLive and no server.</p>
+  </div></section>
 
-<section><div class="wrap">
-  <h2>Packages</h2>
-  <p class="sub">{{ len hugo.Data.pkgs.packages }} module(s) — generated from the org&rsquo;s repos.</p>
-  <div class="pcards">
-    {{ range hugo.Data.pkgs.packages }}
-    <div class="pcard"><div class="n">{{ .abbr }}</div><h3>{{ .name }}</h3><p>{{ .desc }}</p>
-      <p><a href="{{ .url }}">GitHub</a> · <a href="{{ .doc }}">pkg.go.dev</a></p></div>
-    {{ end }}
-  </div>
-</div></section>
+  <section id="capabilities" style="padding-top:10px"><div class="wrap">
+    <span class="eyebrow">What the engine offers</span>
+    <h2>{{ len .Site.Params.families }} areas, <i>held to objective oracles</i>.</h2>
+    <div class="grid">
+      {{ range .Site.Params.families }}
+      <div class="card"><h3>{{ .name }}</h3><p>{{ .what | markdownify }}</p></div>
+      {{ end }}
+    </div>
+  </div></section>
 
-<section><div class="wrap">
-  <h2>Scope</h2>
-  <p class="sub">The engine loads and runs the standard base classes — <code>article</code>, <code>report</code>, <code>book</code> and now <code>amsart</code> as real embedded files — and any resolvable <code>.cls</code>/<code>.sty</code> runs as real TeX macros. It is functional-parity-oriented and held to real-LaTeX fidelity, not a claim of full TeXLive parity: heavy drawing (<code>tikz</code>/<code>pgf</code>) is gated and still in bring-up, <code>biblatex</code> is partly supported (Biber&rsquo;s data <code>.bbl</code> is parsed and typeset &mdash; 30 of 30 and 15 of 17 titles present on the two corpus papers that ship one &mdash; while its citation commands and styles are not modelled), PDF figures need the <code>pdfrender</code> module, and floats typeset inline unless placement is enabled. Every supported feature — and every remaining gap — is listed in the <a href="{{ "docs/" | relURL }}">capability reference</a>.</p>
-</div></section>
+  <section id="scope" style="padding-top:10px"><div class="wrap">
+    <span class="eyebrow">Scope</span>
+    <h2>Real-LaTeX fidelity, <i>not a claim of TeXLive parity</i>.</h2>
+    <p class="lead">The engine loads and runs the standard base classes — <code>article</code>, <code>report</code>, <code>book</code> and <code>amsart</code> as real embedded files — and any resolvable <code>.cls</code>/<code>.sty</code> runs as real TeX macros. Heavy drawing (<code>tikz</code>/<code>pgf</code>) is gated and still in bring-up, <code>biblatex</code> is partly supported, PDF figures need the <code>pdfrender</code> module, and floats typeset inline unless placement is enabled. Every supported feature — and every remaining gap — is listed in the <a href="https://go-tex.github.io/docs/">capability reference</a>.</p>
+  </div></section>
 
-<footer><div class="wrap">Built with Hugo · Pure Go, CGO=0 · Design from <a href="https://github.com/go-fleettools/landingkit">landingkit</a> · Branding from <a href="https://github.com/go-tex/brand">go-tex/brand</a></div></footer>
-</body></html>
+  <section id="repos" style="padding-top:20px"><div class="wrap">
+    <span class="eyebrow">Repositories</span>
+    <h2>What is here.</h2>
+    <div class="road">
+      {{ range .Site.Params.repos }}
+      <div class="ph">
+        <div class="top"><h4><a href="{{ .href }}">{{ .name }}</a></h4><span class="tag active">{{ .kind }}</span></div>
+        <p>{{ .blurb | safeHTML }}</p>
+      </div>
+      {{ end }}
+    </div>
+  </div></section>
+
+  <section id="eco" style="padding-top:6px"><div class="wrap">
+    <div class="band">
+      <h2>Real LaTeX classes, with no TeXLive and no server.</h2>
+      <p>Pure Go, <code>CGO_ENABLED=0</code>, native and in the browser. Safe on untrusted input: a compiled document cannot run a process, write a file, or read one outside the search roots.</p>
+      <a class="btn btn-ghost" href="https://github.com/go-tex/engine">{{ partial "icons/github.html" . }}Read the source on GitHub →</a>
+    </div>
+  </div></section>
+
+  <footer><div class="wrap"><span>go-tex · <a href="https://github.com/go-tex">go-tex on GitHub</a> · Design from <a href="https://github.com/go-fleettools/landingkit">landingkit</a> · Branding from <a href="https://github.com/go-tex/brand">go-tex/brand</a></span><span>Pure Go · CGO_ENABLED=0 · no TeXLive</span></div></footer>
+</body>
+</html>

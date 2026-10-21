@@ -1,0 +1,62 @@
+name: links
+
+# Taken from go-fileshare.github.io, where a dead repository link on the
+# landing went unnoticed until a check like this one read the BUILT site.
+#
+# ⛔ THE CHECK READS THE BUILT SITE, NOT THE LAYOUTS: templated links such as
+# the per-repository cards only become real URLs once Hugo has expanded them.
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  links:
+    name: every link and image resolves
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      # Hugo resolves the landingkit module (hugo.toml [module]) with the go
+      # command, at the version go.mod pins.
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: peaceiris/actions-hugo@v3
+        with:
+          hugo-version: "0.168.0"
+          extended: true
+      - run: hugo --minify --destination ./public
+      - name: Check
+        run: |
+          set -uo pipefail
+          # The character class matters: an extractor that stops only at ) and "
+          # carries a closing > or < into the request.
+          urls=$(grep -rhoE 'https?://[^)">< [:space:]]+' public/ | sed 's/[.,]$//' | sort -u)
+          test -n "$urls" || { echo "::error::no links found; did the site build?"; exit 1; }
+          echo "checking $(printf '%s\n' "$urls" | wc -l) distinct URLs"
+          fail=0
+          while read -r u; do
+            # img.shields.io renders anything asked of it and proves nothing.
+            case "$u" in *img.shields.io*) continue ;; esac
+            # Three attempts: one is a flake detector rather than a link
+            # checker, and a lane that fails at random is a lane people learn
+            # to ignore.
+            code=000
+            for attempt in 1 2 3; do
+              code=$(curl -sS -o /dev/null -w '%{http_code}' -L --max-time 25 "$u" || echo 000)
+              case "$code" in 2*|3*) break ;; esac
+              sleep 3
+            done
+            case "$code" in
+              2*|3*) printf '  ok   %s  %s\n' "$code" "$u" ;;
+              *)     printf '  FAIL %s  %s\n' "$code" "$u"; fail=1 ;;
+            esac
+          done <<< "$urls"
+          test "$fail" -eq 0 || { echo "::error::at least one link or image does not resolve"; exit 1; }
