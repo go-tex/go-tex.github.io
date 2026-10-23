@@ -82,6 +82,6 @@
     </div>
   </div></section>
 
-  <footer><div class="wrap"><span>go-tex · <a href="https://github.com/go-tex">go-tex on GitHub</a> · Design from <a href="https://github.com/go-fleettools/landingkit">landingkit</a> · Branding from <a href="https://github.com/go-tex/brand">go-tex/brand</a></span><span>Pure Go · CGO_ENABLED=0 · no TeXLive</span></div></footer>
+  <footer><div class="wrap"><span>go-tex · <a href="https://github.com/go-tex">go-tex on GitHub</a> · Design from <a href="https://github.com/go-fleettools/landingkit">landingkit</a> · Branding from <a href="https://github.com/go-tex/brand">go-tex/brand</a></span><span>Pure Go · {{ if not (partial "mantra-on.html" $) }}CGO_ENABLED=0 · {{ end }}no TeXLive</span></div></footer>
 </body>
 </html>

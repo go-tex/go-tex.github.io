@@ -104,3 +104,8 @@ disableKinds = ['taxonomy', 'term', 'rss', 'sitemap', '404']
   chipFgDark = "#9e99f1"
   statsEnd = "#d5d3f9"
   bandText = "#e3e1fb"
+
+# The strip under the top bar: the code's licence and cgo, and the data
+# shipped under its own licence (read from its licence files).
+[params.mantra]
+  items = ["LICENSE=BSD-3-Clause", "CGO_ENABLED=0", "macros: LPPL-1.3c", "fonts: OFL-1.1"]
