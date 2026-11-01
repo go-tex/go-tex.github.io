@@ -17,7 +17,89 @@ const POLL = 250;
 const READY_TIMEOUT = 60000;
 const OP_TIMEOUT = 90000;
 
+// ⛔ A FIXED WALL ASKS THE WRONG QUESTION. "Has it been longer than 90 s?" is
+// answered YES by a run that is progressing perfectly well on a loaded machine,
+// and that is how this proof became flaky: a passing CI run spends 45 of its 90
+// seconds, so the margin is 2x for a step that serves a 29.4 MB and a 19.8 MB
+// wasm and instantiates TWO Go wasm runtimes in one headless Chrome. Three local
+// runs at load average 21-40 all exceeded it; the same code passed in CI.
+//
+// ⭐ So wait on WORK instead. STALL_TIMEOUT is how long nothing may advance
+// before we give up, and the app publishes what "advance" means: the worker's
+// wasm download reports bytes, a clone reports objects. HARD_CEILING is the
+// absolute bound so a genuinely wedged run cannot hold CI forever.
+//
+// Raising the wall instead would have measured nothing: a threshold fitted to
+// the failure is not a measurement.
+const STALL_TIMEOUT = 30000;
+const HARD_CEILING = 300000;
+
+// ⛔ AND ONE PHASE PUBLISHES NO MEASUREMENT AT ALL, so no stall may be claimed
+// in it. While the worker's wasm is on its way, `assetLoading` names it and
+// its measure stays empty -- measured three times here, assetProgress -1 for
+// the whole download. No `gotex-asset-progress` message reaches the page at all
+// in this harness (a byte count carried alongside the fraction stayed 0 too, so
+// it is not merely the missing `?n=` total that the fraction needs), which means
+// the longest step of the run is invisible from the page. Worth fixing upstream
+// in static/git-worker.js; until then it must not be guessed at.
+//
+// Treating that silence as a stall is what my first attempt at this did: it
+// failed at 30 s, which was WORSE than the 90 s wall it replaced. An unread
+// measurement is not a measurement of zero. So this phase gets a bound of its
+// own and no stall check -- honest about measuring nothing rather than
+// confident about nothing happening.
+const OPAQUE_PHASE_BUDGET = 180000;
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// liveness is the tuple that says whether anything is still happening. It is
+// deliberately coarse: any change in any field counts as progress, because the
+// question is "is this run alive", not "how far along is it".
+const liveness = (d) =>
+  JSON.stringify([d.busy, d.loadedPath, d.error, d.notice, d.statusLine,
+                  d.assetLoading, d.assetProgress,
+                  d.gitProgress, d.gitProgressLine]);
+
+// waitAlive polls until done(d) holds, and fails only when the liveness tuple
+// has not moved for STALL_TIMEOUT. The error names the stall and the state,
+// which is the diagnosis a bare "90000ms exceeded" threw away.
+async function waitAlive(page, done, what) {
+  const started = Date.now();
+  let lastMove = started;
+  let sig = "";
+  for (;;) {
+    const d = await page.evaluate(() => globalThis.gotexGitDebug());
+    if (done(d)) return d;
+    const now = liveness(d);
+    if (now !== sig) {
+      sig = now;
+      lastMove = Date.now();
+    }
+    const stalled = Date.now() - lastMove;
+    const elapsed = Date.now() - started;
+    // An asset in flight is the opaque phase: nothing about it is observable
+    // from here, so it is bounded but never called stalled.
+    const opaque = d.assetLoading !== "";
+    if (opaque && elapsed > OPAQUE_PHASE_BUDGET) {
+      throw new Error(
+        what + ": " + d.assetLoading + " has been loading for " +
+        Math.round(elapsed / 1000) + "s and the page reports no progress for it " +
+        "(assetProgress " + d.assetProgress +
+        "), so this is a bound and not a measurement; state " + now);
+    }
+    if (!opaque && stalled > STALL_TIMEOUT) {
+      throw new Error(
+        what + ": no progress for " + Math.round(stalled / 1000) + "s (after " +
+        Math.round(elapsed / 1000) + "s); state " + now);
+    }
+    if (elapsed > HARD_CEILING) {
+      throw new Error(
+        what + ": still not done after " + Math.round(elapsed / 1000) +
+        "s even though it kept moving; state " + now);
+    }
+    await sleep(POLL);
+  }
+}
 
 (async () => {
   const url = process.env.PAGE_URL;
@@ -120,14 +202,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     // Clone → the seeded main.tex must load into the SOURCE editor.
     const debug = () => page.evaluate(() => globalThis.gotexGitDebug());
     const waitIdle = async (what) => {
-      await page.waitForFunction(
-        () => {
-          const d = globalThis.gotexGitDebug();
-          return d.busy === false && (d.loadedPath !== "" || d.error !== "" || d.notice !== "");
-        },
-        { timeout: OP_TIMEOUT, polling: POLL },
+      const d = await waitAlive(
+        page,
+        (s) => s.busy === false && (s.loadedPath !== "" || s.error !== "" || s.notice !== ""),
+        what,
       );
-      const d = await debug();
       if (d.error) throw new Error(what + " reported an error: " + d.error);
       return d;
     };
@@ -138,21 +217,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     // operation that never started -- indistinguishable from a hung clone.
     console.log("[debug before clone] " + JSON.stringify(await page.evaluate(() => globalThis.gotexGitDebug())));
     await page.evaluate(() => globalThis.gotexGitClone());
-    // Wait until the clone is no longer busy AND a file loaded.
-    try {
-      await page.waitForFunction(
-        () => {
-          const d = globalThis.gotexGitDebug();
-          return d.busy === false && (d.loadedPath !== "" || d.error !== "");
-        },
-        { timeout: OP_TIMEOUT, polling: POLL },
-      );
-    } catch (e) {
-      // A timeout that says only "90000ms exceeded" names the wall, not the
-      // state. The state is one evaluate away and it is the whole diagnosis.
-      console.log("[debug at timeout] " + JSON.stringify(await page.evaluate(() => globalThis.gotexGitDebug())));
-      throw e;
-    }
+    // Wait until the clone is no longer busy AND a file loaded — for as long as
+    // it keeps making progress.
+    await waitAlive(
+      page,
+      (d) => d.busy === false && (d.loadedPath !== "" || d.error !== ""),
+      "clone",
+    );
     let d = await debug();
     if (d.error) throw new Error("clone error: " + d.error);
     if (d.loadedPath !== "main.tex") throw new Error("clone loaded " + d.loadedPath + ", want main.tex");

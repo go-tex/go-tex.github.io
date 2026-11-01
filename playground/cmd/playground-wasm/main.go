@@ -888,6 +888,22 @@ func main() {
 			"notice":     state.GitNotice(),
 			"statusLine": state.GitStatusLine(),
 			"texFiles":   files,
+			// ⭐ THE LIVENESS TUPLE, so a harness can wait on WORK rather than on
+			// a clock. A fixed wall asks "has it been too long?", which on a
+			// loaded machine is answered yes by a run that is progressing
+			// perfectly well -- that is how browser-proofs became flaky. These
+			// four say whether anything is still advancing: the worker's wasm
+			// download reports bytes (assetProgress), and a clone reports
+			// objects (gitProgress / gitProgressLine).
+			//
+			// ⚠ They are OBSERVATIONS, not assertions. assetLoading is "" when
+			// no asset is in flight and gitProgress is -1 when nothing is, so a
+			// harness must treat "nothing is advancing" as a stall only after a
+			// budget, never instantly.
+			"assetLoading":    state.AssetLoading(),
+			"assetProgress":   state.AssetProgress(),
+			"gitProgress":     state.GitProgressFraction(),
+			"gitProgressLine": state.GitProgressLine(),
 		}
 	}))
 
