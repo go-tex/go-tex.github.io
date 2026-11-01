@@ -43,15 +43,33 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await page.setViewport({ width: 1200, height: 900, deviceScaleFactor: 2 });
     page.on("console", (m) => console.log("[page] " + m.text()));
     page.on("pageerror", (e) => console.log("[pageerror] " + e.message));
+    // ⭐ DEDICATED WORKERS ARE A PAGE-LEVEL EVENT. The browser.on("targetcreated")
+    // + t.worker() route below reports `t.worker() returned nothing`, so the
+    // worker's console and errors have never once been forwarded -- which is
+    // why this test has never said WHY it fails.
+    page.on("workercreated", (w) => {
+      console.log("[workercreated] " + w.url());
+      w.on("console", (m) => console.log("[w] " + m.text()));
+    });
+    page.on("workerdestroyed", (w) => console.log("[workerdestroyed] " + w.url()));
     // A dedicated worker is its own target; forward its console too.
     browser.on("targetcreated", async (t) => {
       if (t.type() === "worker" || (t.url() && t.url().includes("git-worker.js"))) {
         console.log("[worker target] " + t.url());
         try {
           const w = await t.worker();
-          if (w) w.on("console", (m) => console.log("[worker] " + m.text()));
+          if (w) {
+            w.on("console", (m) => console.log("[worker] " + m.text()));
+            // An uncaught exception in a Worker is an `error` event, NOT a
+            // console message, so a console-only listener sees nothing at all.
+            w.on("error", (e) => console.log("[worker-error] " + (e && e.message ? e.message : e)));
+          } else {
+            console.log("[worker] t.worker() returned nothing");
+          }
         } catch (e) {
-          /* worker console is best-effort */
+          // Not best-effort any more: a swallowed failure here is the
+          // difference between a diagnosis and ninety seconds of silence.
+          console.log("[worker] could not attach to the worker: " + e.message);
         }
       }
     });
@@ -60,6 +78,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     let workerWasmURL = "";
     page.on("request", (r) => {
       if (r.url().includes("git-worker.wasm")) workerWasmURL = r.url();
+    });
+    // A REQUEST is not a response. The proof above records that the worker
+    // ASKED for its wasm; whether it got 200 and how many bytes is a different
+    // fact, and a 404 here would look exactly like a hang from the page's side.
+    page.on("response", (r) => {
+      const u = r.url();
+      if (u.includes("git-worker.wasm") || u.includes("git-worker.js") || r.status() === 404) {
+        console.log("[response] " + r.status() + " " + u);
+      }
+    });
+    page.on("requestfailed", (r) => {
+      console.log("[requestfailed] " + r.url() + " " + (r.failure() ? r.failure().errorText : ""));
     });
 
     await page.goto(url, { waitUntil: "load", timeout: 30000 });
@@ -102,15 +132,27 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       return d;
     };
 
+    // ⭐ WHAT THE STATE WAS BEFORE WE ASKED. If a boot-time operation is still
+    // in flight, busy is already true and gotexGitClone() is a no-op (git.go
+    // guards on v.busy.Get()), so the wait below would time out on an
+    // operation that never started -- indistinguishable from a hung clone.
+    console.log("[debug before clone] " + JSON.stringify(await page.evaluate(() => globalThis.gotexGitDebug())));
     await page.evaluate(() => globalThis.gotexGitClone());
     // Wait until the clone is no longer busy AND a file loaded.
-    await page.waitForFunction(
-      () => {
-        const d = globalThis.gotexGitDebug();
-        return d.busy === false && (d.loadedPath !== "" || d.error !== "");
-      },
-      { timeout: OP_TIMEOUT, polling: POLL },
-    );
+    try {
+      await page.waitForFunction(
+        () => {
+          const d = globalThis.gotexGitDebug();
+          return d.busy === false && (d.loadedPath !== "" || d.error !== "");
+        },
+        { timeout: OP_TIMEOUT, polling: POLL },
+      );
+    } catch (e) {
+      // A timeout that says only "90000ms exceeded" names the wall, not the
+      // state. The state is one evaluate away and it is the whole diagnosis.
+      console.log("[debug at timeout] " + JSON.stringify(await page.evaluate(() => globalThis.gotexGitDebug())));
+      throw e;
+    }
     let d = await debug();
     if (d.error) throw new Error("clone error: " + d.error);
     if (d.loadedPath !== "main.tex") throw new Error("clone loaded " + d.loadedPath + ", want main.tex");
