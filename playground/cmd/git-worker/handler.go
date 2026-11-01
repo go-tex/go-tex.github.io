@@ -20,8 +20,8 @@ import (
 	"path"
 	"strings"
 
-	"github.com/go-tex/go-tex.github.io/playground/internal/browsergit"
-	"github.com/go-tex/go-tex.github.io/playground/internal/gitrpc"
+	"github.com/go-browserhttp/browsergit"
+	"github.com/go-browserhttp/browsergit/gitrpc"
 )
 
 // gitSession is the remote-git surface the handler drives. The live implementation

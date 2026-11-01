@@ -8,7 +8,7 @@ package main
 import (
 	"syscall/js"
 
-	"github.com/go-tex/go-tex.github.io/playground/internal/gitrpc"
+	"github.com/go-browserhttp/browsergit/gitrpc"
 )
 
 // The Web Worker entry point. It instantiates the browsergit-backed session, wires

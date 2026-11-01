@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/go-tex/go-tex.github.io/playground/internal/gitrpc"
+	"github.com/go-browserhttp/browsergit/gitrpc"
 )
 
 // fakeTransport is a canned [workerTransport]: it returns a per-op reply and

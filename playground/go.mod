@@ -1,14 +1,13 @@
 module github.com/go-tex/go-tex.github.io/playground
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/andybalholm/brotli v1.2.7
+	github.com/go-browserhttp/browsergit v0.1.0
 	github.com/go-crdt/collab v0.77.4
 	github.com/go-crdt/crdt v0.57.0
 	github.com/go-gfx/qr v0.2.0
-	github.com/go-git/go-billy/v5 v5.9.2
-	github.com/go-git/go-git/v5 v5.19.3
 	github.com/go-icons/devicon v0.2.0
 	github.com/go-icons/material v0.2.0
 	github.com/go-icons/seti v0.2.0
@@ -34,6 +33,8 @@ require (
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/go-gfx/gfx v0.36.0 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
+	github.com/go-git/go-billy/v5 v5.9.2 // indirect
+	github.com/go-git/go-git/v5 v5.19.3 // indirect
 	github.com/go-icons/iconoir v0.3.0 // indirect
 	github.com/go-images/gif v0.2.0 // indirect
 	github.com/go-images/images v0.1.0 // indirect
@@ -64,7 +65,7 @@ require (
 	github.com/yuin/goldmark v1.8.6 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/image v0.47.0 // indirect
-	golang.org/x/net v0.61.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260706201446-f0a921348800 // indirect
