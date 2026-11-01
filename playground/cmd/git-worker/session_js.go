@@ -8,8 +8,8 @@ package main
 import (
 	"context"
 
-	"github.com/go-tex/go-tex.github.io/playground/internal/browsergit"
-	"github.com/go-tex/go-tex.github.io/playground/internal/gitrpc"
+	"github.com/go-browserhttp/browsergit"
+	"github.com/go-browserhttp/browsergit/gitrpc"
 )
 
 // browsergitSession is the live [gitSession]: one in-memory browsergit repository

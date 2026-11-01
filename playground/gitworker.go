@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/go-tex/go-tex.github.io/playground/internal/gitrpc"
+	"github.com/go-browserhttp/browsergit/gitrpc"
 )
 
 // This file is the main app's HALF of the off-thread git split: the [gitBackend]
