@@ -20,8 +20,9 @@ import (
 	"path"
 	"strings"
 
-	"github.com/go-tex/go-tex.github.io/playground/internal/browsergit"
-	"github.com/go-tex/go-tex.github.io/playground/internal/gitrpc"
+	"github.com/go-browserhttp/browsergit"
+	"github.com/go-browserhttp/browsergit/gitrpc"
+	"github.com/go-tex/go-tex.github.io/playground/internal/gitops"
 )
 
 // gitSession is the remote-git surface the handler drives. The live implementation
@@ -157,7 +158,7 @@ func (h *handler) dispatch(req gitrpc.Request) gitrpc.Reply {
 		return h.readFile(req)
 	case gitrpc.OpWriteFile:
 		return h.writeFile(req)
-	case gitrpc.OpRemoveFile:
+	case gitops.OpRemoveFile:
 		return h.removeFile(req)
 	case gitrpc.OpStatus:
 		return h.status(req)

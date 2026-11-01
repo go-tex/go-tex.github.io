@@ -9,7 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/go-tex/go-tex.github.io/playground/internal/gitrpc"
+	"github.com/go-browserhttp/browsergit/gitrpc"
+	"github.com/go-tex/go-tex.github.io/playground/internal/gitops"
 )
 
 // fakeTransport is a canned [workerTransport]: it returns a per-op reply and
@@ -270,7 +271,7 @@ func TestWorkerBackendRemoveFileDropsTheCachedContent(t *testing.T) {
 			Contents: map[string]string{"a.tex": "A", "b.sty": "B"},
 			Status:   &gitrpc.Status{Branch: "main"},
 		},
-		gitrpc.OpRemoveFile: {OK: true, Files: []string{"b.sty"}},
+		gitops.OpRemoveFile: {OK: true, Files: []string{"b.sty"}},
 	}}
 	b := newWorkerGitBackend(tr)
 	if _, err := cloneSync(b, gitConfig{URL: "u"}); err != nil {
@@ -309,7 +310,7 @@ func TestWorkerBackendRemoveFileFailureKeepsTheCache(t *testing.T) {
 			Contents: map[string]string{"a.tex": "A"},
 			Status:   &gitrpc.Status{Branch: "main"},
 		},
-		gitrpc.OpRemoveFile: {OK: false, Code: gitrpc.CodeTransport, Error: "boom"},
+		gitops.OpRemoveFile: {OK: false, Code: gitrpc.CodeTransport, Error: "boom"},
 	}}
 	b := newWorkerGitBackend(tr)
 	if _, err := cloneSync(b, gitConfig{URL: "u"}); err != nil {

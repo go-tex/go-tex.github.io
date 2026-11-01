@@ -4,8 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-tex/go-tex.github.io/playground/internal/browsergit"
-	"github.com/go-tex/go-tex.github.io/playground/internal/gitrpc"
+	"github.com/go-browserhttp/browsergit"
+	"github.com/go-browserhttp/browsergit/gitrpc"
+	"github.com/go-tex/go-tex.github.io/playground/internal/gitops"
 )
 
 // ⛔ Removal is the one file verb that cannot be expressed as a write. Creating a
@@ -20,7 +21,7 @@ func TestRemoveFileDeletesAndAnswersWithWhatRemains(t *testing.T) {
 	}
 	h := newHandler(f)
 
-	reply := h.dispatch(gitrpc.Request{ID: 4, Op: gitrpc.OpRemoveFile, Args: gitrpc.Args{Path: "sections/old.tex"}})
+	reply := h.dispatch(gitrpc.Request{ID: 4, Op: gitops.OpRemoveFile, Args: gitrpc.Args{Path: "sections/old.tex"}})
 	if !reply.OK {
 		t.Fatalf("removeFile reply = %+v", reply)
 	}
@@ -53,11 +54,11 @@ func TestRemovingAVanishedPathSucceeds(t *testing.T) {
 	f := &fakeSession{hasRepo: true, files: []string{"main.tex"}, status: gitrpc.Status{Branch: "main"}}
 	h := newHandler(f)
 
-	first := h.dispatch(gitrpc.Request{ID: 1, Op: gitrpc.OpRemoveFile, Args: gitrpc.Args{Path: "main.tex"}})
+	first := h.dispatch(gitrpc.Request{ID: 1, Op: gitops.OpRemoveFile, Args: gitrpc.Args{Path: "main.tex"}})
 	if !first.OK {
 		t.Fatalf("first removal failed: %+v", first)
 	}
-	second := h.dispatch(gitrpc.Request{ID: 2, Op: gitrpc.OpRemoveFile, Args: gitrpc.Args{Path: "main.tex"}})
+	second := h.dispatch(gitrpc.Request{ID: 2, Op: gitops.OpRemoveFile, Args: gitrpc.Args{Path: "main.tex"}})
 	if !second.OK {
 		t.Fatalf("removing an already-gone path reported %+v", second)
 	}
@@ -70,7 +71,7 @@ func TestRemovingAVanishedPathSucceeds(t *testing.T) {
 func TestRemoveFileReportsARealFailure(t *testing.T) {
 	f := &fakeSession{hasRepo: true, files: []string{"main.tex"}, removeErr: browsergit.ErrTransport}
 	h := newHandler(f)
-	reply := h.dispatch(gitrpc.Request{ID: 9, Op: gitrpc.OpRemoveFile, Args: gitrpc.Args{Path: "main.tex"}})
+	reply := h.dispatch(gitrpc.Request{ID: 9, Op: gitops.OpRemoveFile, Args: gitrpc.Args{Path: "main.tex"}})
 	if reply.OK {
 		t.Fatal("a transport failure was reported as a successful removal")
 	}
@@ -92,7 +93,7 @@ func TestRemoveFileFailsWhenTheNewListCannotBeRead(t *testing.T) {
 		status:  gitrpc.Status{Branch: "main"},
 	}
 	h := newHandler(f)
-	reply := h.dispatch(gitrpc.Request{ID: 7, Op: gitrpc.OpRemoveFile, Args: gitrpc.Args{Path: "gone.tex"}})
+	reply := h.dispatch(gitrpc.Request{ID: 7, Op: gitops.OpRemoveFile, Args: gitrpc.Args{Path: "gone.tex"}})
 	if reply.OK {
 		t.Fatal("an unreadable file list after a removal was reported as success")
 	}
@@ -109,7 +110,7 @@ func TestRemoveFileFailsWhenTheNewListCannotBeRead(t *testing.T) {
 // rather than quietly doing nothing.
 func TestRemoveFileNeedsARepository(t *testing.T) {
 	h := newHandler(&fakeSession{})
-	reply := h.dispatch(gitrpc.Request{ID: 3, Op: gitrpc.OpRemoveFile, Args: gitrpc.Args{Path: "main.tex"}})
+	reply := h.dispatch(gitrpc.Request{ID: 3, Op: gitops.OpRemoveFile, Args: gitrpc.Args{Path: "main.tex"}})
 	if reply.OK {
 		t.Fatal("removeFile succeeded with no repository open")
 	}
