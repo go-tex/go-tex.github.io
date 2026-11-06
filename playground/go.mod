@@ -51,6 +51,7 @@ require (
 	github.com/go-typeset/bidi v0.3.1 // indirect
 	github.com/go-typeset/hyphenation v1.0.0 // indirect
 	github.com/go-typeset/linebreak v1.2.0 // indirect
+	github.com/go-widgets/webcanvas v0.8.0 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
 	github.com/kevinburke/ssh_config v1.2.0 // indirect

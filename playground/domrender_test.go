@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/go-widgets/toolkit"
+	"github.com/go-widgets/webcanvas"
 )
 
 // A compiled page comes back as an SVG for the host to draw, sized in the same
@@ -149,8 +150,9 @@ func TestCanvasOverlaysReportsOpenWindows(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("the find modal must be reported, got %+v", got)
 	}
-	if got[0].Rect != s.fr.modal.Panel.Bounds() {
-		t.Errorf("overlay %+v is not the panel %+v", got[0].Rect, s.fr.modal.Panel.Bounds())
+	if p := s.fr.modal.Panel.Bounds(); got[0].X != p.X || got[0].Y != p.Y ||
+		got[0].W != p.W || got[0].H != p.H {
+		t.Errorf("overlay %+v is not the panel %+v", got[0], p)
 	}
 	// The find modal is a rounded toolkit.Dialog: its overlay must carry that
 	// corner radius so the punched hole follows the rounding (else black notches).
@@ -164,40 +166,28 @@ func TestCanvasOverlaysReportsOpenWindows(t *testing.T) {
 	}
 }
 
-// TestCanvasClipPath checks the punch-out path: empty overlays yield "" (the
-// host sets clip-path:none); a square overlay punches a plain rectangle; a
-// rounded one punches arcs so the page is cut to the window's rounded shape and
-// no black notch remains behind a rounded corner.
-func TestCanvasClipPath(t *testing.T) {
-	if got := CanvasClipPath(nil, 1); got != "" {
-		t.Errorf("no overlays should yield an empty path, got %q", got)
+// ⛔ The SHAPE of the clip path — the evenodd two-subpaths-per-hole rule, the
+// corner arcs, the radius clamp, the ratio conversion — is go-widgets/webcanvas'
+// now, and is tested there. What is this application's, and stays here, is
+// WHICH windows it reports and where they are. Testing the path again here
+// would be testing somebody else's function through ours.
+//
+// The one thing worth joining up is that overlays this reports do reach a real
+// path, which TestOpenWindowsReachAClipPath below asserts.
+func TestOpenWindowsReachAClipPath(t *testing.T) {
+	s := newTestState(t, false)
+	if got := webcanvas.ClipPath(s.CanvasOverlays(), 1); got != "" {
+		t.Errorf("nothing is open, so there is nothing to punch: %q", got)
 	}
-	square := CanvasClipPath([]CanvasOverlay{{Rect: toolkit.Rect{X: 10, Y: 20, W: 100, H: 60}, Radius: 0}}, 1)
-	if !strings.HasPrefix(square, `path(evenodd, "M0 0H100000V100000H0Z`) {
-		t.Errorf("path must open with the container box, got %q", square)
+	s.ToggleFindReplace()
+	s.Draw(make([]byte, testW*testH*4))
+	got := webcanvas.ClipPath(s.CanvasOverlays(), 1)
+	if !strings.HasPrefix(got, "path(evenodd,") {
+		t.Errorf("an open window does not reach a clip path: %q", got)
 	}
-	if strings.Contains(square, "A") {
-		t.Errorf("a square overlay must not draw arcs, got %q", square)
-	}
-	rounded := CanvasClipPath([]CanvasOverlay{{Rect: toolkit.Rect{X: 10, Y: 20, W: 100, H: 60}, Radius: 12}}, 1)
-	if !strings.Contains(rounded, "A") {
-		t.Errorf("a rounded overlay must draw corner arcs, got %q", rounded)
-	}
-	// dpr halves the CSS coordinates: a device x of 10 becomes 5.0.
-	half := CanvasClipPath([]CanvasOverlay{{Rect: toolkit.Rect{X: 10, Y: 20, W: 100, H: 60}, Radius: 0}}, 2)
-	if !strings.Contains(half, "M5.0 10.0") {
-		t.Errorf("dpr=2 should halve coordinates, got %q", half)
-	}
-}
-
-// TestWriteOverlaySubpathClampsRadius checks a radius larger than half the box is
-// clamped, so a small window still yields a valid rounded rectangle.
-func TestWriteOverlaySubpathClampsRadius(t *testing.T) {
-	var b strings.Builder
-	writeOverlaySubpath(&b, CanvasOverlay{Rect: toolkit.Rect{X: 0, Y: 0, W: 20, H: 10}, Radius: 100}, 1)
-	// Radius clamps to 5 (half the 10px height): arcs use "A5.0 5.0".
-	if !strings.Contains(b.String(), "A5.0 5.0") {
-		t.Errorf("radius should clamp to half the shorter side, got %q", b.String())
+	// A rounded Dialog punches a rounded hole: the radius survives the trip.
+	if !strings.Contains(got, "A") {
+		t.Errorf("the find modal's corner radius was lost on the way: %q", got)
 	}
 }
 
