@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-tex/go-tex.github.io/playground"
 	"github.com/go-widgets/toolkit"
+	"github.com/go-widgets/webcanvas"
 )
 
 // The render pane lays the typeset pages out and paints their paper; this puts
@@ -90,7 +91,7 @@ func newDOMRenderHost(doc js.Value) *domRenderHost {
 // the device pixel ratio: the placements arrive in the surface's device pixels
 // and the page lays out in CSS pixels. measured is called with each page's
 // freshly measured source-line bands whenever a page's content changed.
-func (h *domRenderHost) sync(renders []playground.PageRender, dpr float64, measured func(page int, lines, tops, bots []int), overlays []playground.CanvasOverlay) {
+func (h *domRenderHost) sync(renders []playground.PageRender, dpr float64, measured func(page int, lines, tops, bots []int), overlays []webcanvas.Overlay) {
 	if h == nil {
 		return
 	}
@@ -166,9 +167,9 @@ func (h *domRenderHost) sync(renders []playground.PageRender, dpr float64, measu
 // journey is drawn: it leaves a wedge cut out of the page. Measured — the
 // polygon(evenodd, …) form notches the left edge, the path(evenodd, "M…Z M…Z")
 // form does not.
-func (h *domRenderHost) punchOut(overlays []playground.CanvasOverlay, dpr float64) {
+func (h *domRenderHost) punchOut(overlays []webcanvas.Overlay, dpr float64) {
 	st := h.root.Get("style")
-	clip := playground.CanvasClipPath(overlays, dpr)
+	clip := webcanvas.ClipPath(overlays, dpr)
 	if clip == "" {
 		if h.clip != "" {
 			st.Set("clipPath", "none")

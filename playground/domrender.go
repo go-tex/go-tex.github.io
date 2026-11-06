@@ -4,11 +4,8 @@
 package playground
 
 import (
-	"fmt"
-	"strconv"
-	"strings"
-
 	"github.com/go-widgets/toolkit"
+	"github.com/go-widgets/webcanvas"
 )
 
 // The render pane used to blit a rasterised bitmap of each page and lay an
@@ -105,14 +102,6 @@ func (s *State) SetLineBands(page int, lines, tops, bots []int) {
 	s.lineMaps[page-1] = makeLineMap(byLine)
 }
 
-// CanvasOverlay is one rectangle the canvas paints ON TOP of the DOM page,
-// carrying the corner radius of the window drawn there (0 for a square-cornered
-// panel). Radius is in the surface's device pixels, matching Rect.
-type CanvasOverlay struct {
-	Rect   toolkit.Rect
-	Radius int
-}
-
 // CanvasOverlays are the windows the canvas paints ON TOP of everything — the
 // find-and-replace panel, the Git panel, the Collaborate panel — in the
 // surface's device pixels. Empty when none is open.
@@ -129,11 +118,22 @@ type CanvasOverlay struct {
 // corners while the canvas left them transparent, and the void between the two
 // read as black notches in the rounded corners over the preview. The Git and
 // Collaborate panels are square-cornered Backdrops, so their radius is 0.
-func (s *State) CanvasOverlays() []CanvasOverlay {
-	var out []CanvasOverlay
+//
+// ⛔ The PATH is built by [webcanvas.ClipPath] now, not here. The go-pdfkit
+// workbench needs the same holes for the same reason — it is about to show its
+// pages as DOM so their text can be selected, with its ribbon and panels
+// painted into the canvas over them — and the only part of this that belongs to
+// this application is which windows it has open. The shape of the path, the
+// evenodd two-subpaths-per-hole rule and the corner arcs went to
+// go-widgets/webcanvas, which exists so the DOM plumbing is written once.
+func (s *State) CanvasOverlays() []webcanvas.Overlay {
+	var out []webcanvas.Overlay
 	add := func(r toolkit.Rect, radius int) {
+		// An unlaid panel has nothing to punch out. webcanvas drops empty
+		// rectangles too; this is about THIS application's state — a window
+		// that is open but has not been laid out yet is not a window on screen.
 		if r.W > 0 && r.H > 0 {
-			out = append(out, CanvasOverlay{Rect: r, Radius: radius})
+			out = append(out, webcanvas.Overlay{X: r.X, Y: r.Y, W: r.W, H: r.H, Radius: radius})
 		}
 	}
 	add(s.findPanelRect(), toolkit.Scaled(toolkit.DialogRadius))
@@ -146,61 +146,3 @@ func (s *State) CanvasOverlays() []CanvasOverlay {
 	return out
 }
 
-// CanvasClipPath builds the CSS clip-path that punches every overlay out of the
-// page container: the container's own box, then one subpath per overlay. A
-// square-cornered overlay punches a rectangle; a rounded one punches a
-// rounded rectangle (arcs at each corner) so the page is cut to the window's
-// exact shape and no black notch shows in a rounded corner. dpr converts the
-// device-pixel geometry to the CSS-pixel user space a path() reads. Returns ""
-// when there is nothing to punch (the caller sets clip-path: none).
-//
-// The container box + one subpath per hole, filled evenodd, is two SUBPATHS per
-// hole rather than one polygon threading from the outer ring to each hole and
-// back — that journey is drawn and leaves a wedge cut out of the page.
-func CanvasClipPath(overlays []CanvasOverlay, dpr float64) string {
-	if len(overlays) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString(`path(evenodd, "M0 0H100000V100000H0Z`)
-	for _, o := range overlays {
-		writeOverlaySubpath(&b, o, dpr)
-	}
-	b.WriteString(`")`)
-	return b.String()
-}
-
-// writeOverlaySubpath appends one hole's closed subpath: a rectangle, or a
-// rounded rectangle when Radius > 0 (clamped to half the shorter side).
-func writeOverlaySubpath(b *strings.Builder, o CanvasOverlay, dpr float64) {
-	r := o.Rect
-	rad := o.Radius
-	if half := r.W / 2; rad > half {
-		rad = half
-	}
-	if half := r.H / 2; rad > half {
-		rad = half
-	}
-	if rad <= 0 {
-		fmt.Fprintf(b, " M%s %sH%sV%sH%sZ",
-			cssPx(r.X, dpr), cssPx(r.Y, dpr), cssPx(r.X+r.W, dpr), cssPx(r.Y+r.H, dpr), cssPx(r.X, dpr))
-		return
-	}
-	fmt.Fprintf(b, " M%s %sH%sA%s %s 0 0 1 %s %sV%sA%s %s 0 0 1 %s %sH%sA%s %s 0 0 1 %s %sV%sA%s %s 0 0 1 %s %sZ",
-		cssPx(r.X+rad, dpr), cssPx(r.Y, dpr), // start after the top-left arc
-		cssPx(r.X+r.W-rad, dpr),                                                    // top edge
-		cssPx(rad, dpr), cssPx(rad, dpr), cssPx(r.X+r.W, dpr), cssPx(r.Y+rad, dpr), // top-right arc
-		cssPx(r.Y+r.H-rad, dpr),                                                        // right edge
-		cssPx(rad, dpr), cssPx(rad, dpr), cssPx(r.X+r.W-rad, dpr), cssPx(r.Y+r.H, dpr), // bottom-right arc
-		cssPx(r.X+rad, dpr),                                                        // bottom edge
-		cssPx(rad, dpr), cssPx(rad, dpr), cssPx(r.X, dpr), cssPx(r.Y+r.H-rad, dpr), // bottom-left arc
-		cssPx(r.Y+rad, dpr),                                                    // left edge
-		cssPx(rad, dpr), cssPx(rad, dpr), cssPx(r.X+rad, dpr), cssPx(r.Y, dpr), // top-left arc
-	)
-}
-
-// cssPx renders a device length as the plain CSS-pixel number a path() takes
-// (no unit: a path's coordinates are in the element's own user space, CSS px).
-func cssPx(v int, dpr float64) string {
-	return strconv.FormatFloat(float64(v)/dpr, 'f', 1, 64)
-}
