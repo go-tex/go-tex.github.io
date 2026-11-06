@@ -145,4 +145,3 @@ func (s *State) CanvasOverlays() []webcanvas.Overlay {
 	}
 	return out
 }
-
