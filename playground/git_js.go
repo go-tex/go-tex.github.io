@@ -59,6 +59,20 @@ func (s *State) EnableGit(repaint func()) {
 			repaint()
 		}
 	}
+	// ⛔ And the case where it never lands. The asset bar is honest about not
+	// knowing how far a download has come, but it cannot say that the download
+	// stopped mattering — so after workerBootDeadline the page is TOLD, in the
+	// same place it is told why a sample repository is missing. Without this the
+	// reader waits on an indeterminate bar for ever, which is what "slow to
+	// appear, and you cannot tell why" actually was.
+	t.onStalled = func() {
+		s.SetAssetLoading("")
+		s.SetBootNotice("The git client (git-worker.wasm) did not start. " +
+			"Git actions are unavailable; reloading the page retries it.")
+		if repaint != nil {
+			repaint()
+		}
+	}
 	b := newWorkerGitBackend(t)
 	// Once the client wasm has landed the clone talks to the remote, and go-git's
 	// sideband ("Counting objects…", "Receiving objects:  45% (450/1000)") flows
@@ -93,8 +107,12 @@ type jsWorkerTransport struct {
 	// event-loop goroutine, inside the message handler.
 	onProgress func(frac float64)
 	onReady    func()
-	onmessage  js.Func
-	onerror    js.Func
+	// onStalled is called once when the wasm has not reported ready within
+	// workerBootDeadline, so the host can put the reason on the page instead of
+	// leaving a bar that never resolves.
+	onStalled func()
+	onmessage js.Func
+	onerror   js.Func
 }
 
 // newJSWorkerTransport builds an unspawned transport; the Worker is created lazily
@@ -207,6 +225,38 @@ func (w *jsWorkerTransport) Spawn() {
 	w.worker.Set("onerror", w.onerror)
 }
 
+// awaitReady waits for the worker's wasm to report ready and says whether it
+// did, bounded by workerBootDeadline (gitworker.go, where the reason it exists
+// is written down). On expiry it marks the transport dead, so later calls fail
+// at once instead of each paying the deadline again, and the host's onStalled is
+// told so something can be put on the page. A call that gives up gets
+// workerDeadReply, which NAMES the asset: "it did not load" is a different
+// problem from "the clone was refused", and the reader is owed the difference.
+func (w *jsWorkerTransport) awaitReady() bool {
+	if awaitSignal(w.readyCh, workerBootDeadline) {
+		return true
+	}
+	w.mu.Lock()
+	already := w.dead
+	w.dead = true
+	pending := w.pending
+	w.pending = map[int]chan gitrpc.Reply{}
+	w.progressCbs = map[int]func(gitrpc.Progress){}
+	stalled := w.onStalled
+	w.mu.Unlock()
+	// Anything already queued behind the boot is answered rather than left to
+	// wait on a worker that will not serve it.
+	for id, ch := range pending {
+		ch <- workerDeadReply(id)
+	}
+	// Unblock any other goroutine sitting on the same channel.
+	w.readyOnce.Do(func() { close(w.readyCh) })
+	if !already && stalled != nil {
+		stalled()
+	}
+	return false
+}
+
 // Call posts req to the worker and blocks until the matching reply arrives. It is
 // only invoked from op-goroutines, so the block yields to the page event loop.
 // onProgress, when non-nil, receives the op's server-side progress notifications
@@ -214,7 +264,9 @@ func (w *jsWorkerTransport) Spawn() {
 // the event-loop goroutine inside the message handler, like onProgress/onReady.
 func (w *jsWorkerTransport) Call(req gitrpc.Request, onProgress func(gitrpc.Progress)) gitrpc.Reply {
 	w.Spawn()
-	<-w.readyCh // the worker signals ready once its wasm is instantiated
+	if !w.awaitReady() {
+		return workerDeadReply(req.ID)
+	}
 
 	ch := make(chan gitrpc.Reply, 1)
 	w.mu.Lock()
