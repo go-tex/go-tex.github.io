@@ -5,11 +5,138 @@ package playground
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-tex/go-tex.github.io/playground/internal/gitrpc"
 )
+
+// workerBootDeadline bounds the wait for the git client's wasm to instantiate.
+//
+// ⛔⛔ THE WAIT USED TO BE UNBOUNDED, and that is a different defect from a slow
+// download. The browser transport blocked on its ready channel until the worker
+// said ready, and the one case where it never says so is the one measured in
+// #212: the worker script loads, the main thread's wasm boots, the worker asks
+// for git-worker.wasm — and then nothing, with no error event, so the error path
+// never fires and the channel never closes. Every git call then waits for ever,
+// the asset bar stays indeterminate (which is the honest rendering of "cannot
+// tell"), and nothing on screen can say what happened.
+//
+// It was reported as "the git component is always very slow to appear without
+// really knowing why". In that case it is not slow, it is hung — and the UI had
+// no way to tell those apart either.
+//
+// 20 seconds because this is a multi-megabyte wasm over whatever connection the
+// reader has, and the download reports its own progress: the deadline only has
+// to outlast a slow transfer, not estimate one.
+const workerBootDeadline = 20 * time.Second
+
+// awaitSignal reports whether ready closed within d.
+//
+// It is here, in the portable file, rather than beside the Web Worker it serves:
+// "how long to wait before calling it hung" is policy, and policy that lives in
+// a js-only file can only be tested in a browser. The browser transport supplies
+// the channel; this decides.
+func awaitSignal(ready <-chan struct{}, d time.Duration) bool {
+	select {
+	case <-ready:
+		return true
+	case <-time.After(d):
+		return false
+	}
+}
+
+// workerCallIdleDeadline bounds the SILENCE after a request has been posted, not
+// the operation's total time.
+//
+// ⛔⛔ A FIXED TIMEOUT HERE WOULD BE A WORSE DEFECT THAN THE HANG. Cloning a large
+// repository over a slow link legitimately takes minutes, and a call killed at
+// its deadline would turn a working clone into a failure the user cannot even
+// retry into success. What is never legitimate is a worker that has gone quiet:
+// go-git's sideband means clone and pull report progress continuously, so the
+// distinction available to us is not fast/slow but SPEAKING/STOPPED.
+//
+// Sixty seconds of complete silence — no reply, no progress notification —
+// therefore reads as stopped. #212's hang is exactly this shape measured from
+// the outside: #223's boot deadline does NOT fire on that run, which proves the
+// worker instantiated, and then the clone request is posted to a live worker and
+// nothing ever comes back. The reply channel was waited on with no deadline at
+// all, so the page could only sit there, and the CI driver could only report
+// "90000ms exceeded" — a silence, not a diagnosis.
+const workerCallIdleDeadline = 60 * time.Second
+
+// awaitReply waits for a terminal reply, treating any progress notification as
+// proof of life that restarts the clock. ok is false when nothing at all arrived
+// for d.
+//
+// progress carries one token per notification; the caller may drop tokens when
+// they pile up (a non-blocking send into a buffered channel), because the
+// question asked here is whether ANY arrived, never how many.
+// seen is how many proof-of-life notifications arrived before it gave up, and it
+// is not a statistic: it is the difference between two faults that are otherwise
+// reported identically. ⛔ The message alone cannot carry it. If one notification
+// arrives, the clock RESTARTS and the same silence follows, so "no progress for
+// 1m0s" comes out the same whether the operation never started or started and
+// then stalled — which is exactly the ambiguity the worker's dispatch
+// announcement was added to resolve, and could not, because the only thing a CI
+// log shows is this sentence.
+func awaitReply(reply <-chan gitrpc.Reply, progress <-chan struct{}, d time.Duration) (gitrpc.Reply, bool, int) {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	seen := 0
+	for {
+		select {
+		case r := <-reply:
+			return r, true, seen
+		case <-progress:
+			seen++
+			// Alive and working. Reset the clock rather than counting against a
+			// total, so a long clone that keeps reporting is never cut off.
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(d)
+		case <-timer.C:
+			return gitrpc.Reply{}, false, seen
+		}
+	}
+}
+
+// workerStalledReply is what a call gets when the worker accepted the request and
+// then went silent.
+//
+// It NAMES the operation, and says plainly that it stopped responding rather than
+// that it failed: "the clone was refused" and "the clone was never answered" send
+// a reader to different places, and only one of them is worth retrying. The code
+// is distinct from "worker" (the client never loaded) for the same reason.
+// ⛔ seen belongs IN the message, because without it the message cannot be read.
+// A request that never ran and an operation that ran and then went quiet produce
+// the same silence and therefore the same sentence — and one sentence covering two
+// unrelated faults sends the next reader to the wrong half of the system. "Never
+// reported anything at all" points at the queue; "after 4 notifications" points
+// inside the operation.
+func workerStalledReply(id int, op string, seen int) gitrpc.Reply {
+	name := op
+	if name == "" {
+		name = "the git operation"
+	}
+	since := "it never reported anything at all"
+	if seen > 0 {
+		since = "after " + strconv.Itoa(seen) + " notification(s)"
+	}
+	return gitrpc.Reply{
+		ID:   id,
+		OK:   false,
+		Code: "stalled",
+		Error: "the git client stopped responding during " + name +
+			" (" + since + "; no progress for " + workerCallIdleDeadline.String() + ")",
+	}
+}
 
 // This file is the main app's HALF of the off-thread git split: the [gitBackend]
 // that drives a separate git-worker.wasm over the [gitrpc] message protocol,
