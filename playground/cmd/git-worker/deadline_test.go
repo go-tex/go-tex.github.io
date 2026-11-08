@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -46,6 +47,51 @@ func TestNetworkDeadlineIsGenerousButFinite(t *testing.T) {
 	}
 	if networkDeadline > time.Hour {
 		t.Errorf("networkDeadline = %v, so long that the worker is wedged for practical purposes", networkDeadline)
+	}
+}
+
+// ⛔ The store's bound is the one that wedges the WHOLE worker, not just its own
+// operation: requests are drained by one goroutine on purpose (main.go serialises
+// a worktree that is not concurrency-safe), so a Cache API promise that never
+// settles leaves every later request unhandled behind it. #212's origin trace is
+// that state from outside — "not one request arrived" while the clone's reply
+// never came, which is a clone that was never executed rather than one that
+// failed.
+func TestStoreDeadlineIsShortBecauseTheStoreIsLocal(t *testing.T) {
+	// Opening a cache and reading one entry is sub-millisecond when it works, so a
+	// browser that cannot answer in seconds has no storage to offer. Short, because
+	// the whole session waits behind it.
+	if storeDeadline > 15*time.Second {
+		t.Errorf("storeDeadline = %v: far too long for a LOCAL store, and every later request queues behind it", storeDeadline)
+	}
+	if storeDeadline < time.Second {
+		t.Errorf("storeDeadline = %v: tight enough to lose a saved workspace on a slow but working browser", storeDeadline)
+	}
+	// ⛔ It must be well inside the main thread's own idle deadline, or the page
+	// gives up first and the worker's answer arrives too late to be read.
+	if storeDeadline >= networkDeadline {
+		t.Errorf("storeDeadline %v must be far below networkDeadline %v", storeDeadline, networkDeadline)
+	}
+}
+
+// Not answering and answering "no" are different, and the error says so: a
+// rejection is the browser refusing, which openCache already handles as "this
+// browser has no storage to offer"; this one is the browser never replying, which
+// is what used to take the worker down with it.
+func TestUnresponsiveStoreErrorIsDistinctAndNamesTheWait(t *testing.T) {
+	if errStoreUnresponsive == nil {
+		t.Fatal("errStoreUnresponsive is nil")
+	}
+	msg := errStoreUnresponsive.Error()
+	if !strings.Contains(msg, "did not answer") {
+		t.Errorf("errStoreUnresponsive = %q, want it to say the store did not answer", msg)
+	}
+	if !strings.Contains(msg, storeDeadline.String()) {
+		t.Errorf("errStoreUnresponsive = %q, want it to name the wait (%v)", msg, storeDeadline)
+	}
+	// Distinct from a rejection, whose message comes from JavaScript's own String().
+	if strings.Contains(msg, "rejected") {
+		t.Errorf("errStoreUnresponsive = %q reads like a rejection; the two must not be confused", msg)
 	}
 }
 
