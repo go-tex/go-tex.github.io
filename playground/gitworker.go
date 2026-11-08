@@ -47,6 +47,76 @@ func awaitSignal(ready <-chan struct{}, d time.Duration) bool {
 	}
 }
 
+// workerCallIdleDeadline bounds the SILENCE after a request has been posted, not
+// the operation's total time.
+//
+// ⛔⛔ A FIXED TIMEOUT HERE WOULD BE A WORSE DEFECT THAN THE HANG. Cloning a large
+// repository over a slow link legitimately takes minutes, and a call killed at
+// its deadline would turn a working clone into a failure the user cannot even
+// retry into success. What is never legitimate is a worker that has gone quiet:
+// go-git's sideband means clone and pull report progress continuously, so the
+// distinction available to us is not fast/slow but SPEAKING/STOPPED.
+//
+// Sixty seconds of complete silence — no reply, no progress notification —
+// therefore reads as stopped. #212's hang is exactly this shape measured from
+// the outside: #223's boot deadline does NOT fire on that run, which proves the
+// worker instantiated, and then the clone request is posted to a live worker and
+// nothing ever comes back. The reply channel was waited on with no deadline at
+// all, so the page could only sit there, and the CI driver could only report
+// "90000ms exceeded" — a silence, not a diagnosis.
+const workerCallIdleDeadline = 60 * time.Second
+
+// awaitReply waits for a terminal reply, treating any progress notification as
+// proof of life that restarts the clock. ok is false when nothing at all arrived
+// for d.
+//
+// progress carries one token per notification; the caller may drop tokens when
+// they pile up (a non-blocking send into a buffered channel), because the
+// question asked here is whether ANY arrived, never how many.
+func awaitReply(reply <-chan gitrpc.Reply, progress <-chan struct{}, d time.Duration) (gitrpc.Reply, bool) {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	for {
+		select {
+		case r := <-reply:
+			return r, true
+		case <-progress:
+			// Alive and working. Reset the clock rather than counting against a
+			// total, so a long clone that keeps reporting is never cut off.
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(d)
+		case <-timer.C:
+			return gitrpc.Reply{}, false
+		}
+	}
+}
+
+// workerStalledReply is what a call gets when the worker accepted the request and
+// then went silent.
+//
+// It NAMES the operation, and says plainly that it stopped responding rather than
+// that it failed: "the clone was refused" and "the clone was never answered" send
+// a reader to different places, and only one of them is worth retrying. The code
+// is distinct from "worker" (the client never loaded) for the same reason.
+func workerStalledReply(id int, op string) gitrpc.Reply {
+	name := op
+	if name == "" {
+		name = "the git operation"
+	}
+	return gitrpc.Reply{
+		ID:   id,
+		OK:   false,
+		Code: "stalled",
+		Error: "the git client stopped responding during " + name +
+			" (no progress for " + workerCallIdleDeadline.String() + ")",
+	}
+}
+
 // This file is the main app's HALF of the off-thread git split: the [gitBackend]
 // that drives a separate git-worker.wasm over the [gitrpc] message protocol,
 // WITHOUT importing internal/browsergit (so go-git is dead-code-eliminated out of
