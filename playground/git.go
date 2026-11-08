@@ -291,6 +291,11 @@ type gitView struct {
 	// editor's own buffer (the sample document) compiles.
 	primaryPath string
 
+	// io is the host's file picker and download, installed by the wasm driver
+	// (hostfiles_js.go). Zero off-wasm, which is how the workspace's Import and
+	// Export buttons know to disable rather than fail: there is no host to ask.
+	io hostFileIO
+
 	// derived display snapshots, refreshed on each successful op (not per frame).
 	files    []string // the whole working-tree file list
 	texFiles []string // just the .tex paths, for the picker

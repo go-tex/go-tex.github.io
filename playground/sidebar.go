@@ -99,7 +99,9 @@ const (
 	sbRolePull
 	sbRolePush
 	sbRoleForget
-	sbRoleClone // empty-state action: open the Remote-Git panel to clone
+	sbRoleClone  // empty-state action: open the Remote-Git panel to clone
+	sbRoleImport // take a file off this computer into the workspace
+	sbRoleExport // hand the open file's current text back to this computer
 )
 
 // sidebarButton is a laid-out command button: its role, rect and label.
@@ -107,6 +109,12 @@ type sidebarButton struct {
 	role  sidebarRole
 	rect  toolkit.Rect
 	label string
+	// disabled is this button's OWN reason to be unavailable, independent of the
+	// busy flag that greys the network commands. Import and Export have one the
+	// others do not: off-wasm, and in any host that installs no file IO, there is
+	// nothing on the other side of them — and a button that looks live and does
+	// nothing is worse than one that is plainly out of reach.
+	disabled bool
 }
 
 // sidebar is the workspace sidebar affordance. All display state is derived each
@@ -442,15 +450,32 @@ func (b *sidebar) layout() {
 		}
 		b.emptyRect = toolkit.Rect{X: innerX, Y: bodyY, W: innerW, H: bodyH}
 		b.empty.SetBounds(b.emptyRect)
+		// ⛔ Import belongs in the EMPTY state, not only beside the git commands.
+		// Cloning was the only way to put a document in this workspace, which made
+		// "bring your own .tex" conditional on having a repository to bring it to —
+		// the opposite of the order a user arrives in. The two sit side by side.
 		cw := toolkit.Scaled(120)
-		if cw > innerW {
-			cw = innerW
+		if 2*cw+gap > innerW {
+			cw = (innerW - gap) / 2
 		}
-		b.buttons = append(b.buttons, sidebarButton{
-			role:  sbRoleClone,
-			rect:  toolkit.Rect{X: r.X + (r.W-cw)/2, Y: r.Y + r.H - pad - btnH, W: cw, H: btnH},
-			label: "Clone…",
-		})
+		if cw < 1 {
+			cw = 1
+		}
+		rowY := r.Y + r.H - pad - btnH
+		rowX := r.X + (r.W-(2*cw+gap))/2
+		b.buttons = append(b.buttons,
+			sidebarButton{
+				role:  sbRoleClone,
+				rect:  toolkit.Rect{X: rowX, Y: rowY, W: cw, H: btnH},
+				label: "Clone…",
+			},
+			sidebarButton{
+				role:     sbRoleImport,
+				rect:     toolkit.Rect{X: rowX + cw + gap, Y: rowY, W: cw, H: btnH},
+				label:    "Import…",
+				disabled: b.s.git.io.Import == nil,
+			},
+		)
 		b.treeRect = toolkit.Rect{}
 		b.tlRect = toolkit.Rect{}
 		b.detailRect = toolkit.Rect{}
@@ -467,6 +492,11 @@ func (b *sidebar) layout() {
 		// Drops the copy this browser keeps, so the next visit clones afresh.
 		// It leaves the open workspace alone — see [State.GitForget].
 		{role: sbRoleForget, label: "Forget"},
+		// Off the network entirely: these two talk to the host machine, not the
+		// remote, so they carry their own reason to be unavailable rather than the
+		// busy flag's.
+		{role: sbRoleImport, label: "Import…", disabled: b.s.git.io.Import == nil},
+		{role: sbRoleExport, label: "Export…", disabled: b.s.git.io.Export == nil},
 	}
 	for start := 0; start < len(cmds); start += 3 {
 		end := start + 3
@@ -748,7 +778,7 @@ func (b *sidebar) drawButtons(p painter.Painter, theme *toolkit.Theme) {
 		bt := b.btn(sbBtn.role, sbBtn.label)
 		bt.Label().Set(sbBtn.label)
 		bt.SetBounds(sbBtn.rect)
-		bt.Disabled().Set(busy)
+		bt.Disabled().Set(busy || sbBtn.disabled)
 		bt.Draw(p, theme)
 	}
 }
@@ -876,6 +906,17 @@ func (b *sidebar) dispatch(role sidebarRole) {
 		b.s.GitPush(nil)
 	case sbRoleClone:
 		b.s.git.openPanel()
+	case sbRoleImport:
+		// ⛔ Guarded here as well as drawn disabled: a click's path to this point
+		// runs through the button widget, and a guard that lives only in how the
+		// button is PAINTED is one refactor away from a nil call. The picker is
+		// asynchronous — deliver runs once per chosen file, later, on the event
+		// loop — so nothing after this call may assume a file arrived.
+		if b.s.git.io.Import != nil {
+			b.s.git.io.Import(b.s.git.importDelivered)
+		}
+	case sbRoleExport:
+		b.s.git.exportActive()
 	}
 	b.commitDetail = ""
 	b.s.git.refresh()
