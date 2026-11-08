@@ -45,7 +45,25 @@ jobs:
     # (TestCollabBrowserConvergence, TestCollabTwoTabConvergence) and the STUN/ICE
     # config proofs (TestCollabICEFieldBrowser, TestCollabFailureBrowser): those
     # need STUN network egress and are known-flaky in CI sandboxes.
-    runs-on: ubuntu-latest
+    #
+    # ⛔ TEMPORARY, FOR #212 — this matrix is a measurement, not a configuration.
+    # browser-proofs has been red on every run since 2026-10-25 and green on the
+    # run of 2026-10-24, and `ubuntu-latest` began migrating to 26.04 in exactly
+    # that window. The job's logs from either side of the boundary have aged out
+    # of retention, so history cannot answer it; and an absent log is not evidence
+    # for either image. So the question is asked directly: the SAME commit on BOTH
+    # images in ONE run, with fail-fast off so a red on one does not hide the
+    # other's verdict. The pair is the witness — a green on 24.04 beside a red on
+    # 26.04 attributes the failure to the image, and two reds refute the idea and
+    # send the search back to the dependency graph #212 localises.
+    #
+    # Whichever way it falls, this matrix comes back out: the outcome is a pin or a
+    # fix, never a permanent doubling of the job.
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [ubuntu-24.04, ubuntu-26.04]
+    runs-on: ${{ matrix.image }}
     defaults:
       run:
         working-directory: playground
