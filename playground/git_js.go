@@ -59,6 +59,11 @@ func (s *State) EnableGit(repaint func()) {
 			repaint()
 		}
 	}
+	// Files in and out of this computer. It rides on EnableGit rather than on a
+	// call of its own because the host that has a DOM to pick files with is
+	// exactly the host that installs the git backend, and a second entry point
+	// would be a second thing for a driver to forget.
+	s.enableHostFiles(repaint)
 	b := newWorkerGitBackend(t)
 	// Once the client wasm has landed the clone talks to the remote, and go-git's
 	// sideband ("Counting objects…", "Receiving objects:  45% (450/1000)") flows
