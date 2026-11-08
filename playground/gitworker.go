@@ -5,6 +5,7 @@ package playground
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -73,14 +74,24 @@ const workerCallIdleDeadline = 60 * time.Second
 // progress carries one token per notification; the caller may drop tokens when
 // they pile up (a non-blocking send into a buffered channel), because the
 // question asked here is whether ANY arrived, never how many.
-func awaitReply(reply <-chan gitrpc.Reply, progress <-chan struct{}, d time.Duration) (gitrpc.Reply, bool) {
+// seen is how many proof-of-life notifications arrived before it gave up, and it
+// is not a statistic: it is the difference between two faults that are otherwise
+// reported identically. ⛔ The message alone cannot carry it. If one notification
+// arrives, the clock RESTARTS and the same silence follows, so "no progress for
+// 1m0s" comes out the same whether the operation never started or started and
+// then stalled — which is exactly the ambiguity the worker's dispatch
+// announcement was added to resolve, and could not, because the only thing a CI
+// log shows is this sentence.
+func awaitReply(reply <-chan gitrpc.Reply, progress <-chan struct{}, d time.Duration) (gitrpc.Reply, bool, int) {
 	timer := time.NewTimer(d)
 	defer timer.Stop()
+	seen := 0
 	for {
 		select {
 		case r := <-reply:
-			return r, true
+			return r, true, seen
 		case <-progress:
+			seen++
 			// Alive and working. Reset the clock rather than counting against a
 			// total, so a long clone that keeps reporting is never cut off.
 			if !timer.Stop() {
@@ -91,7 +102,7 @@ func awaitReply(reply <-chan gitrpc.Reply, progress <-chan struct{}, d time.Dura
 			}
 			timer.Reset(d)
 		case <-timer.C:
-			return gitrpc.Reply{}, false
+			return gitrpc.Reply{}, false, seen
 		}
 	}
 }
@@ -103,17 +114,27 @@ func awaitReply(reply <-chan gitrpc.Reply, progress <-chan struct{}, d time.Dura
 // that it failed: "the clone was refused" and "the clone was never answered" send
 // a reader to different places, and only one of them is worth retrying. The code
 // is distinct from "worker" (the client never loaded) for the same reason.
-func workerStalledReply(id int, op string) gitrpc.Reply {
+// ⛔ seen belongs IN the message, because without it the message cannot be read.
+// A request that never ran and an operation that ran and then went quiet produce
+// the same silence and therefore the same sentence — and one sentence covering two
+// unrelated faults sends the next reader to the wrong half of the system. "Never
+// reported anything at all" points at the queue; "after 4 notifications" points
+// inside the operation.
+func workerStalledReply(id int, op string, seen int) gitrpc.Reply {
 	name := op
 	if name == "" {
 		name = "the git operation"
+	}
+	since := "it never reported anything at all"
+	if seen > 0 {
+		since = "after " + strconv.Itoa(seen) + " notification(s)"
 	}
 	return gitrpc.Reply{
 		ID:   id,
 		OK:   false,
 		Code: "stalled",
 		Error: "the git client stopped responding during " + name +
-			" (no progress for " + workerCallIdleDeadline.String() + ")",
+			" (" + since + "; no progress for " + workerCallIdleDeadline.String() + ")",
 	}
 }
 

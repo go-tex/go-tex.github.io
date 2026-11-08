@@ -15,7 +15,10 @@ func TestAwaitReplyReturnsAnAnswerAtOnce(t *testing.T) {
 	reply <- gitrpc.Reply{ID: 7, OK: true}
 
 	start := time.Now()
-	got, ok := awaitReply(reply, make(chan struct{}), time.Hour)
+	got, ok, seen := awaitReply(reply, make(chan struct{}), time.Hour)
+	if seen != 0 {
+		t.Errorf("seen = %d for a reply that needed no waiting", seen)
+	}
 	if !ok {
 		t.Fatal("awaitReply reported no answer when one was waiting")
 	}
@@ -30,7 +33,7 @@ func TestAwaitReplyReturnsAnAnswerAtOnce(t *testing.T) {
 // Total silence is the only thing it refuses.
 func TestAwaitReplyGivesUpOnSilence(t *testing.T) {
 	start := time.Now()
-	if _, ok := awaitReply(make(chan gitrpc.Reply), make(chan struct{}), 40*time.Millisecond); ok {
+	if _, ok, _ := awaitReply(make(chan gitrpc.Reply), make(chan struct{}), 40*time.Millisecond); ok {
 		t.Fatal("awaitReply reported an answer from a channel nothing was ever sent on")
 	}
 	if elapsed := time.Since(start); elapsed < 40*time.Millisecond {
@@ -62,7 +65,11 @@ func TestProgressKeepsALongOperationAlive(t *testing.T) {
 	}()
 
 	start := time.Now()
-	got, ok := awaitReply(reply, alive, idle)
+	got, ok, seen := awaitReply(reply, alive, idle)
+	// The count is what makes the stalled message readable, so it has to be real.
+	if seen == 0 {
+		t.Error("seen = 0 although the operation reported progress throughout")
+	}
 	if !ok {
 		t.Fatalf("a call that reported progress throughout was called stalled after %v", time.Since(start))
 	}
@@ -90,7 +97,7 @@ func TestWithoutProofOfLifeALongCallIsCutOff(t *testing.T) {
 		time.Sleep(150 * time.Millisecond)
 		reply <- gitrpc.Reply{ID: 5, OK: true}
 	}()
-	if _, ok := awaitReply(reply, make(chan struct{}), 40*time.Millisecond); ok {
+	if _, ok, _ := awaitReply(reply, make(chan struct{}), 40*time.Millisecond); ok {
 		t.Fatal("a call with no proof-of-life channel outlived its idle deadline; the deadline is not real")
 	}
 }
@@ -112,7 +119,7 @@ func TestProgressThatStopsIsStillStalled(t *testing.T) {
 		// and then nothing, for ever
 	}()
 
-	if _, ok := awaitReply(make(chan gitrpc.Reply), alive, idle); ok {
+	if _, ok, _ := awaitReply(make(chan gitrpc.Reply), alive, idle); ok {
 		t.Fatal("a worker that went quiet after a few notifications was reported as having answered")
 	}
 }
@@ -121,7 +128,7 @@ func TestProgressThatStopsIsStillStalled(t *testing.T) {
 // refused" looks at the remote; one told "it stopped responding" retries or
 // reloads — and only the second is true here.
 func TestStalledReplyNamesTheOperation(t *testing.T) {
-	r := workerStalledReply(11, gitrpc.OpClone)
+	r := workerStalledReply(11, gitrpc.OpClone, 0)
 	if r.OK {
 		t.Error("a stalled reply must not report OK")
 	}
@@ -140,8 +147,24 @@ func TestStalledReplyNamesTheOperation(t *testing.T) {
 		t.Errorf("stalled reply code = %q, want \"stalled\" — distinct from \"worker\"", r.Code)
 	}
 	// An unnamed op still produces a sentence, not a dangling "during ".
-	if e := workerStalledReply(1, "").Error; strings.Contains(e, "during  ") || strings.HasSuffix(e, "during ") {
+	if e := workerStalledReply(1, "", 0).Error; strings.Contains(e, "during  ") || strings.HasSuffix(e, "during ") {
 		t.Errorf("an unnamed operation left a gap in %q", e)
+	}
+
+	// ⛔ THE DISTINCTION THE MESSAGE EXISTS TO CARRY. Nothing else in a CI log can
+	// tell "the request never ran" from "it ran and went quiet": one notification
+	// restarts the clock, so the same silence and the same sentence follow either
+	// way. These two messages must not be confusable.
+	never := workerStalledReply(2, gitrpc.OpClone, 0).Error
+	stalled := workerStalledReply(2, gitrpc.OpClone, 4).Error
+	if never == stalled {
+		t.Fatal("a request that never reported reads identically to one that stalled after reporting")
+	}
+	if !strings.Contains(never, "never reported anything") {
+		t.Errorf("with no notifications the message must say so: %q", never)
+	}
+	if !strings.Contains(stalled, "4") {
+		t.Errorf("with notifications the message must count them: %q", stalled)
 	}
 }
 

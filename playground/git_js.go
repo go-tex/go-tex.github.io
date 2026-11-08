@@ -309,7 +309,7 @@ func (w *jsWorkerTransport) Call(req gitrpc.Request, onProgress func(gitrpc.Prog
 	worker.Call("postMessage", gitrpc.EncodeRequest(req))
 	// ⛔ Bounded by SILENCE, not by elapsed time — a clone that keeps reporting
 	// progress is never cut off, however long it takes (see workerCallIdleDeadline).
-	reply, ok := awaitReply(ch, alive, workerCallIdleDeadline)
+	reply, ok, seen := awaitReply(ch, alive, workerCallIdleDeadline)
 	if ok {
 		return reply
 	}
@@ -322,7 +322,7 @@ func (w *jsWorkerTransport) Call(req gitrpc.Request, onProgress func(gitrpc.Prog
 	delete(w.progressCbs, req.ID)
 	delete(w.alive, req.ID)
 	w.mu.Unlock()
-	return workerStalledReply(req.ID, req.Op)
+	return workerStalledReply(req.ID, req.Op, seen)
 }
 
 // workerDeadReply is what a call gets when the Worker itself never came up. It
