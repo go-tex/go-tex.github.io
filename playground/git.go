@@ -905,8 +905,24 @@ func (v *gitView) bufferContent(p string) (string, bool) {
 
 // bufferDirty reports whether path's edit buffer differs from its committed /
 // indexed content (the git backend cache the last clone/pull/commit/stage/flush
-// filled). A path with no buffer, or an uncached file (nothing to compare), reads
-// not-dirty.
+// filled). A path with no buffer reads not-dirty.
+//
+// ⛔⛔ A FILE THE REPOSITORY HAS NEVER HEARD OF IS DIRTY, NOT CLEAN. This used to
+// read not-dirty, because the only question asked was whether the backend's copy
+// DIFFERS — and for a path with no backend copy that read fails, which is not the
+// same answer as "they match". A file imported from the host (#224) lives only as
+// a buffer, so it was judged clean, left out of flushDirty's write-back, and
+// silently absent from every stage and commit: a tab, the text on screen, a
+// notice saying it was imported, and nothing in the repository. The user is told
+// "nothing to commit" about the file they just brought in.
+//
+// ⛔ The read failing is not on its own enough to call a file new, which is why
+// the working-tree list decides it. A transport that cannot answer for a file the
+// repository DOES list is a failure to measure, and answering "dirty" there would
+// write a buffer back over a file we could not read — including resurrecting one
+// that had been deleted. So: listed and unreadable ⇒ unknown, stay out of the
+// write-back; not listed at all ⇒ the workspace holds a file the repository does
+// not, which is exactly what new means.
 func (v *gitView) bufferDirty(p string) bool {
 	content, ok := v.bufferContent(p)
 	if !ok {
@@ -914,9 +930,20 @@ func (v *gitView) bufferDirty(p string) bool {
 	}
 	data, err := v.backend.ReadFile(p)
 	if err != nil {
-		return false
+		return !v.treeLists(p)
 	}
 	return string(data) != content
+}
+
+// treeLists reports whether the working tree the last clone/pull/refresh reported
+// contains p. It is what separates "new file" from "unreadable file" above.
+func (v *gitView) treeLists(p string) bool {
+	for _, f := range v.files {
+		if f == p {
+			return true
+		}
+	}
+	return false
 }
 
 // GitOpenFile opens working-tree path into the source editor (the sidebar's
