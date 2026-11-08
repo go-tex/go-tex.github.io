@@ -193,6 +193,27 @@ type gitView struct {
 	// Empty outside a boot clone, where an explicit Clone always loads.
 	bootBuffer string
 
+	// bootDeclined suppresses the boot clone of [DefaultRemoteURL].
+	//
+	// ⛔⛔ IT EXISTS FOR THE BROWSER PROOFS, AND #212 IS WHY. The worker drains
+	// requests with ONE goroutine, by design — it serialises a worktree that is not
+	// concurrency-safe — and the boot clone is the FIRST request on it, posted
+	// before a proof has configured anything. A boot clone that hangs therefore does
+	// not merely fail itself: the clone the test actually asked for never gets its
+	// turn, and the symptom is the test's own LOCAL origin recording that not one
+	// request arrived while the worker looks perfectly alive.
+	//
+	// It cannot even succeed there. DefaultRemoteURL's Forgejo answers
+	// `access-control-allow-origin: https://go-tex.github.io`, and a proof page is
+	// served from 127.0.0.1 on an ephemeral port, so the browser refuses the
+	// response whatever the network does. The only two outcomes are a fast failure
+	// (the proofs pass) or a hang against an unreachable host (they do not) — which
+	// is precisely the intermittency #212 recorded, and why these proofs pass on a
+	// workstation that can reach that host and fail on a runner that cannot.
+	//
+	// A page that wants the samples simply does not set it: the default is to clone.
+	bootDeclined bool
+
 	// cloneGen counts clone attempts so a superseded one cannot act on its
 	// result, and bootInFlight says whether the running one is the speculative
 	// boot clone.
@@ -1719,6 +1740,17 @@ func (nopGitBackend) Status() (gitStatus, bool)       { return gitStatus{}, fals
 func (nopGitBackend) Log(int) []GitCommitInfo         { return nil }
 func (nopGitBackend) HasRepo() bool                   { return false }
 
+// DeclineBootClone tells the app not to open [DefaultRemoteURL] at start-up.
+//
+// It is for a host that drives the git panel itself — the browser proofs — where
+// the boot clone is not merely unnecessary but actively harmful: it occupies the
+// worker's single request goroutine before the page has been configured, and it
+// is reaching a remote whose CORS policy cannot answer a 127.0.0.1 page anyway.
+// See [gitView.bootDeclined] for the measurement behind that.
+//
+// It must be called before [State.BootClone]; afterwards it has nothing to stop.
+func (s *State) DeclineBootClone() { s.git.bootDeclined = true }
+
 // errNoBrowserGit explains why the no-op backend never clones.
 var errNoBrowserGit = errors.New("git: remote git needs a browser")
 
@@ -1736,10 +1768,11 @@ var errNoBrowserGit = errors.New("git: remote git needs a browser")
 // if it is still untouched.
 //
 // It is a no-op with no backend (a headless test), with a repository already
-// open, or when a clone is already in flight.
+// open, when a clone is already in flight, or when the host has declined it
+// (see [State.DeclineBootClone]).
 func (s *State) BootClone(done func(err error)) {
 	v := s.git
-	if v.backend == nil || v.busy.Get() || v.backend.HasRepo() {
+	if v.backend == nil || v.busy.Get() || v.backend.HasRepo() || v.bootDeclined {
 		if done != nil {
 			done(nil)
 		}

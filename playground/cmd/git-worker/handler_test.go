@@ -5,6 +5,7 @@ package main
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/go-tex/go-tex.github.io/playground/internal/browsergit"
@@ -520,16 +521,25 @@ func TestCloneStreamsProgress(t *testing.T) {
 	if !reply.OK || reply.Progress != nil {
 		t.Fatalf("terminal reply = %+v (must be OK with nil Progress)", reply)
 	}
-	if len(notes) != 2 {
-		t.Fatalf("emitted %d progress notes, want 2: %+v", len(notes), notes)
+	// Three: the dispatch announcement, then the two sideband lines. The
+	// announcement is FIRST and carries no fraction, which is what lets it mean
+	// "this op is running" without pretending to know how far along it is.
+	if len(notes) != 3 {
+		t.Fatalf("emitted %d progress notes, want 3 (started + 2 sideband): %+v", len(notes), notes)
 	}
 	for _, n := range notes {
 		if n.ID != 7 || n.Progress == nil {
 			t.Fatalf("progress note not tagged for the op: %+v", n)
 		}
 	}
-	if notes[1].Progress.Fraction != 0.5 || notes[1].Progress.Phase != "Receiving objects" {
-		t.Fatalf("second note payload = %+v", *notes[1].Progress)
+	if !strings.Contains(notes[0].Progress.Line, gitrpc.OpClone) || !strings.Contains(notes[0].Progress.Line, "started") {
+		t.Fatalf("first note must announce the dispatched op, got %+v", *notes[0].Progress)
+	}
+	if notes[0].Progress.Fraction >= 0 {
+		t.Fatalf("the announcement must be indeterminate, not a fraction: %+v", *notes[0].Progress)
+	}
+	if notes[2].Progress.Fraction != 0.5 || notes[2].Progress.Phase != "Receiving objects" {
+		t.Fatalf("last note payload = %+v", *notes[2].Progress)
 	}
 	// The sink is detached after the op, so a later session emit reaches nobody.
 	if f.progress != nil {
@@ -551,8 +561,12 @@ func TestPullStreamsProgress(t *testing.T) {
 	if reply := h.dispatch(gitrpc.Request{ID: 3, Op: gitrpc.OpPull}); !reply.OK {
 		t.Fatalf("pull reply = %+v", reply)
 	}
-	if len(notes) != 1 || notes[0].ID != 3 || notes[0].Progress == nil {
+	// The dispatch announcement plus the one sideband line.
+	if len(notes) != 2 || notes[0].ID != 3 || notes[0].Progress == nil || notes[1].Progress == nil {
 		t.Fatalf("pull progress notes = %+v", notes)
+	}
+	if !strings.Contains(notes[0].Progress.Line, gitrpc.OpPull) {
+		t.Fatalf("pull's first note must name the op: %+v", *notes[0].Progress)
 	}
 
 	// With no emit hook the pull still succeeds and streams nothing.

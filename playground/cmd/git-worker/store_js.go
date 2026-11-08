@@ -29,6 +29,7 @@ package main
 import (
 	"errors"
 	"syscall/js"
+	"time"
 )
 
 // cacheName is the single Cache the workspaces live in.
@@ -45,10 +46,16 @@ func workspaceKey(url, branch string) string {
 	return js.Global().Get("location").Get("origin").String() + workspacePath(url, branch)
 }
 
-// await blocks the calling goroutine on a JS promise. It is only ever called
-// from the worker's single request goroutine, never from the event loop, so the
-// block yields to JavaScript rather than deadlocking it — the same contract the
-// git round-trips already rely on.
+// await blocks the calling goroutine on a JS promise, bounded by storeDeadline.
+//
+// It is only ever called from the worker's single request goroutine, never from
+// the event loop, so the block yields to JavaScript rather than deadlocking it —
+// the same contract the git round-trips already rely on.
+//
+// ⛔ But "single" is also why the bound is not optional: a promise that never
+// settles parks the ONLY goroutine that drains requests, so every later operation
+// queues behind it for ever. See storeDeadline (deadline.go) for the measurement
+// that led here.
 func await(promise js.Value) (js.Value, error) {
 	type result struct {
 		value js.Value
@@ -64,7 +71,6 @@ func await(promise js.Value) (js.Value, error) {
 		ch <- result{value: v}
 		return nil
 	})
-	defer onOK.Release()
 
 	onErr := js.FuncOf(func(_ js.Value, args []js.Value) any {
 		msg := "rejected"
@@ -74,11 +80,27 @@ func await(promise js.Value) (js.Value, error) {
 		ch <- result{err: errors.New(msg)}
 		return nil
 	})
-	defer onErr.Release()
+	// ⛔ No deferred Release: the two paths below free them differently, because
+	// only one of them knows the promise will never call them again.
 
 	promise.Call("then", onOK, onErr)
-	r := <-ch
-	return r.value, r.err
+	select {
+	case r := <-ch:
+		// Settled, so the other handler can never fire — a promise settles once —
+		// and both are safe to free.
+		onOK.Release()
+		onErr.Release()
+		return r.value, r.err
+	case <-time.After(storeDeadline):
+		// ⛔ NEITHER CALLBACK IS RELEASED HERE, deliberately. JavaScript cannot
+		// cancel a promise, so this one is abandoned rather than stopped and it may
+		// still settle later; calling a released js.Func panics the Go runtime, so
+		// freeing them now would trade a hung worker for a crashed one. They are
+		// left registered — two js.Func per timed-out call, bounded by how often a
+		// browser fails to answer at all — and ch is buffered so a late settle has
+		// somewhere to put its result instead of blocking the event loop.
+		return js.Undefined(), errStoreUnresponsive
+	}
 }
 
 // openCache opens the workspace cache, or reports that this browser has none to

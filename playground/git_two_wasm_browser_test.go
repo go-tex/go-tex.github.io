@@ -31,7 +31,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // gitWorkerMarker is the edit the panel commits + pushes; the native witness greps
@@ -195,6 +197,23 @@ func seedGitPanelRepo(t *testing.T, root, name string, files map[string]string) 
 
 // startCORSGitOrigin serves everything under root via git-http-backend with the
 // permissive CORS headers a sovereign proxy / CORS-enabled Forgejo would add.
+//
+// ⛔ It TRACES every request, and the trace is the instrument for #212. The git
+// proofs fail there with "the git client stopped responding during clone (no
+// progress for 1m0s)" — the clone is posted to a live worker and never reaches
+// its first sideband line. From the browser's side that single symptom covers
+// three different faults, and the server is the only place that tells them apart:
+//
+//   - nothing recorded at all → the fetch never left the Worker;
+//   - recorded, never completed → this handler hangs, and since it is
+//     git-http-backend run as CGI, that means the runner's own git did;
+//   - recorded and completed → the response never got back into Go.
+//
+// Only the second is about our test rig, and it is the one a workstation would
+// never show: the proofs pass here and fail on every CI runner, on BOTH images
+// (measured on #226). The trace prints in a cleanup, which runs on the test's own
+// goroutine, so a handler still parked when the test ends records no completion —
+// and that absence is the answer, not a lost log line.
 func startCORSGitOrigin(t *testing.T, root string) *httptest.Server {
 	t.Helper()
 	backend := gitBackendPath(t)
@@ -202,8 +221,28 @@ func startCORSGitOrigin(t *testing.T, root string) *httptest.Server {
 		Path: backend,
 		Env:  []string{"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1"},
 	}
+
+	var mu sync.Mutex
+	type exchange struct {
+		what string
+		done bool
+		took time.Duration
+	}
+	var seen []*exchange
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		ex := &exchange{what: r.Method + " " + r.URL.RequestURI()}
+		mu.Lock()
+		seen = append(seen, ex)
+		mu.Unlock()
+		start := time.Now()
+		defer func() {
+			mu.Lock()
+			ex.done, ex.took = true, time.Since(start)
+			mu.Unlock()
+		}()
+
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Git-Protocol,Authorization")
@@ -215,6 +254,25 @@ func startCORSGitOrigin(t *testing.T, root string) *httptest.Server {
 		h.ServeHTTP(w, r)
 	})
 	srv := httptest.NewServer(mux)
+	t.Cleanup(func() {
+		// Read the trace BEFORE Close: closing waits on outstanding handlers, so a
+		// hung one would hold the report that explains the hang.
+		mu.Lock()
+		report := make([]string, 0, len(seen))
+		for _, ex := range seen {
+			if ex.done {
+				report = append(report, "  served   "+ex.what+" in "+ex.took.String())
+				continue
+			}
+			report = append(report, "  ⛔ HUNG  "+ex.what+" — the handler never returned")
+		}
+		mu.Unlock()
+		if len(report) == 0 {
+			t.Log("git origin: NOT ONE REQUEST ARRIVED — the clone's fetch never left the browser")
+			return
+		}
+		t.Logf("git origin served %d request(s):\n%s", len(report), strings.Join(report, "\n"))
+	})
 	t.Cleanup(srv.Close)
 	return srv
 }

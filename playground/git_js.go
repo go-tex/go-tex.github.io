@@ -59,6 +59,20 @@ func (s *State) EnableGit(repaint func()) {
 			repaint()
 		}
 	}
+	// ⛔ And the case where it never lands. The asset bar is honest about not
+	// knowing how far a download has come, but it cannot say that the download
+	// stopped mattering — so after workerBootDeadline the page is TOLD, in the
+	// same place it is told why a sample repository is missing. Without this the
+	// reader waits on an indeterminate bar for ever, which is what "slow to
+	// appear, and you cannot tell why" actually was.
+	t.onStalled = func() {
+		s.SetAssetLoading("")
+		s.SetBootNotice("The git client (git-worker.wasm) did not start. " +
+			"Git actions are unavailable; reloading the page retries it.")
+		if repaint != nil {
+			repaint()
+		}
+	}
 	// Files in and out of this computer. It rides on EnableGit rather than on a
 	// call of its own because the host that has a DOM to pick files with is
 	// exactly the host that installs the git backend, and a second entry point
@@ -89,6 +103,10 @@ type jsWorkerTransport struct {
 	// notification (a reply carrying a Progress field) is routed here WITHOUT
 	// resolving the call; the terminal reply clears both maps together.
 	progressCbs map[int]func(gitrpc.Progress)
+	// alive carries one token per progress notification to the goroutine waiting
+	// on that call's reply, so the idle deadline in gitworker.go can tell a slow
+	// operation from a stopped one. Keyed like pending, and cleared with it.
+	alive map[int]chan struct{}
 
 	readyOnce sync.Once
 	readyCh   chan struct{}
@@ -98,8 +116,12 @@ type jsWorkerTransport struct {
 	// event-loop goroutine, inside the message handler.
 	onProgress func(frac float64)
 	onReady    func()
-	onmessage  js.Func
-	onerror    js.Func
+	// onStalled is called once when the wasm has not reported ready within
+	// workerBootDeadline, so the host can put the reason on the page instead of
+	// leaving a bar that never resolves.
+	onStalled func()
+	onmessage js.Func
+	onerror   js.Func
 }
 
 // newJSWorkerTransport builds an unspawned transport; the Worker is created lazily
@@ -108,6 +130,7 @@ func newJSWorkerTransport() *jsWorkerTransport {
 	return &jsWorkerTransport{
 		pending:     map[int]chan gitrpc.Reply{},
 		progressCbs: map[int]func(gitrpc.Progress){},
+		alive:       map[int]chan struct{}{},
 		readyCh:     make(chan struct{}),
 	}
 }
@@ -170,9 +193,20 @@ func (w *jsWorkerTransport) Spawn() {
 		if reply.Progress != nil {
 			w.mu.Lock()
 			cb := w.progressCbs[reply.ID]
+			alive := w.alive[reply.ID]
 			w.mu.Unlock()
 			if cb != nil {
 				cb(*reply.Progress)
+			}
+			// Proof of life for the idle deadline, whether or not this op asked for
+			// a progress sink of its own. A non-blocking send: the waiter asks only
+			// whether any notification arrived, so a full buffer already answers it
+			// and dropping the token is correct, not a loss.
+			if alive != nil {
+				select {
+				case alive <- struct{}{}:
+				default:
+				}
 			}
 			return nil
 		}
@@ -180,6 +214,7 @@ func (w *jsWorkerTransport) Spawn() {
 		ch := w.pending[reply.ID]
 		delete(w.pending, reply.ID)
 		delete(w.progressCbs, reply.ID)
+		delete(w.alive, reply.ID)
 		w.mu.Unlock()
 		if ch != nil {
 			ch <- reply
@@ -202,6 +237,7 @@ func (w *jsWorkerTransport) Spawn() {
 		pending := w.pending
 		w.pending = map[int]chan gitrpc.Reply{}
 		w.progressCbs = map[int]func(gitrpc.Progress){}
+		w.alive = map[int]chan struct{}{}
 		w.mu.Unlock()
 		for id, ch := range pending {
 			ch <- workerDeadReply(id)
@@ -212,6 +248,39 @@ func (w *jsWorkerTransport) Spawn() {
 	w.worker.Set("onerror", w.onerror)
 }
 
+// awaitReady waits for the worker's wasm to report ready and says whether it
+// did, bounded by workerBootDeadline (gitworker.go, where the reason it exists
+// is written down). On expiry it marks the transport dead, so later calls fail
+// at once instead of each paying the deadline again, and the host's onStalled is
+// told so something can be put on the page. A call that gives up gets
+// workerDeadReply, which NAMES the asset: "it did not load" is a different
+// problem from "the clone was refused", and the reader is owed the difference.
+func (w *jsWorkerTransport) awaitReady() bool {
+	if awaitSignal(w.readyCh, workerBootDeadline) {
+		return true
+	}
+	w.mu.Lock()
+	already := w.dead
+	w.dead = true
+	pending := w.pending
+	w.pending = map[int]chan gitrpc.Reply{}
+	w.progressCbs = map[int]func(gitrpc.Progress){}
+	w.alive = map[int]chan struct{}{}
+	stalled := w.onStalled
+	w.mu.Unlock()
+	// Anything already queued behind the boot is answered rather than left to
+	// wait on a worker that will not serve it.
+	for id, ch := range pending {
+		ch <- workerDeadReply(id)
+	}
+	// Unblock any other goroutine sitting on the same channel.
+	w.readyOnce.Do(func() { close(w.readyCh) })
+	if !already && stalled != nil {
+		stalled()
+	}
+	return false
+}
+
 // Call posts req to the worker and blocks until the matching reply arrives. It is
 // only invoked from op-goroutines, so the block yields to the page event loop.
 // onProgress, when non-nil, receives the op's server-side progress notifications
@@ -219,9 +288,14 @@ func (w *jsWorkerTransport) Spawn() {
 // the event-loop goroutine inside the message handler, like onProgress/onReady.
 func (w *jsWorkerTransport) Call(req gitrpc.Request, onProgress func(gitrpc.Progress)) gitrpc.Reply {
 	w.Spawn()
-	<-w.readyCh // the worker signals ready once its wasm is instantiated
+	if !w.awaitReady() {
+		return workerDeadReply(req.ID)
+	}
 
 	ch := make(chan gitrpc.Reply, 1)
+	// Capacity one: a token means "something arrived since you last looked", and
+	// that question cannot be answered more than once per look.
+	alive := make(chan struct{}, 1)
 	w.mu.Lock()
 	if w.dead {
 		w.mu.Unlock()
@@ -230,6 +304,7 @@ func (w *jsWorkerTransport) Call(req gitrpc.Request, onProgress func(gitrpc.Prog
 	w.nextID++
 	req.ID = w.nextID
 	w.pending[req.ID] = ch
+	w.alive[req.ID] = alive
 	if onProgress != nil {
 		w.progressCbs[req.ID] = onProgress
 	}
@@ -237,7 +312,22 @@ func (w *jsWorkerTransport) Call(req gitrpc.Request, onProgress func(gitrpc.Prog
 	w.mu.Unlock()
 
 	worker.Call("postMessage", gitrpc.EncodeRequest(req))
-	return <-ch
+	// ⛔ Bounded by SILENCE, not by elapsed time — a clone that keeps reporting
+	// progress is never cut off, however long it takes (see workerCallIdleDeadline).
+	reply, ok, seen := awaitReply(ch, alive, workerCallIdleDeadline)
+	if ok {
+		return reply
+	}
+	// Nothing at all for the idle deadline. Forget the call so a reply arriving
+	// afterwards is dropped rather than delivered to a goroutine that has moved
+	// on, and answer with something that NAMES where it stopped — the silence
+	// this replaces is what left #212 unreadable for a fortnight.
+	w.mu.Lock()
+	delete(w.pending, req.ID)
+	delete(w.progressCbs, req.ID)
+	delete(w.alive, req.ID)
+	w.mu.Unlock()
+	return workerStalledReply(req.ID, req.Op, seen)
 }
 
 // workerDeadReply is what a call gets when the Worker itself never came up. It

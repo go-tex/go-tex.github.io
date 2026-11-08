@@ -21,6 +21,14 @@
          serves fresh files so a bare name is enough. -->
     <script>
       globalThis.gotexGitWorkerURL = "git-worker.js";
+      // ⛔ Decline the boot clone of the sample repository. These proofs drive the
+      // panel against an origin the test serves itself, and the boot clone is the
+      // FIRST request on the worker's single request goroutine — so one that hangs
+      // starves the clone the test asked for, which is #212: the local origin
+      // records that not one request arrived while the worker looks alive. It could
+      // not have succeeded here anyway: that remote's CORS policy names
+      // https://go-tex.github.io and this page is served from 127.0.0.1.
+      globalThis.gotexDeclineBootClone = true;
     </script>
     <!-- The Go toolchain's own loader (copied to js/ beside the wasm by the test). -->
     <script src="js/wasm_exec.js"></script>

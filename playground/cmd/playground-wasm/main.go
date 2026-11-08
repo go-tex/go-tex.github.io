@@ -193,6 +193,16 @@ func main() {
 	// Open the sample repository in the workspace. This does not hold the start
 	// up: the app is already running on its built-in document and the repository
 	// arrives when the network delivers it. See State.BootClone.
+	//
+	// ⛔ A host that drives the git panel itself declines it with
+	// globalThis.gotexDeclineBootClone — the browser proofs do. The boot clone is
+	// the FIRST request on the worker's single request goroutine, so one that hangs
+	// starves the clone the page actually asked for; and it is aimed at a remote
+	// whose CORS policy names https://go-tex.github.io, which a proof page served
+	// from 127.0.0.1 can never satisfy. See gitView.bootDeclined for #212.
+	if d := js.Global().Get("gotexDeclineBootClone"); d.Truthy() {
+		state.DeclineBootClone()
+	}
 	state.BootClone(func(error) { render() })
 
 	// While any git operation is in flight, run a requestAnimationFrame loop so the
