@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	billy "github.com/go-git/go-billy/v5"
@@ -38,6 +39,58 @@ func TestListWalkErrorIsWrapped(t *testing.T) {
 	}
 	if err.Error() == "" {
 		t.Fatal("expected a non-empty wrapped error")
+	}
+}
+
+// Remove takes a path out of the working tree, and ⛔ a path that is ALREADY
+// GONE is not an error. Removal is the one file verb whose goal is a state
+// rather than a change — "this path is not here" — so a caller that asks twice,
+// or asks for something a pull already deleted, has got what it wanted. Failing
+// there would force every honest caller to write a pre-check that races with the
+// operation it guards.
+func TestRemoveIsIdempotentAndLeavesSiblings(t *testing.T) {
+	fs := memfs.New()
+	for _, p := range []string{"main.tex", "chapters/intro.tex"} {
+		if err := billyutil.WriteFile(fs, p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := &Repo{fs: fs}
+
+	if err := r.Remove("chapters/intro.tex"); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if _, err := r.ReadFile("chapters/intro.tex"); err == nil {
+		t.Error("the removed file still reads back")
+	}
+	// Asking again is success, not a failure.
+	if err := r.Remove("chapters/intro.tex"); err != nil {
+		t.Errorf("removing an already-gone path reported %v", err)
+	}
+	// A path that never existed is the same case.
+	if err := r.Remove("never/was/here.tex"); err != nil {
+		t.Errorf("removing a path that never existed reported %v", err)
+	}
+	// And the siblings are untouched.
+	if data, err := r.ReadFile("main.tex"); err != nil || string(data) != "x" {
+		t.Errorf("main.tex after the removal = %q (%v)", data, err)
+	}
+}
+
+// A removal that fails for a reason OTHER than absence must still fail, or the
+// tolerance above would swallow every real problem.
+type removeErrFS struct{ billy.Filesystem }
+
+func (removeErrFS) Remove(string) error { return errors.New("remove boom") }
+
+func TestRemoveReportsARealFailure(t *testing.T) {
+	r := &Repo{fs: removeErrFS{memfs.New()}}
+	err := r.Remove("main.tex")
+	if err == nil {
+		t.Fatal("a failing filesystem reported a successful removal")
+	}
+	if !strings.Contains(err.Error(), "main.tex") {
+		t.Errorf("the error does not name the path: %v", err)
 	}
 }
 

@@ -5,6 +5,7 @@ package playground
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -253,6 +254,77 @@ func TestWorkerBackendWriteFiles(t *testing.T) {
 	tr.mu.Unlock()
 	if err := errSync(func(done func(error)) { b.WriteFiles(map[string]string{"c.tex": "x"}, done) }); !errors.Is(err, errGitTransport) {
 		t.Fatalf("WriteFiles error = %v", err)
+	}
+}
+
+// ⛔ A removal must DROP the cached content, and that is not tidiness. The cache
+// is what ReadFile answers from, and bufferDirty asks ReadFile whether a path
+// exists in order to tell a NEW file from an unreadable one (#227) — so a stale
+// entry here would keep a deleted file looking tracked-and-readable, and the
+// workspace would go on offering to open a file the repository no longer has.
+func TestWorkerBackendRemoveFileDropsTheCachedContent(t *testing.T) {
+	tr := &fakeTransport{replies: map[string]gitrpc.Reply{
+		gitrpc.OpClone: {
+			OK:       true,
+			Files:    []string{"a.tex", "b.sty"},
+			Contents: map[string]string{"a.tex": "A", "b.sty": "B"},
+			Status:   &gitrpc.Status{Branch: "main"},
+		},
+		gitrpc.OpRemoveFile: {OK: true, Files: []string{"b.sty"}},
+	}}
+	b := newWorkerGitBackend(tr)
+	if _, err := cloneSync(b, gitConfig{URL: "u"}); err != nil {
+		t.Fatalf("clone: %v", err)
+	}
+	if data, err := b.ReadFile("a.tex"); err != nil || string(data) != "A" {
+		t.Fatalf("precondition: a.tex reads %q (%v)", data, err)
+	}
+
+	var files []string
+	var gotErr error
+	doneCh := make(chan struct{})
+	b.RemoveFile("a.tex", func(f []string, err error) { files, gotErr = f, err; close(doneCh) })
+	<-doneCh
+	if gotErr != nil {
+		t.Fatalf("RemoveFile err = %v", gotErr)
+	}
+	if strings.Join(files, ",") != "b.sty" {
+		t.Errorf("RemoveFile reported %v remaining", files)
+	}
+	if _, err := b.ReadFile("a.tex"); err == nil {
+		t.Error("the removed file still reads from the cache, so it still looks tracked")
+	}
+	if data, err := b.ReadFile("b.sty"); err != nil || string(data) != "B" {
+		t.Errorf("removing a.tex disturbed b.sty: %q (%v)", data, err)
+	}
+}
+
+// A failed removal leaves the cache ALONE: dropping the entry on a failure would
+// make the workspace believe a file is gone that is still in the repository.
+func TestWorkerBackendRemoveFileFailureKeepsTheCache(t *testing.T) {
+	tr := &fakeTransport{replies: map[string]gitrpc.Reply{
+		gitrpc.OpClone: {
+			OK:       true,
+			Files:    []string{"a.tex"},
+			Contents: map[string]string{"a.tex": "A"},
+			Status:   &gitrpc.Status{Branch: "main"},
+		},
+		gitrpc.OpRemoveFile: {OK: false, Code: gitrpc.CodeTransport, Error: "boom"},
+	}}
+	b := newWorkerGitBackend(tr)
+	if _, err := cloneSync(b, gitConfig{URL: "u"}); err != nil {
+		t.Fatalf("clone: %v", err)
+	}
+
+	var gotErr error
+	doneCh := make(chan struct{})
+	b.RemoveFile("a.tex", func(_ []string, err error) { gotErr = err; close(doneCh) })
+	<-doneCh
+	if !errors.Is(gotErr, errGitTransport) {
+		t.Fatalf("RemoveFile error = %v, want the transport sentinel", gotErr)
+	}
+	if data, err := b.ReadFile("a.tex"); err != nil || string(data) != "A" {
+		t.Errorf("a FAILED removal dropped the cached content: %q (%v)", data, err)
 	}
 }
 

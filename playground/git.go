@@ -150,6 +150,15 @@ type gitBackend interface {
 	// before a stage/commit so browsergit's git-add-A sees them all); done reports
 	// the first error, or nil once every file is written.
 	WriteFiles(files map[string]string, done func(err error))
+	// RemoveFile deletes one working-tree file and reports the paths that
+	// remain, so the caller replaces its file list rather than editing a copy.
+	//
+	// ⛔ It is the one file verb that cannot be expressed as a write, which is
+	// why it is here at all: with only WriteFiles a workspace can add files for
+	// ever and never lose one. Rename and move are this plus a write, composed
+	// by the caller — one way to remove a path means one place it can be wrong.
+	// A path that is already gone is not an error.
+	RemoveFile(path string, done func(files []string, err error))
 	// Push pushes the open branch to origin; done reports the error.
 	Push(done func(err error))
 	// ReadFile returns a working-tree file (sync; the tree is in memory).
@@ -1760,6 +1769,9 @@ func (nopGitBackend) Commit(_, _, _ string, done func(error)) { done(errNoBrowse
 func (nopGitBackend) Stage(_, _ string, done func(error))     { done(errNoBrowserGit) }
 func (nopGitBackend) WriteFiles(_ map[string]string, done func(error)) {
 	done(errNoBrowserGit)
+}
+func (nopGitBackend) RemoveFile(_ string, done func([]string, error)) {
+	done(nil, errNoBrowserGit)
 }
 func (nopGitBackend) Push(done func(error))           { done(errNoBrowserGit) }
 func (nopGitBackend) ReadFile(string) ([]byte, error) { return nil, errNoBrowserGit }

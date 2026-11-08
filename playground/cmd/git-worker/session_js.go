@@ -164,6 +164,8 @@ func (s *browsergitSession) WriteFile(p, content string) error {
 	return s.repo.WriteFile(p, []byte(content))
 }
 
+func (s *browsergitSession) RemoveFile(p string) error { return s.repo.Remove(p) }
+
 func (s *browsergitSession) Commit(message string) error {
 	_, err := s.repo.Commit(message)
 	return err
