@@ -6,8 +6,6 @@
 package main
 
 import (
-	"context"
-
 	"github.com/go-tex/go-tex.github.io/playground/internal/browsergit"
 	"github.com/go-tex/go-tex.github.io/playground/internal/gitrpc"
 )
@@ -86,7 +84,10 @@ func (s *browsergitSession) Clone(url, branch, token, author, email string) erro
 	// Forward this clone's own progress: the handler set the sink before calling
 	// Clone, and this client is brand new, so it must be wired up here.
 	s.applyProgress(client)
-	repo, err := client.Clone(context.Background(), "", branch, 1)
+	// Bounded so the goroutine always ends: see networkDeadline (deadline.go).
+	ctx, cancel := networkContext()
+	defer cancel()
+	repo, err := client.Clone(ctx, "", branch, 1)
 	if err != nil {
 		return err
 	}
@@ -170,9 +171,17 @@ func (s *browsergitSession) Commit(message string) error {
 
 func (s *browsergitSession) Stage() error { return s.repo.Stage() }
 
-func (s *browsergitSession) Pull() error { return s.repo.Pull(context.Background()) }
+func (s *browsergitSession) Pull() error {
+	ctx, cancel := networkContext()
+	defer cancel()
+	return s.repo.Pull(ctx)
+}
 
-func (s *browsergitSession) Push() error { return s.repo.Push(context.Background()) }
+func (s *browsergitSession) Push() error {
+	ctx, cancel := networkContext()
+	defer cancel()
+	return s.repo.Push(ctx)
+}
 
 func (s *browsergitSession) Status() (gitrpc.Status, error) {
 	st, err := s.repo.Status()
