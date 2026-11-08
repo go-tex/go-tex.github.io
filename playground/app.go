@@ -1418,7 +1418,7 @@ func (s *State) HandleClick(x, y int) bool {
 
 	// Toolbar controls (the row between the topZone band and the body).
 	if y >= s.topZoneH && y < s.bodyTop() {
-		for _, w := range []toolkit.Widget{s.schemePicker, s.iconPackPicker, s.minimapBtn, s.sidebarBtn, s.findBtn, s.wysiwygBtn, s.themeBtn} {
+		for _, w := range s.toolbarControls() {
 			r := w.Bounds()
 			if r.Contains(x, y) {
 				w.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - r.X, Y: y - r.Y})
@@ -1553,6 +1553,45 @@ func (s *State) HandleMove(x, y int) bool {
 	return false
 }
 
+// toolbarControls is the row between the topZone band and the body, in hit-test
+// order.
+//
+// ⛔⛔ ONE LIST, TWO READERS, and that is the whole point of it existing. The
+// press loop held this slice inline and HandleRelease had no case for
+// pressToolbar at all, so each of these seven took EventClick — which a Button
+// answers by setting its pressed face, the theme's ACCENT — and never got the
+// EventMouseUp that clears it. A toolbar button clicked once stayed blue for the
+// rest of the session.
+//
+// The toolkit documents the contract and is not at fault: "PressFeedback shows
+// the pressed face on EventClick (until EventMouseUp)" and "EventMouseUp
+// releases it. Self-managing the pressed state means any host that routes the
+// press/release pair gets the …" (go-widgets/toolkit button.go:53, :298). Four
+// other regions here do route the pair — find, collab, git, sidebar — so this
+// was a mechanism wired at some of its doors and not the rest, and the way to
+// stop that recurring is to make the press and the release read the SAME list
+// rather than keep two in step.
+func (s *State) toolbarControls() []toolkit.Widget {
+	return []toolkit.Widget{
+		s.schemePicker, s.iconPackPicker, s.minimapBtn,
+		s.sidebarBtn, s.findBtn, s.wysiwygBtn, s.themeBtn,
+	}
+}
+
+// toolbarRelease clears the momentary pressed face on every toolbar control.
+//
+// It sweeps all of them rather than remembering which one took the press, as the
+// Collaborate and Git panels do for their own buttons (collab.go, git.go): a
+// mouse-up on a widget that was never pressed is a no-op, and a release that can
+// only find the button it remembers is one more thing to get wrong when the row
+// changes.
+func (s *State) toolbarRelease(x, y int) {
+	for _, w := range s.toolbarControls() {
+		r := w.Bounds()
+		w.OnEvent(toolkit.Event{Kind: toolkit.EventMouseUp, X: x - r.X, Y: y - r.Y})
+	}
+}
+
 // HandleRelease ends a captured drag, delivering EventMouseUp to the target.
 func (s *State) HandleRelease(x, y int) bool {
 	// The find-and-replace modal gets its release: a title-bar drag ends on it,
@@ -1585,6 +1624,10 @@ func (s *State) HandleRelease(x, y int) bool {
 	}
 	kind := s.pressKind
 	switch kind {
+	case pressToolbar:
+		// The controls of the toolbar row: without this they keep the pressed
+		// face a click gave them (see toolbarControls).
+		s.toolbarRelease(x, y)
 	case pressDivider:
 		pr := s.paned.Bounds()
 		s.paned.OnEvent(toolkit.Event{Kind: toolkit.EventMouseUp, X: x - pr.X, Y: y - pr.Y})
