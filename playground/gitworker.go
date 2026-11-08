@@ -7,45 +7,9 @@ import (
 	"errors"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/go-tex/go-tex.github.io/playground/internal/gitrpc"
 )
-
-// workerBootDeadline bounds the wait for the git client's wasm to instantiate.
-//
-// ⛔⛔ THE WAIT USED TO BE UNBOUNDED, and that is a different defect from a slow
-// download. The browser transport blocked on its ready channel until the worker
-// said ready, and the one case where it never says so is the one measured in
-// #212: the worker script loads, the main thread's wasm boots, the worker asks
-// for git-worker.wasm — and then nothing, with no error event, so the error path
-// never fires and the channel never closes. Every git call then waits for ever,
-// the asset bar stays indeterminate (which is the honest rendering of "cannot
-// tell"), and nothing on screen can say what happened.
-//
-// It was reported as "the git component is always very slow to appear without
-// really knowing why". In that case it is not slow, it is hung — and the UI had
-// no way to tell those apart either.
-//
-// 20 seconds because this is a multi-megabyte wasm over whatever connection the
-// reader has, and the download reports its own progress: the deadline only has
-// to outlast a slow transfer, not estimate one.
-const workerBootDeadline = 20 * time.Second
-
-// awaitSignal reports whether ready closed within d.
-//
-// It is here, in the portable file, rather than beside the Web Worker it serves:
-// "how long to wait before calling it hung" is policy, and policy that lives in
-// a js-only file can only be tested in a browser. The browser transport supplies
-// the channel; this decides.
-func awaitSignal(ready <-chan struct{}, d time.Duration) bool {
-	select {
-	case <-ready:
-		return true
-	case <-time.After(d):
-		return false
-	}
-}
 
 // This file is the main app's HALF of the off-thread git split: the [gitBackend]
 // that drives a separate git-worker.wasm over the [gitrpc] message protocol,
