@@ -23,6 +23,7 @@ type fakeSession struct {
 	log      []gitrpc.Commit
 
 	cloneErr, listErr, readErr, writeErr, commitErr, stageErr, pullErr, pushErr, statusErr, logErr error
+	removeErr                                                                                      error
 	restoreErr                                                                                     error
 	restoreFound                                                                                   bool
 	persists                                                                                       int
@@ -31,6 +32,7 @@ type fakeSession struct {
 
 	gotClone     [5]string
 	gotWrite     [2]string
+	gotRemove    string
 	gotCommitMsg string
 	gotLogLimit  int
 
@@ -87,6 +89,25 @@ func (f *fakeSession) WriteFile(p, content string) error {
 	f.gotWrite = [2]string{p, content}
 	return f.writeErr
 }
+
+// RemoveFile drops the path from the canned file list too, because the list is
+// what the handler answers with and a fake that kept it would let a test pass on
+// a reply the real session could not produce.
+func (f *fakeSession) RemoveFile(p string) error {
+	f.gotRemove = p
+	if f.removeErr != nil {
+		return f.removeErr
+	}
+	kept := make([]string, 0, len(f.files))
+	for _, q := range f.files {
+		if q != p {
+			kept = append(kept, q)
+		}
+	}
+	f.files = kept
+	return nil
+}
+
 func (f *fakeSession) Commit(message string) error { f.gotCommitMsg = message; return f.commitErr }
 func (f *fakeSession) Stage() error                { return f.stageErr }
 func (f *fakeSession) Pull() error {

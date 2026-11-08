@@ -415,6 +415,27 @@ func (b *workerGitBackend) WriteFiles(files map[string]string, done func(error))
 	}()
 }
 
+// RemoveFile deletes one working-tree file and reports the paths that remain.
+//
+// ⛔ It drops the path from the content cache as well, and that is not tidiness.
+// The cache is what ReadFile answers from, and bufferDirty asks ReadFile whether
+// a path exists in order to tell a NEW file from an unreadable one — so a stale
+// entry here would keep a deleted file looking tracked-and-readable, and the
+// workspace would offer to open a file the repository no longer has.
+func (b *workerGitBackend) RemoveFile(path string, done func(files []string, err error)) {
+	go func() {
+		reply := b.t.Call(gitrpc.Request{Op: gitrpc.OpRemoveFile, Args: gitrpc.Args{Path: path}}, nil)
+		if !reply.OK {
+			done(nil, codeToError(reply.Code, reply.Error))
+			return
+		}
+		b.mu.Lock()
+		delete(b.contents, path)
+		b.mu.Unlock()
+		done(reply.Files, nil)
+	}()
+}
+
 // Push pushes the open branch and refreshes the status/log cache.
 func (b *workerGitBackend) Push(done func(error)) {
 	go func() {

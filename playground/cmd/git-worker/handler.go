@@ -50,6 +50,9 @@ type gitSession interface {
 	ReadFile(p string) (string, error)
 	// WriteFile writes one working-tree file (no commit).
 	WriteFile(p, content string) error
+	// RemoveFile deletes one working-tree file. A path that is already gone is
+	// not an error: removal's goal is a state, not a change.
+	RemoveFile(p string) error
 	// Commit stages every change and commits with the configured identity.
 	Commit(message string) error
 	// Stage stages every change (git add) without committing.
@@ -154,6 +157,8 @@ func (h *handler) dispatch(req gitrpc.Request) gitrpc.Reply {
 		return h.readFile(req)
 	case gitrpc.OpWriteFile:
 		return h.writeFile(req)
+	case gitrpc.OpRemoveFile:
+		return h.removeFile(req)
 	case gitrpc.OpStatus:
 		return h.status(req)
 	case gitrpc.OpCommit:
@@ -266,6 +271,37 @@ func (h *handler) writeFile(req gitrpc.Request) gitrpc.Reply {
 	h.s.Persist()
 	reply := gitrpc.OKReply(req.ID)
 	reply.HasRepo = true
+	return reply
+}
+
+// removeFile deletes one working-tree file.
+//
+// ⛔ It answers with the new FILE LIST, which writeFile does not need to. A
+// write leaves the set of paths as it was — the caller already knows the path it
+// wrote — but a removal changes that set, and a host left holding the old list
+// would keep showing a row for a file that is gone, and would offer to open it.
+// The list is the one piece of state a removal invalidates.
+func (h *handler) removeFile(req gitrpc.Request) gitrpc.Reply {
+	if r, ok := h.requireRepo(req.ID); !ok {
+		return r
+	}
+	if err := h.s.RemoveFile(req.Args.Path); err != nil {
+		return h.fail(req.ID, err)
+	}
+	// Saved like a write: a removal the reader has not committed is still work,
+	// and a reload that brought the file back would undo a deliberate act.
+	h.s.Persist()
+
+	reply := gitrpc.OKReply(req.ID)
+	reply.HasRepo = true
+	files, err := h.s.List()
+	if err != nil {
+		// The removal itself succeeded, so this is not a failure of the op — but
+		// the list is now unknown rather than old, and saying so beats handing
+		// back a list we did not read.
+		return h.fail(req.ID, err)
+	}
+	reply.Files = files
 	return reply
 }
 
