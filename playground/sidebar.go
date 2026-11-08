@@ -102,6 +102,7 @@ const (
 	sbRoleClone  // empty-state action: open the Remote-Git panel to clone
 	sbRoleImport // take a file off this computer into the workspace
 	sbRoleExport // hand the open file's current text back to this computer
+	sbRoleNew    // add a new, empty-but-named file to the workspace
 )
 
 // sidebarButton is a laid-out command button: its role, rect and label.
@@ -497,6 +498,12 @@ func (b *sidebar) layout() {
 		// busy flag's.
 		{role: sbRoleImport, label: "Import…", disabled: b.s.git.io.Import == nil},
 		{role: sbRoleExport, label: "Export…", disabled: b.s.git.io.Export == nil},
+		// ⛔ Creating a file belongs with the REPOSITORY commands, not in the empty
+		// state beside Clone and Import. With no repository open there is already a
+		// document to edit and Import answers "bring your own", while a created file
+		// would be an untitled buffer with nowhere to be committed to — an
+		// affordance whose result the workspace cannot keep.
+		{role: sbRoleNew, label: "New"},
 	}
 	for start := 0; start < len(cmds); start += 3 {
 		end := start + 3
@@ -917,6 +924,8 @@ func (b *sidebar) dispatch(role sidebarRole) {
 		}
 	case sbRoleExport:
 		b.s.git.exportActive()
+	case sbRoleNew:
+		b.s.git.createFile()
 	}
 	b.commitDetail = ""
 	b.s.git.refresh()
