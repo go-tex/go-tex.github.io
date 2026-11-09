@@ -19,8 +19,8 @@ require (
 	github.com/go-richdoc/richdoc v0.7.0
 	github.com/go-tex/engine v0.272.0
 	github.com/go-widgets/mvvm v0.15.0
-	github.com/go-widgets/painter v0.16.0
-	github.com/go-widgets/toolkit v0.340.0
+	github.com/go-widgets/painter v0.17.0
+	github.com/go-widgets/toolkit v0.361.0
 	github.com/go-widgets/toolkit/rougelex v0.2.0
 )
 
@@ -33,11 +33,11 @@ require (
 	github.com/cyphar/filepath-securejoin v0.6.1 // indirect
 	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
-	github.com/go-gfx/gfx v0.37.0 // indirect
+	github.com/go-gfx/gfx v0.41.0 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-icons/iconoir v0.3.0 // indirect
 	github.com/go-images/gif v0.2.0 // indirect
-	github.com/go-images/images v0.1.0 // indirect
+	github.com/go-images/images v0.1.1-0.20261026203936-4ac989d310a1 // indirect
 	github.com/go-images/jpeg v0.3.0 // indirect
 	github.com/go-images/jpeg2000 v0.14.0 // indirect
 	github.com/go-images/png v0.2.0 // indirect
@@ -52,6 +52,7 @@ require (
 	github.com/go-typeset/bidi v0.3.1 // indirect
 	github.com/go-typeset/hyphenation v1.0.0 // indirect
 	github.com/go-typeset/linebreak v1.3.0 // indirect
+	github.com/go-widgets/textinput v0.1.0 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
 	github.com/kevinburke/ssh_config v1.2.0 // indirect

@@ -17,6 +17,15 @@ import (
 	"github.com/go-crdt/collab"
 	"github.com/go-crdt/crdt"
 	"github.com/go-widgets/toolkit"
+	// ⛔ collabui as well as toolkit: CollabText moved out of the toolkit's main
+	// package in v0.345.0 because it needs a live go-crdt/collab session, whose
+	// transports pull net/http and crypto/tls — and Go's dead-code elimination
+	// keeps anything an imported package's init reaches, so a program that only
+	// drew a Label was carrying it. The toolkit measured the difference with
+	// `go build -ldflags=-dumpdep` on GOOS=js: 10.49 MB raw against 7.48 MB.
+	// This file is the js build only, and the playground does use collaborative
+	// editing, so the cost is one this consumer actually pays for.
+	"github.com/go-widgets/toolkit/collabui"
 )
 
 // connectTimeout bounds the wait for the WebRTC data channel to open after the
@@ -131,9 +140,9 @@ type webrtcBackend struct {
 	cancel context.CancelFunc
 
 	server     *collab.Server
-	remotePeer *collab.Peer        // the WebRTC peer to the remote participant
-	client     *collab.Client      // the local editor's client (host: its in-process Pipe client)
-	ct         *toolkit.CollabText // the binding of s.editor to the shared text part
+	remotePeer *collab.Peer         // the WebRTC peer to the remote participant
+	client     *collab.Client       // the local editor's client (host: its in-process Pipe client)
+	ct         *collabui.CollabText // the binding of s.editor to the shared text part
 
 	connected bool
 	failed    bool // the connection attempt failed with no path to the peer
@@ -537,7 +546,7 @@ func (b *webrtcBackend) reportLocalErr(done func(error), err error) {
 // bind wires the editor to a client's shared text part and starts draining the
 // binding's remote updates.
 func (b *webrtcBackend) bind(client *collab.Client, name string, color toolkit.RGBA) error {
-	ct, err := toolkit.NewCollabText(b.s.editor, client, textName)
+	ct, err := collabui.NewCollabText(b.s.editor, client, textName)
 	if err != nil {
 		return err
 	}

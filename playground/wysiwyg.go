@@ -215,7 +215,7 @@ func (w *wysiwyg) enter() {
 	w.parseErr = ""
 	w.editor.SetDocument(doc)
 	w.applyWysiwygBounds()
-	w.editor.Focused().Set(true)
+	w.editor.SetFocused(true)
 	// If the find modal is open, re-target it at the now-active RichEditor (clear
 	// the Source highlights, re-run the query over the block text). A no-op when it
 	// is closed.
@@ -233,7 +233,7 @@ func (w *wysiwyg) leave() {
 		w.bouncing = false
 		return
 	}
-	w.editor.Focused().Set(false)
+	w.editor.SetFocused(false)
 	// writeLaTeX never fails (it always emits a well-formed preamble + body), so
 	// the result is used directly; there is no error path to guard.
 	out, _ := writeLaTeX(w.editor.Document())
@@ -450,7 +450,7 @@ func (s *State) wysiwygScroll(x, y, dy int) bool {
 // wysiwygChar routes a printable character to the focused RichEditor.
 func (s *State) wysiwygChar(code string) bool {
 	w := s.wysiwyg()
-	if !w.active() || !w.editor.Focused().Get() {
+	if !w.active() || !w.editor.Focused() {
 		return false
 	}
 	w.editor.OnEvent(toolkit.Event{Kind: toolkit.EventChar, Code: code})
@@ -462,7 +462,7 @@ func (s *State) wysiwygChar(code string) bool {
 // into Code + the Shift modifier the RichEditor expects) to the focused editor.
 func (s *State) wysiwygKey(code string) bool {
 	w := s.wysiwyg()
-	if !w.active() || !w.editor.Focused().Get() {
+	if !w.active() || !w.editor.Focused() {
 		return false
 	}
 	ev := toolkit.Event{Kind: toolkit.EventKeyDown}

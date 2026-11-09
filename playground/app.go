@@ -355,7 +355,7 @@ func NewState(w, h int, dark bool) *State {
 	s.editor = toolkit.NewCodeEditor(SampleLaTeX)
 	s.editor.Language = "latex"
 	s.editor.Syntax = s.hl
-	s.editor.Focused().Set(true)
+	s.editor.SetFocused(true)
 	s.installCompletion() // LaTeX autocompletion (see latexcomplete.go)
 	s.applyEditorFont()   // monospace so the caret + clicks land on exact columns
 	// TextView is MVVM in v0.214: an edit publishes onto the Text() Observable
@@ -568,7 +568,7 @@ func (s *State) SetTimeProvider(now func() string) {
 // HandleCopy copies the editor selection to the clipboard. No-op (returns false)
 // when the editor is unfocused.
 func (s *State) HandleCopy() bool {
-	if !s.editor.Focused().Get() {
+	if !s.editor.Focused() {
 		return false
 	}
 	s.editor.CopySelection()
@@ -579,7 +579,7 @@ func (s *State) HandleCopy() bool {
 // HandleCut cuts the editor selection to the clipboard (an edit, so it schedules
 // a recompile via the editor's OnChange). No-op when unfocused.
 func (s *State) HandleCut() bool {
-	if !s.editor.Focused().Get() {
+	if !s.editor.Focused() {
 		return false
 	}
 	s.editor.CutSelection()
@@ -598,7 +598,7 @@ func (s *State) HandlePaste(text string) bool {
 		s.dirty = true
 		return true
 	}
-	if !s.editor.Focused().Get() {
+	if !s.editor.Focused() {
 		return false
 	}
 	s.editor.Paste(text)
@@ -609,7 +609,7 @@ func (s *State) HandlePaste(text string) bool {
 
 // HandleSelectAll selects the whole buffer. No-op when unfocused.
 func (s *State) HandleSelectAll() bool {
-	if !s.editor.Focused().Get() {
+	if !s.editor.Focused() {
 		return false
 	}
 	s.editor.SelectAll()
@@ -1451,7 +1451,7 @@ func (s *State) HandleClick(x, y int) bool {
 	// Editor.
 	er := s.editor.Bounds()
 	if er.Contains(x, y) {
-		s.editor.Focused().Set(true)
+		s.editor.SetFocused(true)
 		s.renderView.SetFocused(false) // the editor now owns the keyboard
 		s.selecting = false            // a click starts a fresh selection anchor
 		s.editor.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - er.X, Y: y - er.Y})
@@ -1480,7 +1480,7 @@ func (s *State) HandleClick(x, y int) bool {
 		// keyboard focus so nav keys flip pages. A tab-strip or Log click leaves the
 		// editor's focus alone.
 		if s.rightPane.press == rpPressRender && !s.tryClickToSource(x, y) {
-			s.editor.Focused().Set(false)
+			s.editor.SetFocused(false)
 			s.renderView.SetFocused(true)
 		}
 		s.pressKind = pressRight
@@ -1701,7 +1701,7 @@ func (s *State) HandleChar(code string) bool {
 		}
 		return false
 	}
-	if !s.editor.Focused().Get() {
+	if !s.editor.Focused() {
 		return false
 	}
 	if s.editor.HasSelection() {
@@ -1742,11 +1742,11 @@ func (s *State) compositionTarget() (fieldEventer, bool) {
 		return s.fr.focusedField(), true
 	case s.collab.open || s.git.open:
 		return nil, false // takes the text, cannot show it coming
-	case s.wysiwyg().active() && s.wysiwyg().editor.Focused().Get():
+	case s.wysiwyg().active() && s.wysiwyg().editor.Focused():
 		return s.wysiwyg().editor, true
 	case s.renderFocused():
 		return nil, false
-	case s.editor.Focused().Get():
+	case s.editor.Focused():
 		return s.editor, true
 	}
 	return nil, false
@@ -1826,7 +1826,7 @@ func (s *State) HandleKeyDown(code string) bool {
 	if s.renderFocused() {
 		return s.rightPane.keyDown(code)
 	}
-	if !s.editor.Focused().Get() {
+	if !s.editor.Focused() {
 		return false
 	}
 	// nav records whether this key moved the caret (as opposed to editing text), so
@@ -1999,7 +1999,7 @@ func (s *State) jumpCaretToLine(line int) {
 	s.editor.CursorCol().Set(0)
 	s.editor.ClearSelection()
 	s.selecting = false
-	s.editor.Focused().Set(true)
+	s.editor.SetFocused(true)
 	s.renderView.SetFocused(false)
 	s.scrollEditorToLine(li)
 	s.lastCaretLine = li
