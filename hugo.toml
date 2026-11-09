@@ -53,7 +53,7 @@ disableKinds = ['taxonomy', 'term', 'rss', 'sitemap', '404']
   name  = "docs"
   kind  = "site"
   href  = "https://go-tex.github.io/docs/"
-  blurb = "The documentation site (Hugo + hextra): every supported feature, and every remaining gap, in the capability reference. <a href=\"https://github.com/go-tex/docs\">Source →</a>"
+  blurb = "The documentation site (MkDocs Material + mike), versioned, at <code>/docs/</code>. The <a href=\"/capabilities/\">capability reference</a> — every supported feature and every remaining gap, class by class and package by package — is published by THIS site, at <code>/capabilities/</code>: a project Pages site wins <code>/docs/</code> over an organisation site's directory of the same name, which is why it is not there. <a href=\"https://github.com/go-tex/docs\">Source →</a>"
 [[params.repos]]
   name  = "brand"
   kind  = "assets"
