@@ -458,9 +458,13 @@ func (v *gitView) fieldObs(f gitField) *mvvm.Observable[string] {
 // --- the network actions, driven by the panel and the headless proof --------
 
 // errNoGitRepo / errNoGitFile guard the write actions before a clone / a load.
+// errNoGitPath guards the file verbs: it is about a path the workspace does not
+// hold, which is a different refusal from "open a file before committing" and
+// needs a different sentence under it.
 var (
 	errNoGitRepo = errors.New("git: clone a repository first")
 	errNoGitFile = errors.New("git: open a file before committing")
+	errNoGitPath = errors.New("git: no such file in this workspace")
 )
 
 // GitClone clones the configured remote into memory and loads its primary .tex
