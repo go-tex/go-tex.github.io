@@ -58,7 +58,7 @@ func TestClipboardCopyCutPasteSelectAll(t *testing.T) {
 	}
 
 	// Unfocused: every clipboard op is a no-op.
-	s.editor.Focused().Set(false)
+	s.editor.SetFocused(false)
 	if s.HandleCopy() || s.HandleCut() || s.HandlePaste("x") || s.HandleSelectAll() {
 		t.Fatalf("clipboard ops should be no-ops when the editor is unfocused")
 	}
