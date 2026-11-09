@@ -1,9 +1,21 @@
 name: playground
 
 on:
+  # ⛔ NO paths FILTER ON main, DELIBERATELY. A suite that runs only when its
+  # own directory changes goes red QUIETLY: #214, #215 and #216 touched landing
+  # content only, so this workflow did not run for days, and the first pull
+  # request to touch playground/ inherited two failing browser proofs and had to
+  # prove they were not its own. It cost a control run on clean origin/main to
+  # establish that (#218). The same thing happened again on 2026-11-09: a
+  # landing-only merge ran `docs` and `pages` and nothing else.
+  #
+  # So every merge to main runs the whole suite, at about three minutes, and a
+  # regression is attributed to the commit that caused it rather than to the
+  # next person who happens to open that directory.
   push:
     branches: [main]
-    paths: ["playground/**", ".github/workflows/playground.yml"]
+  # Pull requests keep the filter: a landing-only change does not need the
+  # browser proofs to be reviewed, and main is where the record must be honest.
   pull_request:
     paths: ["playground/**", ".github/workflows/playground.yml"]
   workflow_dispatch:
