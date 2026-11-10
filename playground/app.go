@@ -1430,6 +1430,22 @@ func (s *State) HandleClick(x, y int) bool {
 		return false
 	}
 
+	// An open file-tree context menu takes the next click wherever it lands,
+	// including the click that dismisses it by falling outside. The widget clamps
+	// the popup to its own rect, so this is belt-and-braces rather than a reach
+	// across the window — but a menu that could only be dismissed by clicking
+	// back inside the thing it covers would be a trap.
+	if s.sidebar.menuOpen() {
+		if !s.sidebar.handleClick(x, y) {
+			// Outside the column entirely: the click dismisses the menu and is
+			// swallowed, which is what every menu does — the gesture that closes
+			// one does not also act on what is underneath.
+			s.sidebar.dismissMenu()
+		}
+		s.dirty = true
+		return true
+	}
+
 	// Workspace sidebar (the left column of the body band, when open). It is a
 	// distinct region that never overlaps the editor/render body, so it is tested
 	// before the divider + body widgets.
@@ -1499,6 +1515,27 @@ func (s *State) HandleClick(x, y int) bool {
 // HandleMove routes a captured drag to its target. This is what makes the Paned
 // divider and the scrollbar thumbs draggable (previously a no-op, so move/up
 // were discarded and no widget ever received EventMouseDrag).
+// HandleContextClick routes a SECONDARY (right) click: the gesture that opens a
+// context menu. It reports whether the app took it.
+//
+// ⛔ It is its own entry point rather than a flag on [State.HandleClick],
+// because the two are different gestures with different consequences and a
+// boolean threaded through the primary path would be read as "a click, but"
+// exactly where it must not be. The host suppresses the PAGE's own menu only
+// when this returns true, so a right-click anywhere the app does not use one
+// still offers the browser's — a page that swallows every right-click stops
+// being a page.
+//
+// Only the workspace column answers today. A region that wants one later adds
+// its branch here.
+func (s *State) HandleContextClick(x, y int) bool {
+	if s.sidebar.handleContext(x, y) {
+		s.dirty = true
+		return true
+	}
+	return false
+}
+
 func (s *State) HandleMove(x, y int) bool {
 	// The find-and-replace modal is modal: while it is open it swallows every
 	// move, and while its title bar is held it IS the drag. This has to come

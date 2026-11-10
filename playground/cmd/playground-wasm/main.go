@@ -354,6 +354,27 @@ func main() {
 		}
 		return nil
 	}))
+	// The SECONDARY click, which this app had no vocabulary for at all: the
+	// mousedown handler above returns early on every button but 0, so a
+	// right-click reached nothing and the workspace Explorer's menu — New File,
+	// New Folder, Rename, Delete — was keyboard-only (Shift+F10, Menu key).
+	//
+	// ⛔ preventDefault ONLY when the app took the gesture. A page that swallows
+	// every right-click stops being a page: outside the regions that use one, the
+	// browser's own menu must still open, which is how a reader copies text or
+	// opens a link in a new tab.
+	canvas.Call("addEventListener", "contextmenu", js.FuncOf(func(_ js.Value, args []js.Value) any {
+		if len(args) == 0 {
+			return nil
+		}
+		x, y := coords(args[0])
+		if state.HandleContextClick(x, y) {
+			args[0].Call("preventDefault")
+			focusIME() // the menu is ours now; keep the IME target where keys arrive
+			render()
+		}
+		return nil
+	}))
 	// mousemove/mouseup on the WINDOW so a drag that leaves the canvas still
 	// tracks — the routing that makes the divider + scrollbar thumbs draggable.
 	js.Global().Call("addEventListener", "mousemove", js.FuncOf(func(_ js.Value, args []js.Value) any {
@@ -603,6 +624,7 @@ func main() {
 			render()
 		}
 		r := state.SidebarRect()
+		tr := state.SidebarTreeRect()
 		w, h := state.Size()
 		return map[string]any{
 			"open":    state.SidebarOpen(),
@@ -611,6 +633,12 @@ func main() {
 			"editorW": state.EditorWidth(),
 			"canvasW": w,
 			"canvasH": h,
+			// treeRect + menuOpen are what a proof needs to show that a REAL
+			// secondary click reaches the Explorer. The native tests exercise
+			// State.HandleContextClick; only a browser can show that the host
+			// listener exists at all — which is exactly the layer that was missing.
+			"treeRect": []any{tr[0], tr[1], tr[2], tr[3]},
+			"menuOpen": state.SidebarMenuOpen(),
 		}
 	}))
 
