@@ -126,8 +126,12 @@ github.com/go-widgets/toolkit v0.340.0 h1:jebCy2eRth04zUKghEbfngnfKlax63FN8rH5F/
 github.com/go-widgets/toolkit v0.340.0/go.mod h1:NNUljD87qKTyouOzfyYSQJ2aBFEu9YKr0qx+QHkhr/g=
 github.com/go-widgets/toolkit v0.361.0 h1:cqCLuLqxiwS2ZJQ6sUVIWlxEgIGdfVVPDpSX4XJaWIA=
 github.com/go-widgets/toolkit v0.361.0/go.mod h1:dAs4uFSnRAV0aJ1IZkxQld5PP5ZdZDOS9bf9DF4jqQ8=
+github.com/go-widgets/toolkit v0.364.1 h1:wD/LnQlqg0jkrLjgJylikmGvkKVK38YFahjEOjHDg5k=
+github.com/go-widgets/toolkit v0.364.1/go.mod h1:zVKiLPMvy2igZZtU7IQ1rqoH31+kb1z2C6PptbCwaHI=
 github.com/go-widgets/toolkit/rougelex v0.2.0 h1:7EZ0sqD5ldLoRJAFktrz1gQovrv8pu2Spi8o0XROmAM=
 github.com/go-widgets/toolkit/rougelex v0.2.0/go.mod h1:L5tohfJJv2JBPg9qXOy9wyyVCJfeg+FPCoMPXVM+qKg=
+github.com/go-widgets/vcs v0.1.0 h1:1pZQygSsKBWZepAgsTdqh1bwHBjPwaLM4p7bAAONGnk=
+github.com/go-widgets/vcs v0.1.0/go.mod h1:c2SbtsVVLJUJAf/vOeMKkFWZRFyMAeDrY8rfyUyIevs=
 github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 h1:f+oWsMOmNPc8JmEHVZIycC7hBoQxHH9pNKQORJNozsQ=
 github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8/go.mod h1:wcDNUvekVysuuOpQKo3191zZyTpiI6se1N1ULghS0sw=
 github.com/golang/protobuf v1.5.4 h1:i7eJL8qZTpSEXOPTxNKhASYpMn+8e5Q6AdndVa1dWek=

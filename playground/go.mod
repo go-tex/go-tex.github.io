@@ -20,7 +20,7 @@ require (
 	github.com/go-tex/engine v0.272.0
 	github.com/go-widgets/mvvm v0.15.0
 	github.com/go-widgets/painter v0.17.0
-	github.com/go-widgets/toolkit v0.361.0
+	github.com/go-widgets/toolkit v0.364.1
 	github.com/go-widgets/toolkit/rougelex v0.2.0
 )
 
@@ -53,6 +53,7 @@ require (
 	github.com/go-typeset/hyphenation v1.0.0 // indirect
 	github.com/go-typeset/linebreak v1.3.0 // indirect
 	github.com/go-widgets/textinput v0.1.0 // indirect
+	github.com/go-widgets/vcs v0.1.0 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
 	github.com/kevinburke/ssh_config v1.2.0 // indirect
