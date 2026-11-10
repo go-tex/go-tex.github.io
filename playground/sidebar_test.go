@@ -428,17 +428,54 @@ func TestSidebarActiveDirtyEdgeCases(t *testing.T) {
 	}
 }
 
+// The commands now live in a menu, so they are driven the way a person drives
+// them: open it with the button, then click the row. Going through
+// HandleClick both times keeps this a test of the real path rather than of the
+// closures the menu happens to hold.
+func clickGitMenuRow(t *testing.T, s *State, label string) {
+	t.Helper()
+	var opener toolkit.Rect
+	for _, b := range s.sidebar.buttons {
+		if b.role == sbRoleGitMenu {
+			opener = b.rect
+		}
+	}
+	if opener.W == 0 {
+		t.Fatal("the command menu's button is not laid out")
+	}
+	s.HandleClick(opener.X+opener.W/2, opener.Y+opener.H/2)
+	s.HandleRelease(opener.X+opener.W/2, opener.Y+opener.H/2)
+	if !s.sidebar.gitMenu.Open().Get() {
+		t.Fatal("the command menu did not open")
+	}
+	menu := s.sidebar.gitMenu.Menu
+	for i, it := range menu.Items {
+		if it.Label != label {
+			continue
+		}
+		mb := s.sidebar.gitMenu.MenuBounds()
+		y := mb.Y + menu.RowTop(i) + menu.RowHeight(i)/2
+		s.HandleClick(mb.X+mb.W/2, y)
+		return
+	}
+	t.Fatalf("no command row %q", label)
+}
+
 func TestSidebarButtonsDispatch(t *testing.T) {
 	s, f := withClonedSidebar(t)
+	byLabel := map[sidebarRole]string{
+		sbRoleRefresh: "Refresh",
+		sbRoleStage:   "Stage",
+		sbRoleCommit:  "Commit…",
+		sbRolePull:    "Pull",
+		sbRolePush:    "Push",
+	}
 	click := func(role sidebarRole) {
-		for _, b := range s.sidebar.buttons {
-			if b.role == role {
-				s.HandleClick(b.rect.X+b.rect.W/2, b.rect.Y+b.rect.H/2)
-				s.HandleRelease(b.rect.X+b.rect.W/2, b.rect.Y+b.rect.H/2)
-				return
-			}
+		label, ok := byLabel[role]
+		if !ok {
+			t.Fatalf("no command row mapped for role %d", role)
 		}
-		t.Fatalf("button role %d not laid out", role)
+		clickGitMenuRow(t, s, label)
 	}
 
 	// Stage writes the active file's buffer and stages it.

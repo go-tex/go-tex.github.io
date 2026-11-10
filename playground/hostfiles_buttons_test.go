@@ -3,6 +3,8 @@ package playground
 import (
 	"strings"
 	"testing"
+
+	"github.com/go-widgets/toolkit"
 )
 
 // findButton returns the laid-out button for a role.
@@ -90,29 +92,86 @@ func TestClickingADisabledImportDoesNothing(t *testing.T) {
 	s.sidebar.dispatch(sbRoleExport)
 }
 
-// With a repository open both commands sit in the command rows, and Export is
-// live only when there is a host to export to.
-func TestImportAndExportSitInTheCommandRows(t *testing.T) {
+// With a repository open, both commands live in the FILE TREE's context menu
+// beside New File / Rename / Delete — they act on files, not on the remote — and
+// each is live only when there is a host to talk to.
+//
+// ⛔ This replaces TestImportAndExportSitInTheCommandRows, whose name described
+// where they used to be. The assertion that matters did not change: a command
+// with no host behind it must be present and DISABLED, not missing.
+func TestImportAndExportLiveInTheTreeMenu(t *testing.T) {
 	s, _ := withClonedSidebar(t)
 	buf := make([]byte, testW*testH*4)
 	s.Draw(buf)
 
-	if !findButton(t, s, sbRoleExport).disabled {
-		t.Error("with no host file IO the Export button should be disabled")
+	// On the active file's row, with no host IO installed.
+	items := s.sidebar.treeMenuExtra("main.tex", false)
+	imp := findMenuItem(t, items, "Import from this computer…")
+	if imp.Action != nil {
+		t.Error("with no host file IO the Import row should be disabled")
+	}
+	exp := findMenuItem(t, items, "Export “main.tex”…")
+	if exp.Action != nil {
+		t.Error("with no host file IO the Export row should be disabled")
 	}
 
 	var gotName string
 	s.git.io.Export = func(name string, _ []byte) { gotName = name }
-	s.layout()
-	s.Draw(buf)
-	exp := findButton(t, s, sbRoleExport)
-	if exp.disabled {
-		t.Fatal("with a host installed the Export button should be live")
+	s.git.io.Import = func(hostFileDeliver) {}
+	items = s.sidebar.treeMenuExtra("main.tex", false)
+	if findMenuItem(t, items, "Import from this computer…").Action == nil {
+		t.Fatal("with a host installed the Import row should be live")
 	}
-	s.HandleClick(exp.rect.X+exp.rect.W/2, exp.rect.Y+exp.rect.H/2)
+	live := findMenuItem(t, items, "Export “main.tex”…")
+	if live.Action == nil {
+		t.Fatal("with a host installed the Export row should be live")
+	}
+	live.Action()
 	if gotName != "main.tex" {
-		t.Errorf("clicking Export sent %q to the host, want main.tex", gotName)
+		t.Errorf("the Export row sent %q to the host, want main.tex", gotName)
 	}
+}
+
+// ⛔ Export acts on ONE file, so it is offered on a file row and not on a folder
+// or on the root: a menu that offered it everywhere would have to decide what
+// "export this folder" meant, and there is no answer. Import is offered
+// everywhere, because a file can be brought in anywhere.
+func TestExportIsOfferedOnAFileRowOnly(t *testing.T) {
+	s, _ := withClonedSidebar(t)
+	s.git.io.Export = func(string, []byte) {}
+	for _, c := range []struct {
+		path string
+		dir  bool
+	}{
+		{"chapters", true},
+		{"", true}, // the root
+	} {
+		for _, it := range s.sidebar.treeMenuExtra(c.path, c.dir) {
+			if strings.HasPrefix(it.Label, "Export") {
+				t.Errorf("Export offered on %q (dir=%v)", c.path, c.dir)
+			}
+		}
+	}
+	if len(s.sidebar.treeMenuExtra("chapters", true)) == 0 {
+		t.Error("a folder row lost Import as well")
+	}
+}
+
+// findMenuItem returns the row with label, failing when it is absent — a
+// disabled row is still present, which is the distinction these tests turn on.
+func findMenuItem(t *testing.T, items []toolkit.MenuItem, label string) toolkit.MenuItem {
+	t.Helper()
+	var have []string
+	for _, it := range items {
+		if it.Label == label {
+			return it
+		}
+		if !it.Separator {
+			have = append(have, it.Label)
+		}
+	}
+	t.Fatalf("no menu row %q; rows present: %v", label, have)
+	return toolkit.MenuItem{}
 }
 
 // ⛔ A read that failed is not an empty file. Reported as empty bytes it would

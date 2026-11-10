@@ -27,6 +27,12 @@ func setFileEntries(t *toolkit.FileTree, entries []toolkit.FileEntry) {
 	t.Entries().Set(entries)
 }
 
+// setMenuItems installs the freshly-built rows as the Menu's Items. Same reason
+// as the two below: Items is a []MenuItem, which an mvvm.Observable cannot hold.
+func setMenuItems(m *toolkit.Menu, items []toolkit.MenuItem) {
+	m.Items = items
+}
+
 // setTimelineEvents installs the rebuilt event list as the Timeline's Events.
 func setTimelineEvents(tl *toolkit.Timeline, events []toolkit.TimelineEvent) {
 	tl.Events = events
