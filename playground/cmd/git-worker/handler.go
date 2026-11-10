@@ -50,6 +50,9 @@ type gitSession interface {
 	ReadFile(p string) (string, error)
 	// WriteFile writes one working-tree file (no commit).
 	WriteFile(p, content string) error
+	// RemoveFile deletes one working-tree file. A path that is already gone is
+	// not an error: removal's goal is a state, not a change.
+	RemoveFile(p string) error
 	// Commit stages every change and commits with the configured identity.
 	Commit(message string) error
 	// Stage stages every change (git add) without committing.
@@ -99,6 +102,32 @@ func (h *handler) withProgress(id int, run func() gitrpc.Reply) gitrpc.Reply {
 	return run()
 }
 
+// started announces that this request has been DEQUEUED and is now running.
+//
+// ⛔ It exists because "no progress" could not tell two very different faults
+// apart. Requests are drained by one goroutine (main.go), and every other
+// notification on this channel comes from go-git's sideband — which needs the
+// network. So a silent operation might be one that never got its turn, or one
+// that got it and stalled before its first request ever left the browser. #212
+// shows exactly that ambiguity: the clone reports nothing for a minute AND the
+// test's own git origin records that not one request arrived.
+//
+// This resolves it: the notification is posted the moment the op is dispatched,
+// before it can touch anything. Its arrival means the worker reached the op and
+// the fault is inside it; its absence means the op never ran at all.
+//
+// It is not only instrumentation. The main thread treats any notification as
+// proof of life for its idle deadline, so an operation that is genuinely slow
+// before its first sideband line can no longer be mistaken for a dead one — and
+// the panel gets to say "cloning" when the clone starts rather than when the
+// remote first answers.
+func (h *handler) started(id int, op string) {
+	if h.emit == nil {
+		return
+	}
+	h.emit(gitrpc.ProgressReply(id, gitrpc.Progress{Line: op + ": started", Fraction: -1}))
+}
+
 // handle decodes a request wire string, dispatches it and encodes the reply. A
 // malformed request maps to a bad-request reply (id 0, since the id could not be
 // read).
@@ -112,6 +141,9 @@ func (h *handler) handle(reqJSON string) string {
 
 // dispatch runs one request's op against the session.
 func (h *handler) dispatch(req gitrpc.Request) gitrpc.Reply {
+	// Announced before the op can block on anything, so its arrival separates
+	// "never got its turn" from "got it and stalled" (see [handler.started]).
+	h.started(req.ID, req.Op)
 	switch req.Op {
 	case gitrpc.OpClone:
 		return h.clone(req)
@@ -125,6 +157,8 @@ func (h *handler) dispatch(req gitrpc.Request) gitrpc.Reply {
 		return h.readFile(req)
 	case gitrpc.OpWriteFile:
 		return h.writeFile(req)
+	case gitrpc.OpRemoveFile:
+		return h.removeFile(req)
 	case gitrpc.OpStatus:
 		return h.status(req)
 	case gitrpc.OpCommit:
@@ -237,6 +271,37 @@ func (h *handler) writeFile(req gitrpc.Request) gitrpc.Reply {
 	h.s.Persist()
 	reply := gitrpc.OKReply(req.ID)
 	reply.HasRepo = true
+	return reply
+}
+
+// removeFile deletes one working-tree file.
+//
+// ⛔ It answers with the new FILE LIST, which writeFile does not need to. A
+// write leaves the set of paths as it was — the caller already knows the path it
+// wrote — but a removal changes that set, and a host left holding the old list
+// would keep showing a row for a file that is gone, and would offer to open it.
+// The list is the one piece of state a removal invalidates.
+func (h *handler) removeFile(req gitrpc.Request) gitrpc.Reply {
+	if r, ok := h.requireRepo(req.ID); !ok {
+		return r
+	}
+	if err := h.s.RemoveFile(req.Args.Path); err != nil {
+		return h.fail(req.ID, err)
+	}
+	// Saved like a write: a removal the reader has not committed is still work,
+	// and a reload that brought the file back would undo a deliberate act.
+	h.s.Persist()
+
+	reply := gitrpc.OKReply(req.ID)
+	reply.HasRepo = true
+	files, err := h.s.List()
+	if err != nil {
+		// The removal itself succeeded, so this is not a failure of the op — but
+		// the list is now unknown rather than old, and saying so beats handing
+		// back a list we did not read.
+		return h.fail(req.ID, err)
+	}
+	reply.Files = files
 	return reply
 }
 

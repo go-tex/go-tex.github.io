@@ -7,6 +7,19 @@
 <meta name="description" content="{{ .Site.Params.description }}">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 {{ partial "styles.html" . }}
+{{/* ⛔ THESE THREE RULES ARE landingkit's btn-try-style.html, INLINE, and
+     that is a deliberate stopgap rather than a style of our own. This site
+     pins landingkit v0.7.1; the partial first ships in v0.10.0, so calling it
+     fails the build. Copying three lines is a smaller change than moving a
+     whole landing across seven minor versions of its kit for a button colour.
+
+     When landingkit is next bumped here, DELETE THIS and call the partial, as
+     go-slides and go-pdfkit do — one red, in one place. */}}
+<style>
+.btn.btn-try{background:#dc2626;border-color:#dc2626;color:#fff}
+.btn.btn-try:hover{background:#c52222;border-color:#c52222;transform:translateY(-1px)}
+.btn.btn-try:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+</style>
 </head>
 <body class="lm">
   <header class="nav"><div class="wrap">
@@ -22,7 +35,13 @@
       <p class="sub"><b>go-tex</b> is a pure-Go (<code>CGO_ENABLED=0</code>) TeX effort. Its engine is a faithful re-implementation of TeX, and on top of it <b>it loads and runs the genuine LaTeX classes</b>: <code>\documentclass{article}</code>, <code>{report}</code> and <code>{book}</code> execute the real, embedded <code>.cls</code> files (LPPL, verbatim) — not an emulation. They also run in the browser through <code>js/wasm</code>, with no server.</p>
       <div class="cta">
         <a class="btn btn-primary" href="https://go-tex.github.io/docs/">{{ partial "icons/book.html" . }}Read the documentation →</a>
-        <a class="btn btn-ghost" href="/playground/">Try it in your browser</a>
+        {{/* btn-try is landingkit's own red "try it" button, the same class
+             go-slides and go-pdfkit lead with — so a reader moving between
+             the family's landings meets the same affordance in the same
+             colour rather than learning each page separately. */}}
+        {{/* No icon: landingkit v0.7.1 has no icons/browser.html either, and
+             the button never had one here. The colour is the change. */}}
+        <a class="btn btn-try" href="/playground/">Try it in your browser</a>
       </div>
       <div class="trust"><span><b>{{ len .Site.Params.families }}</b> capability areas</span><span><b>{{ len .Site.Params.repos }}</b> repositories</span><span><b>CGO=0</b> no TeXLive</span></div>
     </div>
@@ -58,7 +77,7 @@
   <section id="scope" style="padding-top:10px"><div class="wrap">
     <span class="eyebrow">Scope</span>
     <h2>Real-LaTeX fidelity, <i>not a claim of TeXLive parity</i>.</h2>
-    <p class="lead">The engine loads and runs the standard base classes — <code>article</code>, <code>report</code>, <code>book</code> and <code>amsart</code> as real embedded files — and any resolvable <code>.cls</code>/<code>.sty</code> runs as real TeX macros. Heavy drawing (<code>tikz</code>/<code>pgf</code>) is gated and still in bring-up, <code>biblatex</code> is partly supported, PDF figures need the <code>pdfrender</code> module, and floats typeset inline unless placement is enabled. Every supported feature — and every remaining gap — is listed in the <a href="https://go-tex.github.io/docs/">capability reference</a>.</p>
+    <p class="lead">The engine loads and runs the standard base classes — <code>article</code>, <code>report</code>, <code>book</code> and <code>amsart</code> as real embedded files — and any resolvable <code>.cls</code>/<code>.sty</code> runs as real TeX macros. Heavy drawing (<code>tikz</code>/<code>pgf</code>) is gated and still in bring-up, <code>biblatex</code> is partly supported, PDF figures need the <code>pdfrender</code> module, and floats typeset inline unless placement is enabled. Every supported feature — and every remaining gap — is listed in the <a href="{{ "capabilities/" | relURL }}">capability reference</a>.</p>
   </div></section>
 
   <section id="repos" style="padding-top:20px"><div class="wrap">

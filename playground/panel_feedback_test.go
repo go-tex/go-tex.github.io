@@ -51,11 +51,10 @@ func TestCollabPressedButtonScreenshot(t *testing.T) {
 
 	img := &image.RGBA{Pix: buf, Stride: 4 * w, Rect: image.Rect(0, 0, w, h)}
 
-	dir := os.Getenv("GOTEX_SCREENSHOT_DIR")
-	if dir == "" {
-		return // render+encode proven above; skip writing on the plain lane
-	}
-	out := filepath.Join(dir, "collab-press-proof.png")
+	// Same reasoning as git_screenshot_test.go: this never wrote into the
+	// working tree, but it routes through the one helper so no proof honours a
+	// directory the others refuse.
+	out := filepath.Join(shotDirFor(t), "collab-press-proof.png")
 	fp, err := os.Create(out)
 	if err != nil {
 		t.Fatalf("create %s: %v", out, err)

@@ -66,14 +66,9 @@ func runFindBrowserProof(t *testing.T, label, driver, shotName string, wants []s
 	srv := httptest.NewServer(wasmMIME(http.FileServer(http.Dir(root))))
 	defer srv.Close()
 
-	shotDir := os.Getenv("GOTEX_SCREENSHOT_DIR")
-	if shotDir == "" {
-		shotDir = "."
-	}
-	shot, err := filepath.Abs(filepath.Join(shotDir, shotName))
-	if err != nil {
-		t.Fatalf("resolving the screenshot path: %v", err)
-	}
+	// The name is a parameter here (two proofs share this runner), which is why
+	// this call site reads differently from the others.
+	shot := shotPath(t, shotName)
 
 	cmd := exec.Command(node, driver)
 	cmd.Env = append(os.Environ(),

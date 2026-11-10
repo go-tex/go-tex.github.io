@@ -355,7 +355,7 @@ func NewState(w, h int, dark bool) *State {
 	s.editor = toolkit.NewCodeEditor(SampleLaTeX)
 	s.editor.Language = "latex"
 	s.editor.Syntax = s.hl
-	s.editor.Focused().Set(true)
+	s.editor.SetFocused(true)
 	s.installCompletion() // LaTeX autocompletion (see latexcomplete.go)
 	s.applyEditorFont()   // monospace so the caret + clicks land on exact columns
 	// TextView is MVVM in v0.214: an edit publishes onto the Text() Observable
@@ -568,7 +568,7 @@ func (s *State) SetTimeProvider(now func() string) {
 // HandleCopy copies the editor selection to the clipboard. No-op (returns false)
 // when the editor is unfocused.
 func (s *State) HandleCopy() bool {
-	if !s.editor.Focused().Get() {
+	if !s.editor.Focused() {
 		return false
 	}
 	s.editor.CopySelection()
@@ -579,7 +579,7 @@ func (s *State) HandleCopy() bool {
 // HandleCut cuts the editor selection to the clipboard (an edit, so it schedules
 // a recompile via the editor's OnChange). No-op when unfocused.
 func (s *State) HandleCut() bool {
-	if !s.editor.Focused().Get() {
+	if !s.editor.Focused() {
 		return false
 	}
 	s.editor.CutSelection()
@@ -598,7 +598,7 @@ func (s *State) HandlePaste(text string) bool {
 		s.dirty = true
 		return true
 	}
-	if !s.editor.Focused().Get() {
+	if !s.editor.Focused() {
 		return false
 	}
 	s.editor.Paste(text)
@@ -609,7 +609,7 @@ func (s *State) HandlePaste(text string) bool {
 
 // HandleSelectAll selects the whole buffer. No-op when unfocused.
 func (s *State) HandleSelectAll() bool {
-	if !s.editor.Focused().Get() {
+	if !s.editor.Focused() {
 		return false
 	}
 	s.editor.SelectAll()
@@ -1418,7 +1418,7 @@ func (s *State) HandleClick(x, y int) bool {
 
 	// Toolbar controls (the row between the topZone band and the body).
 	if y >= s.topZoneH && y < s.bodyTop() {
-		for _, w := range []toolkit.Widget{s.schemePicker, s.iconPackPicker, s.minimapBtn, s.sidebarBtn, s.findBtn, s.wysiwygBtn, s.themeBtn} {
+		for _, w := range s.toolbarControls() {
 			r := w.Bounds()
 			if r.Contains(x, y) {
 				w.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - r.X, Y: y - r.Y})
@@ -1430,6 +1430,22 @@ func (s *State) HandleClick(x, y int) bool {
 		return false
 	}
 
+	// An open file-tree context menu takes the next click wherever it lands,
+	// including the click that dismisses it by falling outside. The widget clamps
+	// the popup to its own rect, so this is belt-and-braces rather than a reach
+	// across the window — but a menu that could only be dismissed by clicking
+	// back inside the thing it covers would be a trap.
+	if s.sidebar.menuOpen() {
+		if !s.sidebar.handleClick(x, y) {
+			// Outside the column entirely: the click dismisses the menu and is
+			// swallowed, which is what every menu does — the gesture that closes
+			// one does not also act on what is underneath.
+			s.sidebar.dismissMenu()
+		}
+		s.dirty = true
+		return true
+	}
+
 	// Workspace sidebar (the left column of the body band, when open). It is a
 	// distinct region that never overlaps the editor/render body, so it is tested
 	// before the divider + body widgets.
@@ -1438,6 +1454,12 @@ func (s *State) HandleClick(x, y int) bool {
 		s.dirty = true
 		return true
 	}
+	// ⛔ EVERY click past this point is outside the workspace column, so the file
+	// tree loses the keyboard here — in ONE place, rather than in each of the
+	// branches below. A Delete pressed after clicking into the editor must not
+	// reach a file, and a focus dropped only by the branches that remembered to
+	// would be a rule with holes in exactly the places nobody looked.
+	s.sidebar.blurTree()
 
 	// Divider (resize grip).
 	if s.onDivider(x, y) {
@@ -1451,7 +1473,7 @@ func (s *State) HandleClick(x, y int) bool {
 	// Editor.
 	er := s.editor.Bounds()
 	if er.Contains(x, y) {
-		s.editor.Focused().Set(true)
+		s.editor.SetFocused(true)
 		s.renderView.SetFocused(false) // the editor now owns the keyboard
 		s.selecting = false            // a click starts a fresh selection anchor
 		s.editor.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - er.X, Y: y - er.Y})
@@ -1480,7 +1502,7 @@ func (s *State) HandleClick(x, y int) bool {
 		// keyboard focus so nav keys flip pages. A tab-strip or Log click leaves the
 		// editor's focus alone.
 		if s.rightPane.press == rpPressRender && !s.tryClickToSource(x, y) {
-			s.editor.Focused().Set(false)
+			s.editor.SetFocused(false)
 			s.renderView.SetFocused(true)
 		}
 		s.pressKind = pressRight
@@ -1493,7 +1515,36 @@ func (s *State) HandleClick(x, y int) bool {
 // HandleMove routes a captured drag to its target. This is what makes the Paned
 // divider and the scrollbar thumbs draggable (previously a no-op, so move/up
 // were discarded and no widget ever received EventMouseDrag).
+// HandleContextClick routes a SECONDARY (right) click: the gesture that opens a
+// context menu. It reports whether the app took it.
+//
+// ⛔ It is its own entry point rather than a flag on [State.HandleClick],
+// because the two are different gestures with different consequences and a
+// boolean threaded through the primary path would be read as "a click, but"
+// exactly where it must not be. The host suppresses the PAGE's own menu only
+// when this returns true, so a right-click anywhere the app does not use one
+// still offers the browser's — a page that swallows every right-click stops
+// being a page.
+//
+// Only the workspace column answers today. A region that wants one later adds
+// its branch here.
+func (s *State) HandleContextClick(x, y int) bool {
+	if s.sidebar.handleContext(x, y) {
+		s.dirty = true
+		return true
+	}
+	return false
+}
+
 func (s *State) HandleMove(x, y int) bool {
+	// A press that began in the workspace column stays with it: dragging a file
+	// row onto a folder is how a file manager moves a file, and the tree needs
+	// the moves to know what is under the pointer.
+	if s.pressKind == pressSidebar {
+		s.sidebar.handleDrag(x, y)
+		s.dirty = true
+		return true
+	}
 	// The find-and-replace modal is modal: while it is open it swallows every
 	// move, and while its title bar is held it IS the drag. This has to come
 	// FIRST — the hover and drag routes below would otherwise take the move and
@@ -1553,6 +1604,45 @@ func (s *State) HandleMove(x, y int) bool {
 	return false
 }
 
+// toolbarControls is the row between the topZone band and the body, in hit-test
+// order.
+//
+// ⛔⛔ ONE LIST, TWO READERS, and that is the whole point of it existing. The
+// press loop held this slice inline and HandleRelease had no case for
+// pressToolbar at all, so each of these seven took EventClick — which a Button
+// answers by setting its pressed face, the theme's ACCENT — and never got the
+// EventMouseUp that clears it. A toolbar button clicked once stayed blue for the
+// rest of the session.
+//
+// The toolkit documents the contract and is not at fault: "PressFeedback shows
+// the pressed face on EventClick (until EventMouseUp)" and "EventMouseUp
+// releases it. Self-managing the pressed state means any host that routes the
+// press/release pair gets the …" (go-widgets/toolkit button.go:53, :298). Four
+// other regions here do route the pair — find, collab, git, sidebar — so this
+// was a mechanism wired at some of its doors and not the rest, and the way to
+// stop that recurring is to make the press and the release read the SAME list
+// rather than keep two in step.
+func (s *State) toolbarControls() []toolkit.Widget {
+	return []toolkit.Widget{
+		s.schemePicker, s.iconPackPicker, s.minimapBtn,
+		s.sidebarBtn, s.findBtn, s.wysiwygBtn, s.themeBtn,
+	}
+}
+
+// toolbarRelease clears the momentary pressed face on every toolbar control.
+//
+// It sweeps all of them rather than remembering which one took the press, as the
+// Collaborate and Git panels do for their own buttons (collab.go, git.go): a
+// mouse-up on a widget that was never pressed is a no-op, and a release that can
+// only find the button it remembers is one more thing to get wrong when the row
+// changes.
+func (s *State) toolbarRelease(x, y int) {
+	for _, w := range s.toolbarControls() {
+		r := w.Bounds()
+		w.OnEvent(toolkit.Event{Kind: toolkit.EventMouseUp, X: x - r.X, Y: y - r.Y})
+	}
+}
+
 // HandleRelease ends a captured drag, delivering EventMouseUp to the target.
 func (s *State) HandleRelease(x, y int) bool {
 	// The find-and-replace modal gets its release: a title-bar drag ends on it,
@@ -1585,6 +1675,10 @@ func (s *State) HandleRelease(x, y int) bool {
 	}
 	kind := s.pressKind
 	switch kind {
+	case pressToolbar:
+		// The controls of the toolbar row: without this they keep the pressed
+		// face a click gave them (see toolbarControls).
+		s.toolbarRelease(x, y)
 	case pressDivider:
 		pr := s.paned.Bounds()
 		s.paned.OnEvent(toolkit.Event{Kind: toolkit.EventMouseUp, X: x - pr.X, Y: y - pr.Y})
@@ -1649,6 +1743,11 @@ func (s *State) HandleChar(code string) bool {
 	if s.git.handleChar(code) { // typing edits the focused git panel field
 		return true
 	}
+	// Type-ahead in the workspace Explorer, and the characters of a name being
+	// typed in place. Same focus gate as the keys.
+	if s.sidebar.handleChar(code) {
+		return true
+	}
 	if s.wysiwygChar(code) { // type into the WYSIWYG RichEditor (wysiwyg.go)
 		return true
 	}
@@ -1658,7 +1757,7 @@ func (s *State) HandleChar(code string) bool {
 		}
 		return false
 	}
-	if !s.editor.Focused().Get() {
+	if !s.editor.Focused() {
 		return false
 	}
 	if s.editor.HasSelection() {
@@ -1699,11 +1798,11 @@ func (s *State) compositionTarget() (fieldEventer, bool) {
 		return s.fr.focusedField(), true
 	case s.collab.open || s.git.open:
 		return nil, false // takes the text, cannot show it coming
-	case s.wysiwyg().active() && s.wysiwyg().editor.Focused().Get():
+	case s.wysiwyg().active() && s.wysiwyg().editor.Focused():
 		return s.wysiwyg().editor, true
 	case s.renderFocused():
 		return nil, false
-	case s.editor.Focused().Get():
+	case s.editor.Focused():
 		return s.editor, true
 	}
 	return nil, false
@@ -1777,13 +1876,20 @@ func (s *State) HandleKeyDown(code string) bool {
 	if s.git.handleKey(code) { // Backspace/Enter/Tab/Escape in the git panel fields
 		return true
 	}
+	// The workspace Explorer, only while it holds focus: F2 renames, Delete asks
+	// to delete, Shift+F10 and the Menu key open its context menu. The focus gate
+	// lives in the sidebar (treeHasKeyboard) precisely so that a Delete pressed
+	// while writing a paragraph can never reach a file.
+	if s.sidebar.handleKey(code) {
+		return true
+	}
 	if s.wysiwygKey(code) { // navigate/edit the WYSIWYG RichEditor (wysiwyg.go)
 		return true
 	}
 	if s.renderFocused() {
 		return s.rightPane.keyDown(code)
 	}
-	if !s.editor.Focused().Get() {
+	if !s.editor.Focused() {
 		return false
 	}
 	// nav records whether this key moved the caret (as opposed to editing text), so
@@ -1956,7 +2062,7 @@ func (s *State) jumpCaretToLine(line int) {
 	s.editor.CursorCol().Set(0)
 	s.editor.ClearSelection()
 	s.selecting = false
-	s.editor.Focused().Set(true)
+	s.editor.SetFocused(true)
 	s.renderView.SetFocused(false)
 	s.scrollEditorToLine(li)
 	s.lastCaretLine = li

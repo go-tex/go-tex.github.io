@@ -135,21 +135,27 @@ const SEED =
     console.log("M zoom r1=" + a.zoom + " r2=" + b.zoom);
     console.log("M svgBox r1=" + a.svgBox + " r2=" + b.svgBox);
     console.log("M textBox r1=" + a.textBox + " r2=" + b.textBox);
-    // ⚠ The rendered page carries ONE known residual, so it is bounded rather
-    // than pinned: the fit-to-width zoom is computed in DEVICE pixels and
-    // quantised to a whole percent, so the quantum is twice as coarse against the
-    // logical size at ratio 2 and can land one step away — 30% at ratio 1 against
-    // 61% at ratio 2 above, not 60. That is 1.7%, and it is the whole of the
-    // difference these two boxes show. Filed separately; the bound here is 3%, so
-    // a forgotten SCALE (a factor of two) still fails.
-    const near = (x, y, pct) => Math.abs(x - y) <= Math.max(2, (pct / 100) * Math.max(x, y));
+    // ⛔ The zoom itself is now the FIRST assertion, and it is exact.
+    //
+    // It used to be printed and not checked, and the rendered boxes below were
+    // bounded at 3% to leave room for what it was doing: the fit zoom was
+    // computed in DEVICE pixels and quantised to a whole percent, so the quantum
+    // was twice as coarse against the logical size at ratio 2 and landed a step
+    // away — 30% at ratio 1 against 61%, not 60. That is 1.7%, and a 3% bound is
+    // wide enough to hide exactly the defect it was describing. Fixed upstream
+    // in go-widgets/toolkit#553 (quantise in logical percent), so the logical
+    // zoom is now identical and the bound comes down to the same 2 CSS pixels as
+    // every other rect.
+    check(a.zoom * 2 === b.zoom,
+      "the fit zoom is the same LOGICAL zoom at both ratios (r1=" + a.zoom + ", r2=" + b.zoom + ", want " + a.zoom * 2 + ")");
+    const near = (x, y) => Math.abs(x - y) <= 2;
     if (a.svgBox && b.svgBox) {
-      check(near(a.svgBox[0], b.svgBox[0], 3) && near(a.svgBox[1], b.svgBox[1], 3),
-        "the rendered page's CSS box is within the zoom quantum in both runs");
+      check(near(a.svgBox[0], b.svgBox[0]) && near(a.svgBox[1], b.svgBox[1]),
+        "the rendered page's CSS box is the same size at both ratios");
     }
     if (a.textBox && b.textBox) {
-      check(near(a.textBox[0], b.textBox[0], 3) && near(a.textBox[1], b.textBox[1], 3),
-        "a run of the document's own text is within the zoom quantum in both runs");
+      check(near(a.textBox[0], b.textBox[0]) && near(a.textBox[1], b.textBox[1]),
+        "a run of the document's own text is the same size at both ratios");
     }
   } finally {
     await browser.close();

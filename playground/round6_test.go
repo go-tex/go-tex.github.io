@@ -154,7 +154,7 @@ func TestJumpCaretToLineClamps(t *testing.T) {
 	if s.editor.CursorLine().Get() != 1 || s.editor.CursorCol().Get() != 0 {
 		t.Fatalf("jump to line 2: caret=(%d,%d), want (1,0)", s.editor.CursorLine().Get(), s.editor.CursorCol().Get())
 	}
-	if !s.editor.Focused().Get() {
+	if !s.editor.Focused() {
 		t.Fatalf("jump should focus the editor")
 	}
 	// A non-positive line clamps to the first line.
@@ -259,7 +259,7 @@ func TestClickRenderJumpsCaretToSource(t *testing.T) {
 	s.lineMaps[page-1] = pageLineMap{bands: []lineBand{{line: 3, yTop: 0, yBot: 1 << 20}}}
 	s.editor.CursorLine().Set(0)
 	s.editor.CursorCol().Set(0)
-	s.editor.Focused().Set(false)
+	s.editor.SetFocused(false)
 	s.renderView.SetFocused(true)
 	if !s.HandleClick(sx, sy) {
 		t.Fatalf("render click not consumed")
@@ -267,7 +267,7 @@ func TestClickRenderJumpsCaretToSource(t *testing.T) {
 	if s.editor.CursorLine().Get() != 2 {
 		t.Fatalf("click-to-source landed on line %d, want 2", s.editor.CursorLine().Get())
 	}
-	if !s.editor.Focused().Get() || s.renderView.Focused() {
+	if !s.editor.Focused() || s.renderView.Focused() {
 		t.Fatalf("click-to-source should focus the editor, not the render")
 	}
 
@@ -286,12 +286,12 @@ func TestClickRenderNotOnSourceKeepsRenderFocus(t *testing.T) {
 	// (a) A click on the render pane's TOOLBAR strip: PageAt is false there, so no
 	// source jump; the render takes keyboard focus for paging.
 	rb := s.renderView.Bounds()
-	s.editor.Focused().Set(true)
+	s.editor.SetFocused(true)
 	s.renderView.SetFocused(false)
 	if !s.HandleClick(rb.X+rb.W/2, rb.Y+2) { // +2: inside the toolbar strip
 		t.Fatalf("render toolbar click not consumed")
 	}
-	if s.renderView.Focused() == false && s.editor.Focused().Get() {
+	if s.renderView.Focused() == false && s.editor.Focused() {
 		// A toolbar click may hit a button; either way it must NOT have jumped the
 		// caret into the editor. Assert the render owns focus.
 		t.Fatalf("toolbar click unexpectedly left focus on the editor")
@@ -304,12 +304,12 @@ func TestClickRenderNotOnSourceKeepsRenderFocus(t *testing.T) {
 		t.Fatalf("no render page point found")
 	}
 	s.lineMaps = make([]pageLineMap, page) // page exists but carries no bands
-	s.editor.Focused().Set(true)
+	s.editor.SetFocused(true)
 	s.renderView.SetFocused(false)
 	if !s.HandleClick(sx, sy) {
 		t.Fatalf("render page click not consumed")
 	}
-	if !s.renderView.Focused() || s.editor.Focused().Get() {
+	if !s.renderView.Focused() || s.editor.Focused() {
 		t.Fatalf("bandless page click should give the render focus")
 	}
 }

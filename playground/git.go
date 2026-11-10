@@ -150,6 +150,15 @@ type gitBackend interface {
 	// before a stage/commit so browsergit's git-add-A sees them all); done reports
 	// the first error, or nil once every file is written.
 	WriteFiles(files map[string]string, done func(err error))
+	// RemoveFile deletes one working-tree file and reports the paths that
+	// remain, so the caller replaces its file list rather than editing a copy.
+	//
+	// ⛔ It is the one file verb that cannot be expressed as a write, which is
+	// why it is here at all: with only WriteFiles a workspace can add files for
+	// ever and never lose one. Rename and move are this plus a write, composed
+	// by the caller — one way to remove a path means one place it can be wrong.
+	// A path that is already gone is not an error.
+	RemoveFile(path string, done func(files []string, err error))
 	// Push pushes the open branch to origin; done reports the error.
 	Push(done func(err error))
 	// ReadFile returns a working-tree file (sync; the tree is in memory).
@@ -192,6 +201,27 @@ type gitView struct {
 	// on a boot clone the load happens only if the buffer is still exactly this.
 	// Empty outside a boot clone, where an explicit Clone always loads.
 	bootBuffer string
+
+	// bootDeclined suppresses the boot clone of [DefaultRemoteURL].
+	//
+	// ⛔⛔ IT EXISTS FOR THE BROWSER PROOFS, AND #212 IS WHY. The worker drains
+	// requests with ONE goroutine, by design — it serialises a worktree that is not
+	// concurrency-safe — and the boot clone is the FIRST request on it, posted
+	// before a proof has configured anything. A boot clone that hangs therefore does
+	// not merely fail itself: the clone the test actually asked for never gets its
+	// turn, and the symptom is the test's own LOCAL origin recording that not one
+	// request arrived while the worker looks perfectly alive.
+	//
+	// It cannot even succeed there. DefaultRemoteURL's Forgejo answers
+	// `access-control-allow-origin: https://go-tex.github.io`, and a proof page is
+	// served from 127.0.0.1 on an ephemeral port, so the browser refuses the
+	// response whatever the network does. The only two outcomes are a fast failure
+	// (the proofs pass) or a hang against an unreachable host (they do not) — which
+	// is precisely the intermittency #212 recorded, and why these proofs pass on a
+	// workstation that can reach that host and fail on a runner that cannot.
+	//
+	// A page that wants the samples simply does not set it: the default is to clone.
+	bootDeclined bool
 
 	// cloneGen counts clone attempts so a superseded one cannot act on its
 	// result, and bootInFlight says whether the running one is the speculative
@@ -269,6 +299,11 @@ type gitView struct {
 	// .sty/.bib) is the one being edited in the editor. Empty with no repo → the
 	// editor's own buffer (the sample document) compiles.
 	primaryPath string
+
+	// io is the host's file picker and download, installed by the wasm driver
+	// (hostfiles_js.go). Zero off-wasm, which is how the workspace's Import and
+	// Export buttons know to disable rather than fail: there is no host to ask.
+	io hostFileIO
 
 	// derived display snapshots, refreshed on each successful op (not per frame).
 	files    []string // the whole working-tree file list
@@ -423,9 +458,13 @@ func (v *gitView) fieldObs(f gitField) *mvvm.Observable[string] {
 // --- the network actions, driven by the panel and the headless proof --------
 
 // errNoGitRepo / errNoGitFile guard the write actions before a clone / a load.
+// errNoGitPath guards the file verbs: it is about a path the workspace does not
+// hold, which is a different refusal from "open a file before committing" and
+// needs a different sentence under it.
 var (
 	errNoGitRepo = errors.New("git: clone a repository first")
 	errNoGitFile = errors.New("git: open a file before committing")
+	errNoGitPath = errors.New("git: no such file in this workspace")
 )
 
 // GitClone clones the configured remote into memory and loads its primary .tex
@@ -879,8 +918,24 @@ func (v *gitView) bufferContent(p string) (string, bool) {
 
 // bufferDirty reports whether path's edit buffer differs from its committed /
 // indexed content (the git backend cache the last clone/pull/commit/stage/flush
-// filled). A path with no buffer, or an uncached file (nothing to compare), reads
-// not-dirty.
+// filled). A path with no buffer reads not-dirty.
+//
+// ⛔⛔ A FILE THE REPOSITORY HAS NEVER HEARD OF IS DIRTY, NOT CLEAN. This used to
+// read not-dirty, because the only question asked was whether the backend's copy
+// DIFFERS — and for a path with no backend copy that read fails, which is not the
+// same answer as "they match". A file imported from the host (#224) lives only as
+// a buffer, so it was judged clean, left out of flushDirty's write-back, and
+// silently absent from every stage and commit: a tab, the text on screen, a
+// notice saying it was imported, and nothing in the repository. The user is told
+// "nothing to commit" about the file they just brought in.
+//
+// ⛔ The read failing is not on its own enough to call a file new, which is why
+// the working-tree list decides it. A transport that cannot answer for a file the
+// repository DOES list is a failure to measure, and answering "dirty" there would
+// write a buffer back over a file we could not read — including resurrecting one
+// that had been deleted. So: listed and unreadable ⇒ unknown, stay out of the
+// write-back; not listed at all ⇒ the workspace holds a file the repository does
+// not, which is exactly what new means.
 func (v *gitView) bufferDirty(p string) bool {
 	content, ok := v.bufferContent(p)
 	if !ok {
@@ -888,9 +943,20 @@ func (v *gitView) bufferDirty(p string) bool {
 	}
 	data, err := v.backend.ReadFile(p)
 	if err != nil {
-		return false
+		return !v.treeLists(p)
 	}
 	return string(data) != content
+}
+
+// treeLists reports whether the working tree the last clone/pull/refresh reported
+// contains p. It is what separates "new file" from "unreadable file" above.
+func (v *gitView) treeLists(p string) bool {
+	for _, f := range v.files {
+		if f == p {
+			return true
+		}
+	}
+	return false
 }
 
 // GitOpenFile opens working-tree path into the source editor (the sidebar's
@@ -1708,11 +1774,25 @@ func (nopGitBackend) Stage(_, _ string, done func(error))     { done(errNoBrowse
 func (nopGitBackend) WriteFiles(_ map[string]string, done func(error)) {
 	done(errNoBrowserGit)
 }
+func (nopGitBackend) RemoveFile(_ string, done func([]string, error)) {
+	done(nil, errNoBrowserGit)
+}
 func (nopGitBackend) Push(done func(error))           { done(errNoBrowserGit) }
 func (nopGitBackend) ReadFile(string) ([]byte, error) { return nil, errNoBrowserGit }
 func (nopGitBackend) Status() (gitStatus, bool)       { return gitStatus{}, false }
 func (nopGitBackend) Log(int) []GitCommitInfo         { return nil }
 func (nopGitBackend) HasRepo() bool                   { return false }
+
+// DeclineBootClone tells the app not to open [DefaultRemoteURL] at start-up.
+//
+// It is for a host that drives the git panel itself — the browser proofs — where
+// the boot clone is not merely unnecessary but actively harmful: it occupies the
+// worker's single request goroutine before the page has been configured, and it
+// is reaching a remote whose CORS policy cannot answer a 127.0.0.1 page anyway.
+// See [gitView.bootDeclined] for the measurement behind that.
+//
+// It must be called before [State.BootClone]; afterwards it has nothing to stop.
+func (s *State) DeclineBootClone() { s.git.bootDeclined = true }
 
 // errNoBrowserGit explains why the no-op backend never clones.
 var errNoBrowserGit = errors.New("git: remote git needs a browser")
@@ -1731,10 +1811,11 @@ var errNoBrowserGit = errors.New("git: remote git needs a browser")
 // if it is still untouched.
 //
 // It is a no-op with no backend (a headless test), with a repository already
-// open, or when a clone is already in flight.
+// open, when a clone is already in flight, or when the host has declined it
+// (see [State.DeclineBootClone]).
 func (s *State) BootClone(done func(err error)) {
 	v := s.git
-	if v.backend == nil || v.busy.Get() || v.backend.HasRepo() {
+	if v.backend == nil || v.busy.Get() || v.backend.HasRepo() || v.bootDeclined {
 		if done != nil {
 			done(nil)
 		}

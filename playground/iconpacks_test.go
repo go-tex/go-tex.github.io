@@ -62,33 +62,39 @@ func TestTeXStyDistinctGlyphs(t *testing.T) {
 	}
 }
 
-// TestBuildFileTreeSetsPackIcons: dirs get the folder drawer, files a per-name
-// drawer, both non-nil, so every row renders a glyph.
-func TestBuildFileTreeSetsPackIcons(t *testing.T) {
-	pack := iconPacks[0]
-	roots, _ := buildFileTree([]string{"main.tex", "sec/intro.tex"},
-		func(string) (string, toolkit.RGBA) { return "", toolkit.RGBA{} },
-		pack.fileIconDrawer, pack.folderIconDrawer())
-	var sawDir, sawFile bool
-	var walk func(n *toolkit.TreeTableNode)
-	walk = func(n *toolkit.TreeTableNode) {
-		if n.Icon == nil {
-			t.Errorf("node %q has no icon", n.Cells[0])
-		}
-		if len(n.Children) > 0 {
-			sawDir = true
-			for _, c := range n.Children {
-				walk(c)
+// TestFileTreeIconCallbackCoversDirsAndFiles: the Explorer asks the host for one
+// drawer per row, so the question is no longer what a built node carries but what
+// that callback answers — a nil for either kind is a row drawn with no glyph.
+//
+// ⛔ It asks for every pack and for a file whose extension nothing special
+// handles, because the per-name lookup is where a pack can return nothing.
+func TestFileTreeIconCallbackCoversDirsAndFiles(t *testing.T) {
+	s := newTestState(t, false)
+	s.sidebar.ensureWidgets()
+	icon := s.sidebar.tree.Icon
+	if icon == nil {
+		t.Fatal("the Explorer was given no icon callback, so every row draws the default")
+	}
+	for i := range iconPacks {
+		s.iconPackPicker.Selected().Set(i)
+		for _, c := range []struct {
+			name string
+			dir  bool
+		}{
+			{"sec", true},
+			{"main.tex", false},
+			{"refs.bib", false},
+			{"notes.qqq", false},
+		} {
+			if icon(c.name, c.dir, false) == nil {
+				t.Errorf("pack %d: %q (dir=%v) got no drawer", i, c.name, c.dir)
 			}
-			return
 		}
-		sawFile = true
-	}
-	for _, r := range roots {
-		walk(r)
-	}
-	if !sawDir || !sawFile {
-		t.Fatalf("want both a dir and a file node (dir=%v file=%v)", sawDir, sawFile)
+		// An open folder is a separate ask, and a pack that answered only the shut
+		// one would lose its glyph the moment a folder is expanded.
+		if icon("sec", true, true) == nil {
+			t.Errorf("pack %d: an open folder got no drawer", i)
+		}
 	}
 }
 

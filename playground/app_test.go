@@ -135,7 +135,7 @@ func TestClickEditorMovesCaret(t *testing.T) {
 	if !s.HandleClick(er.X+30, er.Y+60) {
 		t.Fatalf("editor click not consumed")
 	}
-	if !s.editor.Focused().Get() {
+	if !s.editor.Focused() {
 		t.Fatalf("editor should be focused after a click")
 	}
 }
@@ -214,7 +214,7 @@ func TestCompileErrorPath(t *testing.T) {
 
 func TestUnfocusedEditorIgnoresKeys(t *testing.T) {
 	s := newTestState(t, false)
-	s.editor.Focused().Set(false)
+	s.editor.SetFocused(false)
 	if s.HandleChar("x") {
 		t.Fatalf("unfocused editor consumed a char")
 	}

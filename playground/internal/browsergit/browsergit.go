@@ -447,6 +447,25 @@ func (r *Repo) WriteFile(p string, data []byte) error {
 	return nil
 }
 
+// Remove deletes path from the in-memory working tree. Like WriteFile it does
+// not stage or commit; Stage or Commit afterwards records the removal, because
+// go-git's AddWithOptions(All) notices a vanished file and stages its deletion.
+//
+// ⛔ A path that is already gone is NOT an error. Removal is the one file verb
+// whose goal is a state rather than a change — "this path is not here" — so a
+// caller that asks twice, or asks for something a pull already deleted, has got
+// what it wanted. Reporting failure there would make the honest caller write a
+// pre-check that races with the very operation it guards.
+func (r *Repo) Remove(p string) error {
+	if err := r.fs.Remove(cleanPath(p)); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("browsergit: remove %s: %w", p, err)
+	}
+	return nil
+}
+
 // List walks the in-memory working tree and returns every regular file's
 // slash-relative path, sorted, with the .git control directory pruned. The
 // UI uses it to enumerate a freshly cloned repo (e.g. to find the .tex files

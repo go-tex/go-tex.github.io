@@ -59,33 +59,17 @@ const (
 	sidebarMinTreeH = 60
 )
 
-// Per-file git-status badge colours (fixed hues, not theme inks, so a status
-// reads the same in light + dark — the same rationale as zones.readyDotColor).
-// Green/amber/red reuse the toolkit Timeline/Alert severity palette so the
-// sidebar's badges and its timeline markers speak one colour language.
-var (
-	badgeModifiedInk  = toolkit.RGBA{R: 0xE0, G: 0xA0, B: 0x30, A: 0xFF} // amber
-	badgeStagedInk    = toolkit.RGBA{R: 0x2E, G: 0x8B, B: 0x57, A: 0xFF} // green
-	badgeDeletedInk   = toolkit.RGBA{R: 0xC0, G: 0x30, B: 0x30, A: 0xFF} // red
-	badgeUntrackedInk = toolkit.RGBA{R: 0x30, G: 0x80, B: 0xC0, A: 0xFF} // blue
-)
-
-// badgeFor maps a browsergit classify() status to the sidebar's one-letter badge
-// glyph and its ink. A clean file (unknown/empty status) badges blank.
-func badgeFor(status string) (glyph string, ink toolkit.RGBA) {
-	switch status {
-	case "modified":
-		return "M", badgeModifiedInk
-	case "staged":
-		return "A", badgeStagedInk
-	case "deleted":
-		return "D", badgeDeletedInk
-	case "untracked":
-		return "U", badgeUntrackedInk
-	default:
-		return "", toolkit.RGBA{}
-	}
-}
+// errorInk is the detail strip's colour for a failure line.
+//
+// ⛔ The per-status badge palette that used to live here — amber, green, red,
+// blue, with badgeFor mapping a browsergit status onto a letter and one of them
+// — is GONE with the hand-built tree. The Explorer draws each entry's mark
+// itself and picks its colour for CONTRAST: the first candidate that clears
+// 4.5:1 against the row wins, with the row's own ink as the fallback. Fixed hues
+// cannot make that promise, which is why they are not kept "for consistency":
+// a mark nobody can read is a decoration. Only the error line's red stays, and
+// it is not a status.
+var errorInk = toolkit.RGBA{R: 0xC0, G: 0x30, B: 0x30, A: 0xFF}
 
 // sidebarButton is one command control: a role for dispatch and the persistent
 // Button it is drawn/hit-tested through.
@@ -99,7 +83,17 @@ const (
 	sbRolePull
 	sbRolePush
 	sbRoleForget
-	sbRoleClone // empty-state action: open the Remote-Git panel to clone
+	// sbRoleGitMenu opens the command menu that replaced the eight buttons.
+	//
+	// ⛔ The commands used to be eight buttons wrapped three to a row: THREE rows
+	// of fixed height, in the one column whose scarce resource is vertical space,
+	// for actions used occasionally. One row costs btnH+gap; three cost three
+	// times that, and the difference came straight off the file tree — about
+	// three fewer files visible at default density, permanently.
+	sbRoleGitMenu
+	sbRoleClone  // empty-state action: open the Remote-Git panel to clone
+	sbRoleImport // take a file off this computer into the workspace
+	sbRoleExport // hand the open file's current text back to this computer
 )
 
 // sidebarButton is a laid-out command button: its role, rect and label.
@@ -107,6 +101,12 @@ type sidebarButton struct {
 	role  sidebarRole
 	rect  toolkit.Rect
 	label string
+	// disabled is this button's OWN reason to be unavailable, independent of the
+	// busy flag that greys the network commands. Import and Export have one the
+	// others do not: off-wasm, and in any host that installs no file IO, there is
+	// nothing on the other side of them — and a button that looks live and does
+	// nothing is worse than one that is plainly out of reach.
+	disabled bool
 }
 
 // sidebar is the workspace sidebar affordance. All display state is derived each
@@ -126,9 +126,10 @@ type sidebar struct {
 	tlRect       toolkit.Rect
 	buttons      []sidebarButton
 
-	// nodePaths maps a file leaf node to its working-tree path (dir nodes absent),
-	// so a tree click resolves to the file to open. Rebuilt with the tree.
-	nodePaths map[*toolkit.TreeTableNode]string
+	// laidOutWithRepo is whether the last layout ran with a repository open. The
+	// two states have DIFFERENT geometry — an empty state, or a command band over
+	// two accordion bodies — so a change here is a relayout, not a rebuild.
+	laidOutWithRepo bool
 	// sig is the last tree/timeline signature; a change triggers a rebuild.
 	sig string
 	// commitDetail is the last-clicked commit's one-line detail (sha · subject ·
@@ -141,7 +142,18 @@ type sidebar struct {
 	detail   *toolkit.Label
 	filesExp *toolkit.Expander // "Files" accordion header (labelled with the active file) over the tree
 	histExp  *toolkit.Expander // "History" accordion header (labelled with the branch) over the timeline
-	tree     *toolkit.TreeTable
+	// tree is the toolkit's Explorer, not a hand-built one. It carries New File,
+	// New Folder, F2-rename with in-place validation, Delete behind a
+	// confirmation, a context menu, a row dragged onto a folder and files dropped
+	// from outside — and it draws the per-entry version-control mark this column
+	// used to spell out in a second "S" column of its own. It changes nothing
+	// itself: every verb arrives here as a FileRequest.
+	tree *toolkit.FileTree
+	// gitMenu is the command menu the "Git ▾" button drops. Its surface is the
+	// column, so it can never spill into the editor — which matters because the
+	// column is drawn BEFORE the body and anything overflowing would be painted
+	// over.
+	gitMenu  *toolkit.ContextMenu
 	timeline *toolkit.Timeline
 	empty    *toolkit.EmptyState
 	// emptyRect is where layout put the empty state. draw MUST work from this
@@ -160,7 +172,7 @@ type sidebar struct {
 // present on load — showing its EmptyState + Clone… until a repo is cloned). The
 // toolbar toggle still lets the user close it to reclaim the full canvas width.
 func newSidebar(s *State) *sidebar {
-	return &sidebar{s: s, open: true, nodePaths: map[*toolkit.TreeTableNode]string{}}
+	return &sidebar{s: s, open: true}
 }
 
 // ensureWidgets lazily builds the persistent widgets. Called at the top of every
@@ -172,13 +184,21 @@ func (b *sidebar) ensureWidgets() {
 	b.bg = &toolkit.Backdrop{}
 	b.rule = &toolkit.Backdrop{}
 	b.detail = toolkit.NewLabel("")
-	// The first column carries the file names; its title is left blank because the
-	// "Files" accordion header right above already labels the tree (the standalone
-	// "Workspace" line is gone). The "S" column heads the dirty-status badges.
-	b.tree = toolkit.NewTreeTable(
-		[]toolkit.TreeTableColumn{{Title: ""}, {Title: "S", Width: toolkit.Scaled(22), Align: toolkit.AlignCenter}},
-		nil,
-	)
+	// The Explorer. There is no "S" column any more: the widget draws each entry's
+	// version-control mark itself, which is what this column was hand-rolling a
+	// second column for.
+	b.tree = toolkit.NewFileTree(nil)
+	b.tree.Label = "Project files"
+	b.tree.Icon = func(name string, dir, open bool) func(painter.Painter, toolkit.Rect, toolkit.RGBA) {
+		pack := iconPacks[b.s.iconPackIdx()]
+		if dir {
+			return pack.folderIconDrawer()
+		}
+		return pack.fileIconDrawer(name)
+	}
+	b.tree.OnRequest = b.onFileRequest
+	b.tree.MenuExtra = b.treeMenuExtra
+	b.gitMenu = toolkit.NewContextMenu(toolkit.NewMenu(nil))
 	// Accordion headers over the tree and the timeline, mutually exclusive: opening
 	// one collapses the other (handleClick enforces it), so only one body shows at a
 	// time and the workspace column stays compact. Files opens first. The widgets
@@ -244,20 +264,46 @@ func (b *sidebar) activeDirty() bool {
 	return b.s.git.bufferDirty(b.s.git.loaded.Get())
 }
 
-// fileBadge returns the badge glyph + ink for a working-tree path: its in-memory
-// edit-buffer dirtiness (as "modified") takes precedence — for ANY file with a
-// buffer, so a file edited then navigated away from still badges amber M —
-// otherwise the file's git status from the last snapshot, otherwise clean (blank).
-func (b *sidebar) fileBadge(path string) (string, toolkit.RGBA) {
+// fileStatus is a working-tree path's state as the Explorer's vocabulary: its
+// in-memory edit-buffer dirtiness takes precedence — for ANY file with a buffer,
+// so a file edited then navigated away from still carries its mark — otherwise
+// the file's git status from the last snapshot, otherwise unchanged.
+//
+// ⛔ The widget's states are NOT git's, deliberately: they are the vocabulary
+// git, Mercurial, Subversion, Jujutsu and Fossil share, so the mapping belongs
+// here, where what a commit is is known, and not in the widget. The one that
+// needs saying is "staged", which this workspace writes through `git add`
+// without committing: that is git's staged-new, which the shared vocabulary
+// calls added.
+func (b *sidebar) fileStatus(path string) toolkit.FileStatus {
+	// ⛔ BEFORE the dirty check, not after. bufferDirty answers true for a path
+	// the working tree does not list — it cannot read a committed version to
+	// compare against — so a file created a moment ago would read as MODIFIED, a
+	// state that means "tracked and edited" and so claims it is in the repository.
+	// Untracked is both the truth and the more useful thing to show.
+	if _, held := b.s.git.buffers[path]; held && !b.s.git.treeLists(path) {
+		return toolkit.FileUntracked
+	}
 	if b.s.git.bufferDirty(path) {
-		return badgeFor("modified")
+		return toolkit.FileModified
 	}
 	for _, c := range b.s.git.status.Changes {
-		if c.Path == path {
-			return badgeFor(c.Status)
+		if c.Path != path {
+			continue
 		}
+		switch c.Status {
+		case "modified":
+			return toolkit.FileModified
+		case "untracked":
+			return toolkit.FileUntracked
+		case "deleted":
+			return toolkit.FileDeleted
+		case "staged":
+			return toolkit.FileAdded
+		}
+		return toolkit.FileUnchanged
 	}
-	return "", toolkit.RGBA{}
+	return toolkit.FileUnchanged
 }
 
 // signature is a cheap digest of everything the tree + timeline render from, so
@@ -296,20 +342,73 @@ func (b *sidebar) signature() string {
 // rebuild regenerates the file tree + timeline from the current git snapshot and
 // re-selects the active file's node. Called only when signature() changes.
 func (b *sidebar) rebuild() {
-	pack := iconPacks[b.s.iconPackIdx()]
-	roots, nodePaths := buildFileTree(b.s.git.files, b.fileBadge, pack.fileIconDrawer, pack.folderIconDrawer())
-	setTreeRoot(b.tree, roots) // widget-state write isolated in sidebar_binding.go
-	b.nodePaths = nodePaths
-	// Re-select the active file's node so the highlight follows the open file.
-	active := b.s.git.loaded.Get()
-	b.tree.Selected().Set(nil)
-	for node, p := range nodePaths {
-		if p == active {
-			b.tree.Selected().Set(node)
-			break
+	setFileEntries(b.tree, b.workspaceEntries()) // widget-state write isolated in sidebar_binding.go
+	// The highlight follows the open file. Selection is the PATH now, not a node,
+	// so there is nothing to look up: the tree resolves it, and a path the list no
+	// longer holds simply selects nothing.
+	b.tree.Selected().Set(b.s.git.loaded.Get())
+	setTimelineEvents(b.timeline, timelineEvents(b.s.git.log)) // isolated in sidebar_binding.go
+}
+
+// workspaceEntries is the working-tree list as the Explorer's entries, each
+// carrying the mark its state earns.
+//
+// Folders are not listed: any path under one implies it, and an empty folder is
+// the only case that would need an entry of its own — which a git working tree
+// cannot have, because git tracks files and not directories.
+func (b *sidebar) workspaceEntries() []toolkit.FileEntry {
+	files := append([]string(nil), b.s.git.files...)
+	sort.Strings(files)
+	// A buffer for a file the tree does not list is a created or imported file
+	// that has not been written back yet. It is part of the workspace and the
+	// person must be able to see it, rename it and delete it, so it is listed —
+	// untracked, which is exactly what it is.
+	for _, p := range b.s.GitBufferPaths() {
+		if !b.s.git.treeLists(p) {
+			files = append(files, p)
 		}
 	}
-	setTimelineEvents(b.timeline, timelineEvents(b.s.git.log)) // isolated in sidebar_binding.go
+	sort.Strings(files)
+	out := make([]toolkit.FileEntry, 0, len(files))
+	for _, f := range files {
+		out = append(out, toolkit.FileEntry{Path: f, Status: b.fileStatus(f)})
+	}
+	return out
+}
+
+// onFileRequest applies one Explorer request to the workspace.
+//
+// ⛔ The tree asks and never acts: it does not change its own entries, so each
+// of these has to land in the store and come back through [sidebar.rebuild].
+// That is why a request that fails leaves the row where it was rather than the
+// row vanishing optimistically and reappearing on the error.
+func (b *sidebar) onFileRequest(r toolkit.FileRequest) {
+	switch r.Action {
+	case toolkit.FileOpen:
+		b.commitDetail = ""
+		b.s.GitOpenFile(r.Path)
+	case toolkit.FileCreate:
+		b.s.GitCreateFile(r.Path)
+	case toolkit.FileCreateDir:
+		// A git working tree has no empty directories to create: a folder exists
+		// because something is in it. Saying so is better than a New Folder that
+		// appears to work and is gone on the next refresh.
+		b.s.git.errMsg.Set("A folder appears when a file is put in it; create the file instead")
+	case toolkit.FileRename, toolkit.FileMove:
+		b.s.GitRenameFile(r.Path, r.To, nil)
+	case toolkit.FileDelete:
+		b.s.GitDeleteFile(r.Path, nil)
+	case toolkit.FileImport:
+		// The tree reports WHICH names were dropped; the host holds the bytes, and
+		// in a browser they arrive through the picker rather than with the drop. So
+		// a drop opens the same picker the Import button does — guarded the same
+		// way, because a guard that lives only in how a button is painted is one
+		// refactor from a nil call.
+		if b.s.git.io.Import != nil {
+			b.s.git.io.Import(b.s.git.importDelivered)
+		}
+	}
+	b.s.git.refresh()
 }
 
 // timelineEvents converts the recent commits into Timeline events: the short
@@ -326,58 +425,14 @@ func timelineEvents(log []GitCommitInfo) []toolkit.TimelineEvent {
 	return out
 }
 
-// buildFileTree turns a sorted slash-relative file list into a folder-grouped
-// forest of TreeTable nodes (directories expandable + expanded, files as leaves
-// carrying a name cell + a status-badge cell tinted via CellInk) and the leaf →
-// path map a click resolves through. Pure + testable: the badge lookup is passed
-// in so the tree build has no dependency on the live git state.
-func buildFileTree(files []string, badge func(string) (string, toolkit.RGBA), fileIcon func(string) iconDrawer, folderIcon iconDrawer) ([]*toolkit.TreeTableNode, map[*toolkit.TreeTableNode]string) {
-	var roots []*toolkit.TreeTableNode
-	dirs := map[string]*toolkit.TreeTableNode{}
-	nodePaths := map[*toolkit.TreeTableNode]string{}
-
-	// dirNode gets or creates the node for a slash dir path ("" is the root), so
-	// nested directories are materialised on demand and attached to their parent.
-	var dirNode func(dir string) *toolkit.TreeTableNode
-	dirNode = func(dir string) *toolkit.TreeTableNode {
-		if dir == "" {
-			return nil
-		}
-		if n, ok := dirs[dir]; ok {
-			return n
-		}
-		name, parent := dir, ""
-		if i := strings.LastIndex(dir, "/"); i >= 0 {
-			name, parent = dir[i+1:], dir[:i]
-		}
-		n := &toolkit.TreeTableNode{Cells: []string{name + "/", ""}, Expanded: true, Icon: folderIcon}
-		dirs[dir] = n
-		if p := dirNode(parent); p != nil {
-			p.Children = append(p.Children, n)
-		} else {
-			roots = append(roots, n)
-		}
-		return n
-	}
-
-	sorted := append([]string(nil), files...)
-	sort.Strings(sorted)
-	for _, f := range sorted {
-		dir, name := "", f
-		if i := strings.LastIndex(f, "/"); i >= 0 {
-			dir, name = f[:i], f[i+1:]
-		}
-		glyph, ink := badge(f)
-		leaf := &toolkit.TreeTableNode{Cells: []string{name, glyph}, CellInk: []toolkit.RGBA{{}, ink}, Icon: fileIcon(name)}
-		nodePaths[leaf] = f
-		if p := dirNode(dir); p != nil {
-			p.Children = append(p.Children, leaf)
-		} else {
-			roots = append(roots, leaf)
-		}
-	}
-	return roots, nodePaths
-}
+// ⛔ buildFileTree is GONE, and that is the point of this change. It assembled a
+// folder-grouped forest of TreeTable nodes with a second column for the status
+// badge, and a leaf→path map to resolve a click through — about fifty lines
+// reimplementing the front of toolkit.FileTree, which in exchange for them also
+// carries rename, delete, move, drag-and-drop and the context menu this column
+// never had. Its own doc names this exact trade: "a consumer with a repository
+// to show has to hand-roll a file view to get these marks, and loses rename,
+// delete, move, drag-and-drop and the context menu doing it."
 
 // width is the sidebar's device-pixel width when open, 0 when closed. layout()
 // (in app.go) reserves it so the editor+render body shrinks to the right.
@@ -397,6 +452,20 @@ func (b *sidebar) syncModel() {
 	if sig := b.signature(); sig != b.sig {
 		b.sig = sig
 		b.rebuild()
+	}
+	// ⛔ A REPOSITORY APPEARING *IS* A GEOMETRY CHANGE, which the comment above
+	// does not cover: with no repo the column lays out an empty state and zeroes
+	// the tree, timeline and detail rects, and with one it lays out a command
+	// band over two accordion bodies. Only BootClone re-laid out (git.go), so a
+	// clone started from the Remote-Git panel left the column holding the empty
+	// state's geometry — a file tree with a zero rect, invisible and unclickable
+	// until a resize or a sidebar toggle happened to lay it out again.
+	//
+	// Found by a browser proof that right-clicked the tree and was handed
+	// treeRect [0,0,0,0] a moment after CLONE_OK.
+	if repo := b.hasRepo(); repo != b.laidOutWithRepo {
+		b.laidOutWithRepo = repo
+		b.layout()
 	}
 }
 
@@ -442,45 +511,46 @@ func (b *sidebar) layout() {
 		}
 		b.emptyRect = toolkit.Rect{X: innerX, Y: bodyY, W: innerW, H: bodyH}
 		b.empty.SetBounds(b.emptyRect)
+		// ⛔ Import belongs in the EMPTY state, not only beside the git commands.
+		// Cloning was the only way to put a document in this workspace, which made
+		// "bring your own .tex" conditional on having a repository to bring it to —
+		// the opposite of the order a user arrives in. The two sit side by side.
 		cw := toolkit.Scaled(120)
-		if cw > innerW {
-			cw = innerW
+		if 2*cw+gap > innerW {
+			cw = (innerW - gap) / 2
 		}
-		b.buttons = append(b.buttons, sidebarButton{
-			role:  sbRoleClone,
-			rect:  toolkit.Rect{X: r.X + (r.W-cw)/2, Y: r.Y + r.H - pad - btnH, W: cw, H: btnH},
-			label: "Clone…",
-		})
+		if cw < 1 {
+			cw = 1
+		}
+		rowY := r.Y + r.H - pad - btnH
+		rowX := r.X + (r.W-(2*cw+gap))/2
+		b.buttons = append(b.buttons,
+			sidebarButton{
+				role:  sbRoleClone,
+				rect:  toolkit.Rect{X: rowX, Y: rowY, W: cw, H: btnH},
+				label: "Clone…",
+			},
+			sidebarButton{
+				role:     sbRoleImport,
+				rect:     toolkit.Rect{X: rowX + cw + gap, Y: rowY, W: cw, H: btnH},
+				label:    "Import…",
+				disabled: b.s.git.io.Import == nil,
+			},
+		)
 		b.treeRect = toolkit.Rect{}
 		b.tlRect = toolkit.Rect{}
 		b.detailRect = toolkit.Rect{}
 		return
 	}
 
-	// Command buttons, wrapped into rows of up to three.
-	cmds := []sidebarButton{
-		{role: sbRoleRefresh, label: "Refresh"},
-		{role: sbRoleStage, label: "Stage"},
-		{role: sbRoleCommit, label: "Commit"},
-		{role: sbRolePull, label: "Pull"},
-		{role: sbRolePush, label: "Push"},
-		// Drops the copy this browser keeps, so the next visit clones afresh.
-		// It leaves the open workspace alone — see [State.GitForget].
-		{role: sbRoleForget, label: "Forget"},
-	}
-	for start := 0; start < len(cmds); start += 3 {
-		end := start + 3
-		if end > len(cmds) {
-			end = len(cmds)
-		}
-		row := cmds[start:end]
-		bw := (innerW - (len(row)-1)*gap) / len(row)
-		for i := range row {
-			row[i].rect = toolkit.Rect{X: innerX + i*(bw+gap), Y: cur, W: bw, H: btnH}
-			b.buttons = append(b.buttons, row[i])
-		}
-		cur += btnH + gap
-	}
+	// ONE row: the command menu. See [sbRoleGitMenu] for what this replaced and
+	// what the two rows it gives back are worth.
+	b.buttons = append(b.buttons, sidebarButton{
+		role:  sbRoleGitMenu,
+		label: "Git ▾",
+		rect:  toolkit.Rect{X: innerX, Y: cur, W: innerW, H: btnH},
+	})
+	cur += btnH + gap
 
 	// Detail strip (clicked-commit detail, or the latest git notice/error). It
 	// reserves a line only when it has something to show — an idle column (the
@@ -555,7 +625,7 @@ func (b *sidebar) histHeaderText() string {
 // last-clicked commit detail, then the latest success notice, else empty.
 func (b *sidebar) detailText() (string, toolkit.RGBA) {
 	if e := b.s.git.errMsg.Get(); e != "" {
-		return "⚠ " + e, badgeDeletedInk
+		return "⚠ " + e, errorInk
 	}
 	if b.commitDetail != "" {
 		return b.commitDetail, toolkit.RGBA{}
@@ -738,6 +808,12 @@ func (b *sidebar) draw(p painter.Painter, theme *toolkit.Theme) {
 		b.timeline.Draw(p, theme)
 	}
 	b.drawButtons(p, theme)
+	// LAST in the column, over everything it covers. The tree draws its own
+	// context menu inside its bounds; this one hangs from a button near the top
+	// and must sit above the tree and the timeline it overlaps.
+	if b.gitMenu != nil {
+		b.gitMenu.Draw(p, theme)
+	}
 }
 
 // drawButtons paints every laid-out command button, disabling the network ones
@@ -748,7 +824,11 @@ func (b *sidebar) drawButtons(p painter.Painter, theme *toolkit.Theme) {
 		bt := b.btn(sbBtn.role, sbBtn.label)
 		bt.Label().Set(sbBtn.label)
 		bt.SetBounds(sbBtn.rect)
-		bt.Disabled().Set(busy)
+		// ⛔ The command menu's own button stays ENABLED while a git op runs. It
+		// opens a menu; the menu is what greys the commands out, each for its own
+		// reason. A disabled opener would hide the whole list — including Refresh,
+		// which is how someone finds out what the column is busy with.
+		bt.Disabled().Set((busy && sbBtn.role != sbRoleGitMenu) || sbBtn.disabled)
 		bt.Draw(p, theme)
 	}
 }
@@ -761,6 +841,14 @@ func (b *sidebar) handleClick(x, y int) bool {
 		return false
 	}
 	b.ensureWidgets()
+	// The command menu takes the click while it is open, including the one that
+	// dismisses it by falling elsewhere in the column — otherwise a click meant
+	// to close it would press whatever is underneath.
+	if b.gitMenu != nil && b.gitMenu.Open().Get() {
+		b.gitMenu.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x, Y: y})
+		b.s.git.refresh()
+		return true
+	}
 	// Command buttons first.
 	for _, sbBtn := range b.buttons {
 		if sbBtn.rect.Contains(x, y) {
@@ -789,15 +877,15 @@ func (b *sidebar) handleClick(x, y int) bool {
 		b.layout()
 		return true
 	}
-	// File tree: route the click, then open the newly selected file (if any).
+	// File tree: route the click and let the widget decide what it was. Opening a
+	// file is no longer read back out of the selection here — a click that lands
+	// on a folder's twisty, on the rename entry or on the delete confirmation is
+	// not an open, and inferring "open" from "something is selected" made all
+	// three of those open a file as a side effect. The tree says which it was,
+	// through onFileRequest.
 	if b.hasRepo() && b.treeRect.Contains(x, y) {
+		b.focusTree()
 		b.tree.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - b.treeRect.X, Y: y - b.treeRect.Y})
-		if node := b.tree.Selected().Get(); node != nil {
-			if path, ok := b.nodePaths[node]; ok {
-				b.commitDetail = ""
-				b.s.GitOpenFile(path)
-			}
-		}
 		b.s.git.refresh()
 		return true
 	}
@@ -824,10 +912,220 @@ func commitDetailLine(c GitCommitInfo) string {
 	return line
 }
 
-// handleRelease clears the momentary pressed face of every command button on the
-// mouseup that ends a press this column captured.
+// --- the command menu ---------------------------------------------------------
+
+// gitMenuRect is the button the command menu hangs from, or the zero rect when
+// the column is not showing one.
+func (b *sidebar) gitMenuRect() toolkit.Rect {
+	for _, sbBtn := range b.buttons {
+		if sbBtn.role == sbRoleGitMenu {
+			return sbBtn.rect
+		}
+	}
+	return toolkit.Rect{}
+}
+
+// openGitMenu pops the command menu under its button.
+//
+// ⛔ A command that cannot run right now is a DISABLED ROW, not a missing one. A
+// menu whose contents change with the state teaches nothing and leaves the
+// reader wondering whether they misremembered; a greyed row says "this exists,
+// not now". The toolkit spells that as a nil Action.
+func (b *sidebar) openGitMenu() {
+	busy := b.s.git.busy.Get()
+	// act wraps a command so a busy column refuses it, by handing the menu a nil
+	// Action rather than one that silently does nothing.
+	act := func(f func()) func() {
+		if busy {
+			return nil
+		}
+		return f
+	}
+	items := []toolkit.MenuItem{
+		{Label: "Refresh", Action: act(func() { b.dispatch(sbRoleRefresh) })},
+		{Label: "Stage", Action: act(func() { b.dispatch(sbRoleStage) })},
+		{Label: "Commit…", Action: act(func() { b.dispatch(sbRoleCommit) })},
+		{Separator: true},
+		{Label: "Pull", Action: act(func() { b.dispatch(sbRolePull) })},
+		{Label: "Push", Action: act(func() { b.dispatch(sbRolePush) })},
+		{Separator: true},
+		// Last, behind a separator of its own: it throws away this browser's saved
+		// copy. Grouping it with Pull and Push would put a discard one slip away
+		// from the two commands people use most.
+		{Label: "Forget this repository", Action: act(func() { b.dispatch(sbRoleForget) })},
+	}
+	r := b.gitMenuRect()
+	setMenuItems(b.gitMenu.Menu, items)
+	b.gitMenu.SetBounds(b.bounds)
+	b.gitMenu.Popup(r.X, r.Y+r.H)
+	b.s.git.refresh()
+}
+
+// treeMenuExtra is what the file tree's own context menu gains from this host:
+// the two commands that talk to the COMPUTER rather than to the remote.
+//
+// ⛔ They live here, beside New File / Rename / Delete, because that is what
+// they are — things done to files — and not git operations at all. Each carries
+// its own reason to be unavailable (no host picker) rather than the git busy
+// flag's, so a disabled row here means something different from a disabled row
+// in the command menu, and says so.
+func (b *sidebar) treeMenuExtra(p string, dir bool) []toolkit.MenuItem {
+	var items []toolkit.MenuItem
+	imp := toolkit.MenuItem{Label: "Import from this computer…"}
+	if b.s.git.io.Import != nil {
+		imp.Action = func() { b.dispatch(sbRoleImport) }
+	}
+	items = append(items, toolkit.MenuItem{Separator: true}, imp)
+	// Export acts on ONE file, so it is offered on a file row and not on a folder
+	// or on the root — a menu that offered it everywhere would have to decide
+	// what "export this folder" meant, and there is no answer.
+	if !dir && p != "" {
+		exp := toolkit.MenuItem{Label: "Export “" + path.Base(p) + "”…"}
+		if b.s.git.io.Export != nil && p == b.s.git.loaded.Get() {
+			exp.Action = func() { b.dispatch(sbRoleExport) }
+		}
+		items = append(items, exp)
+	}
+	return items
+}
+
+// --- the keyboard, which is what makes the Explorer's verbs reachable --------
+
+// focusTree gives the workspace column the keyboard and takes it from whatever
+// had it.
+//
+// ⛔ FOCUS IS THE WHOLE SAFETY ARGUMENT HERE, not a nicety. The Explorer's keys
+// are Delete and F2 on the SELECTED file, and a tree that answered them whenever
+// a key was pressed would delete a file because somebody hit Delete while
+// writing a paragraph. So the keys are routed only while this column holds
+// focus, focus is taken by clicking in it, and it is dropped the moment a click
+// lands anywhere else ([sidebar.blurTree]).
+func (b *sidebar) focusTree() {
+	b.ensureWidgets()
+	b.tree.SetFocused(true)
+	b.s.editor.SetFocused(false)
+	b.s.renderView.SetFocused(false)
+}
+
+// blurTree drops the column's keyboard focus. The app calls it for every click
+// that is not in this column.
+func (b *sidebar) blurTree() {
+	if b.tree == nil {
+		return
+	}
+	// Any name being typed or deletion awaiting confirmation goes with the focus:
+	// an in-place rename left open while the person types in the editor would
+	// catch the next Enter they press in it.
+	b.tree.Dismiss()
+	b.tree.SetFocused(false)
+}
+
+// treeHasKeyboard reports whether the file tree should receive key events.
+func (b *sidebar) treeHasKeyboard() bool {
+	return b.open && b.tree != nil && b.hasRepo() && b.tree.Focused()
+}
+
+// handleKey offers a key to the focused file tree: F2 renames in place, Delete
+// asks to delete, Enter opens, the arrows and Home/End navigate, and
+// Shift+F10 / the Menu key open the context menu — the WAI-ARIA keyboard route
+// to New File, New Folder, Rename and Delete.
+//
+// It reports whether the key was consumed, so the app's chain stops here.
+func (b *sidebar) handleKey(code string) bool {
+	if !b.treeHasKeyboard() {
+		return false
+	}
+	b.tree.OnEvent(toolkit.Event{Kind: toolkit.EventKeyDown, Code: code})
+	b.s.git.refresh()
+	return true
+}
+
+// handleContext opens the file tree's context menu at a secondary click — New
+// File, New Folder, Rename, Delete and whatever the host adds through
+// MenuExtra.
+//
+// It reports whether the column took the gesture, which is what lets the host
+// suppress the PAGE's own menu for this click alone: a right-click anywhere the
+// app does not use one must still offer the browser's, or the page stops being
+// a page.
+//
+// ⛔ The menu is clamped to the tree's own rect by the widget (it sets the
+// popup's surface to its bounds), so it can never spill into the editor — which
+// matters here because the column is drawn BEFORE the body and anything
+// overflowing it would be painted over.
+func (b *sidebar) handleContext(x, y int) bool {
+	if !b.open || !b.bounds.Contains(x, y) {
+		return false
+	}
+	b.ensureWidgets()
+	if !b.hasRepo() || !b.treeRect.Contains(x, y) {
+		return false
+	}
+	b.focusTree()
+	b.tree.Context(x-b.treeRect.X, y-b.treeRect.Y)
+	b.s.git.refresh()
+	return true
+}
+
+// menuOpen reports whether EITHER menu is showing — the file tree's context
+// menu or the command menu — so the app can route a click to it wherever it
+// lands.
+func (b *sidebar) menuOpen() bool {
+	if b.gitMenu != nil && b.gitMenu.Open().Get() {
+		return true
+	}
+	return b.tree != nil && b.tree.MenuOpen()
+}
+
+// dismissMenu closes whichever menu is open (and any name being typed), for the
+// click that lands outside the column while one is.
+func (b *sidebar) dismissMenu() {
+	if b.gitMenu != nil {
+		b.gitMenu.Close()
+	}
+	if b.tree != nil {
+		b.tree.Dismiss()
+	}
+	b.s.git.refresh()
+}
+
+// handleChar offers a typed character to the focused file tree: type-ahead
+// jumps to the next matching row, and a character typed into an in-place rename
+// lands in its entry.
+func (b *sidebar) handleChar(ch string) bool {
+	if !b.treeHasKeyboard() {
+		return false
+	}
+	b.tree.OnEvent(toolkit.Event{Kind: toolkit.EventChar, Code: ch})
+	b.s.git.refresh()
+	return true
+}
+
+// handleDrag carries a press that began in the file tree: dragging a row onto a
+// folder is how a file manager moves a file, and the Explorer turns the gesture
+// into a FileMove request once the pointer is released over one.
+//
+// ⛔ Without this the gesture is inert, which is NOT the same as absent: the
+// tree outlines the folder under the pointer as a drop target, so a column that
+// drew the invitation and then did nothing on release would be worse than one
+// that never offered it.
+func (b *sidebar) handleDrag(x, y int) {
+	if !b.open || b.tree == nil || !b.hasRepo() {
+		return
+	}
+	b.tree.OnEvent(toolkit.Event{Kind: toolkit.EventMouseDrag, X: x - b.treeRect.X, Y: y - b.treeRect.Y})
+	b.s.git.refresh()
+}
+
+// handleRelease ends a press this column captured: it finishes any row drag
+// (which is where a move actually happens) and clears the momentary pressed
+// face of every command button.
 func (b *sidebar) handleRelease(x, y int) {
+	if b.open && b.tree != nil && b.hasRepo() {
+		b.tree.OnEvent(toolkit.Event{Kind: toolkit.EventMouseUp, X: x - b.treeRect.X, Y: y - b.treeRect.Y})
+	}
 	if b.btns == nil {
+		b.s.git.refresh()
 		return
 	}
 	for _, bt := range b.btns {
@@ -864,6 +1162,8 @@ func (b *sidebar) dispatch(role sidebarRole) {
 		// buffer edit's dirtiness (and any fresh status) shows without a git op.
 		b.s.git.refreshStatus()
 		b.sig = ""
+	case sbRoleGitMenu:
+		b.openGitMenu()
 	case sbRoleStage:
 		b.s.GitStage(nil)
 	case sbRoleCommit:
@@ -876,6 +1176,17 @@ func (b *sidebar) dispatch(role sidebarRole) {
 		b.s.GitPush(nil)
 	case sbRoleClone:
 		b.s.git.openPanel()
+	case sbRoleImport:
+		// ⛔ Guarded here as well as drawn disabled: a click's path to this point
+		// runs through the button widget, and a guard that lives only in how the
+		// button is PAINTED is one refactor away from a nil call. The picker is
+		// asynchronous — deliver runs once per chosen file, later, on the event
+		// loop — so nothing after this call may assume a file arrived.
+		if b.s.git.io.Import != nil {
+			b.s.git.io.Import(b.s.git.importDelivered)
+		}
+	case sbRoleExport:
+		b.s.git.exportActive()
 	}
 	b.commitDetail = ""
 	b.s.git.refresh()
@@ -909,26 +1220,114 @@ func (s *State) SidebarRect() [4]int {
 	return [4]int{r.X, r.Y, r.W, r.H}
 }
 
-// SidebarFileRows returns the flattened visible file/dir rows as "name" strings
-// with their badge glyph appended (" M"/" A"/…), so a headless proof can assert
-// the tree + per-file status without pixel-reading. Directories carry no badge.
+// SidebarTreeRect is the file tree's device-pixel [x,y,w,h] bounds, zero when
+// the column is closed or has no repository to show. A headless proof needs it
+// to put a real pointer on a row.
+func (s *State) SidebarTreeRect() [4]int {
+	r := s.sidebar.treeRect
+	return [4]int{r.X, r.Y, r.W, r.H}
+}
+
+// SidebarMenuOpen reports whether the file tree's context menu is showing.
+//
+// It exists for the browser proof of the SECONDARY CLICK: the native tests can
+// call [State.HandleContextClick] directly, which proves the routing and says
+// nothing about whether the host listens for the gesture at all — and the host
+// not listening was the whole defect.
+func (s *State) SidebarMenuOpen() bool { return s.sidebar.menuOpen() }
+
+// SidebarFileRows returns the workspace's files as "name" rows with their status
+// mark appended (" M"/" A"/" ?"/…), folders first at each level and each group
+// alphabetical, so a headless proof can assert the tree + per-file status without
+// pixel-reading. Directories carry no mark.
+//
+// ⚠ It is derived from the ENTRIES, which is what the host put in, following the
+// order [toolkit.FileTree] documents for what it draws — folders before files,
+// each by name. It therefore does not know about a folder the person has
+// collapsed, where the old node walk did. That is a deliberate trade: the
+// alternative is reaching into the widget's row state, and what this is for is
+// asserting that the workspace lists what the repository holds. The drawn result
+// is covered by the pixel proof instead.
 func (s *State) SidebarFileRows() []string {
-	var out []string
-	var walk func(nodes []*toolkit.TreeTableNode)
-	walk = func(nodes []*toolkit.TreeTableNode) {
-		for _, n := range nodes {
-			row := n.Cells[0]
-			if len(n.Cells) > 1 && n.Cells[1] != "" {
-				row += " " + n.Cells[1]
+	entries := s.sidebar.tree.Entries().Get()
+	marks := make(map[string]string, len(entries))
+	byDir := map[string][]string{}
+	subdirs := map[string]map[string]bool{}
+	for _, e := range entries {
+		dir, name := "", e.Path
+		if i := strings.LastIndex(e.Path, "/"); i >= 0 {
+			dir, name = e.Path[:i], e.Path[i+1:]
+		}
+		byDir[dir] = append(byDir[dir], name)
+		marks[e.Path] = fileStatusMark(e.Status)
+		// Every ancestor of a path is a folder, whether or not anything listed it.
+		for d := dir; d != ""; {
+			parent := ""
+			if i := strings.LastIndex(d, "/"); i >= 0 {
+				parent = d[:i]
 			}
-			out = append(out, row)
-			if n.Expanded {
-				walk(n.Children)
+			if subdirs[parent] == nil {
+				subdirs[parent] = map[string]bool{}
 			}
+			subdirs[parent][d] = true
+			d = parent
 		}
 	}
-	walk(s.sidebar.tree.Root)
+	var out []string
+	var walk func(dir string)
+	walk = func(dir string) {
+		kids := make([]string, 0, len(subdirs[dir]))
+		for d := range subdirs[dir] {
+			kids = append(kids, d)
+		}
+		sort.Strings(kids)
+		for _, d := range kids {
+			name := d
+			if i := strings.LastIndex(d, "/"); i >= 0 {
+				name = d[i+1:]
+			}
+			out = append(out, name+"/")
+			walk(d)
+		}
+		files := append([]string(nil), byDir[dir]...)
+		sort.Strings(files)
+		for _, name := range files {
+			full := name
+			if dir != "" {
+				full = dir + "/" + name
+			}
+			row := name
+			if m := marks[full]; m != "" {
+				row += " " + m
+			}
+			out = append(out, row)
+		}
+	}
+	walk("")
 	return out
+}
+
+// fileStatusMark is the one-character mark the Explorer draws for a status —
+// `git status --short`'s vocabulary, which [toolkit.FileStatus] shares.
+//
+// ⛔ It is spelled out here rather than read off the widget because the widget
+// does not export it, and a proof that asserted nothing because the mark came
+// back empty would look exactly like a proof that passed. If these ever diverge
+// from what is drawn, the pixel proof is what says so.
+func fileStatusMark(s toolkit.FileStatus) string {
+	switch s {
+	case toolkit.FileModified:
+		return "M"
+	case toolkit.FileAdded:
+		return "A"
+	case toolkit.FileDeleted:
+		return "D"
+	case toolkit.FileUntracked:
+		return "?"
+	case toolkit.FileConflicted:
+		return "!"
+	}
+	return ""
 }
 
 // SidebarTimelineTitles returns the commit-timeline event titles, newest first.

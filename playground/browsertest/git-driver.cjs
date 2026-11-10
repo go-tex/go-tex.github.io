@@ -93,10 +93,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     });
 
     await page.goto(url, { waitUntil: "load", timeout: 30000 });
-    await page.waitForFunction(() => globalThis.gotexPlaygroundReady === true, {
-      timeout: READY_TIMEOUT,
-      polling: POLL,
-    });
+    // Same rule as the waits below: a boot that never happens must say so,
+    // and distinguish "the wasm failed" from "it is still loading".
+    try {
+      await page.waitForFunction(() => globalThis.gotexPlaygroundReady === true, {
+        timeout: READY_TIMEOUT,
+        polling: POLL,
+      });
+    } catch (e) {
+      const boot = await page.evaluate(() => globalThis.__bootError || null);
+      throw new Error("the main-thread wasm never became ready after " + READY_TIMEOUT + "ms" +
+        (boot ? "; boot error: " + boot : "; no boot error was reported"));
+    }
     console.log("playground.wasm booted (main thread)");
 
     // Configure the remote + open the panel; opening spawns the git worker.
@@ -119,14 +127,38 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     // Clone → the seeded main.tex must load into the SOURCE editor.
     const debug = () => page.evaluate(() => globalThis.gotexGitDebug());
+
+    // ⛔ A TIMEOUT MUST SAY WHAT IT WAS WAITING ON. Twice on main — 2026-10-25
+    // and 2026-11-01 — this proof failed with nothing but
+    //
+    //   DRIVER_FAIL Waiting failed: 90000ms exceeded
+    //
+    // which names neither the step nor the state, so both occurrences are
+    // undiagnosable after the fact: the run took 112s and 127s against ~35s
+    // healthy, and that is the whole of what is known. The two-tab driver
+    // prints `last state={…}` on its timeouts and that is precisely why its
+    // stall could be located to one missing event. This does the same.
+    const until = async (what, pred) => {
+      try {
+        await page.waitForFunction(pred, { timeout: OP_TIMEOUT, polling: POLL });
+      } catch (e) {
+        let last = "unreadable";
+        try {
+          last = JSON.stringify(await debug());
+        } catch (e2) {
+          last = "gotexGitDebug() threw: " + (e2 && e2.message ? e2.message : e2);
+        }
+        throw new Error(
+          "timed out waiting for " + what + " after " + OP_TIMEOUT + "ms; last state=" + last +
+          "; worker wasm " + (workerWasmURL ? "was requested" : "was NEVER requested"));
+      }
+    };
+
     const waitIdle = async (what) => {
-      await page.waitForFunction(
-        () => {
-          const d = globalThis.gotexGitDebug();
-          return d.busy === false && (d.loadedPath !== "" || d.error !== "" || d.notice !== "");
-        },
-        { timeout: OP_TIMEOUT, polling: POLL },
-      );
+      await until(what, () => {
+        const d = globalThis.gotexGitDebug();
+        return d.busy === false && (d.loadedPath !== "" || d.error !== "" || d.notice !== "");
+      });
       const d = await debug();
       if (d.error) throw new Error(what + " reported an error: " + d.error);
       return d;
@@ -139,20 +171,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     console.log("[debug before clone] " + JSON.stringify(await page.evaluate(() => globalThis.gotexGitDebug())));
     await page.evaluate(() => globalThis.gotexGitClone());
     // Wait until the clone is no longer busy AND a file loaded.
-    try {
-      await page.waitForFunction(
-        () => {
-          const d = globalThis.gotexGitDebug();
-          return d.busy === false && (d.loadedPath !== "" || d.error !== "");
-        },
-        { timeout: OP_TIMEOUT, polling: POLL },
-      );
-    } catch (e) {
-      // A timeout that says only "90000ms exceeded" names the wall, not the
-      // state. The state is one evaluate away and it is the whole diagnosis.
-      console.log("[debug at timeout] " + JSON.stringify(await page.evaluate(() => globalThis.gotexGitDebug())));
-      throw e;
-    }
+    // This branch's own at-timeout dump is GONE on purpose: #248's `until`
+    // already prints `last state={…}`, and it does it for every wait rather
+    // than for this one. Keeping both would have printed the same state twice
+    // and left the other waits bare.
+    await until("the clone to finish", () => {
+      const d = globalThis.gotexGitDebug();
+      return d.busy === false && (d.loadedPath !== "" || d.error !== "");
+    });
     let d = await debug();
     if (d.error) throw new Error("clone error: " + d.error);
     if (d.loadedPath !== "main.tex") throw new Error("clone loaded " + d.loadedPath + ", want main.tex");
@@ -171,6 +197,36 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         console.log("SCREENSHOT_FAIL " + (e && e.message ? e.message : e));
       }
     }
+
+    // ⛔ THE SECONDARY CLICK, through the REAL browser gesture. The Go side is
+    // covered by native tests that call HandleContextClick directly; those prove
+    // the routing and say nothing about whether the page listens for a
+    // right-click at all — and it did not, which is why New File / Rename /
+    // Delete were keyboard-only. Only a real contextmenu event over the canvas
+    // shows the host wiring exists.
+    const sbBefore = await page.evaluate(() => globalThis.gotexSidebar());
+    const tr = sbBefore.treeRect;
+    if (!(tr[2] > 0 && tr[3] > 0)) {
+      throw new Error("no file tree to right-click (treeRect " + JSON.stringify(tr) + ")");
+    }
+    if (sbBefore.menuOpen) throw new Error("the context menu was already open before the click");
+    {
+      // Device px -> CSS px, the same mapping the app's own handler inverts.
+      const pt = await page.evaluate((q) => {
+        const c = document.getElementById("gotex-canvas");
+        const b = c.getBoundingClientRect();
+        const dpr = c.width / b.width;
+        return { x: b.left + (q[0] + q[2] / 2) / dpr, y: b.top + (q[1] + 8) / dpr };
+      }, tr);
+      await page.mouse.click(pt.x, pt.y, { button: "right" });
+    }
+    const sbAfter = await page.evaluate(() => globalThis.gotexSidebar());
+    if (!sbAfter.menuOpen) {
+      throw new Error("a real right-click on the file tree did not open the Explorer's menu");
+    }
+    console.log("CONTEXT_OK: a real right-click opened the workspace Explorer's menu");
+    // Leave it closed, so what follows is not typing into an open menu.
+    await page.keyboard.press("Escape");
 
     // Edit the loaded document, then Commit + Push.
     await page.evaluate((m) => globalThis.gotexSetSource(globalThis.gotexSource() + "\n" + m + "\n"), marker);

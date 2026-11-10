@@ -37,6 +37,15 @@ const (
 	OpPull      = "pull"      // fast-forward against origin, refresh contents
 	OpPush      = "push"      // push the tracked branch to origin
 	OpLog       = "log"       // recent commits, newest first
+	// OpRemoveFile deletes one working-tree file and stages the removal.
+	//
+	// ⛔ It is the one file verb that cannot be expressed as a write. Creating a
+	// file is WriteFile, and so is importing one, and so is the first half of a
+	// rename — but removing a path has no content to carry it, so a workspace with
+	// only writeFile can add files for ever and never lose one. Rename and move are
+	// then this op plus a write, composed by the host rather than given their own
+	// op: one way to remove a path means one place where that can be wrong.
+	OpRemoveFile = "removeFile"
 )
 
 // Error codes. Every worker failure maps onto exactly one of these, so the main

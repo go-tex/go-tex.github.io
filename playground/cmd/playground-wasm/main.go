@@ -193,6 +193,16 @@ func main() {
 	// Open the sample repository in the workspace. This does not hold the start
 	// up: the app is already running on its built-in document and the repository
 	// arrives when the network delivers it. See State.BootClone.
+	//
+	// ⛔ A host that drives the git panel itself declines it with
+	// globalThis.gotexDeclineBootClone — the browser proofs do. The boot clone is
+	// the FIRST request on the worker's single request goroutine, so one that hangs
+	// starves the clone the page actually asked for; and it is aimed at a remote
+	// whose CORS policy names https://go-tex.github.io, which a proof page served
+	// from 127.0.0.1 can never satisfy. See gitView.bootDeclined for #212.
+	if d := js.Global().Get("gotexDeclineBootClone"); d.Truthy() {
+		state.DeclineBootClone()
+	}
 	state.BootClone(func(error) { render() })
 
 	// While any git operation is in flight, run a requestAnimationFrame loop so the
@@ -340,6 +350,27 @@ func main() {
 		focusIME()
 		x, y := coords(args[0])
 		if state.HandleClick(x, y) {
+			render()
+		}
+		return nil
+	}))
+	// The SECONDARY click, which this app had no vocabulary for at all: the
+	// mousedown handler above returns early on every button but 0, so a
+	// right-click reached nothing and the workspace Explorer's menu — New File,
+	// New Folder, Rename, Delete — was keyboard-only (Shift+F10, Menu key).
+	//
+	// ⛔ preventDefault ONLY when the app took the gesture. A page that swallows
+	// every right-click stops being a page: outside the regions that use one, the
+	// browser's own menu must still open, which is how a reader copies text or
+	// opens a link in a new tab.
+	canvas.Call("addEventListener", "contextmenu", js.FuncOf(func(_ js.Value, args []js.Value) any {
+		if len(args) == 0 {
+			return nil
+		}
+		x, y := coords(args[0])
+		if state.HandleContextClick(x, y) {
+			args[0].Call("preventDefault")
+			focusIME() // the menu is ours now; keep the IME target where keys arrive
 			render()
 		}
 		return nil
@@ -593,6 +624,7 @@ func main() {
 			render()
 		}
 		r := state.SidebarRect()
+		tr := state.SidebarTreeRect()
 		w, h := state.Size()
 		return map[string]any{
 			"open":    state.SidebarOpen(),
@@ -601,6 +633,12 @@ func main() {
 			"editorW": state.EditorWidth(),
 			"canvasW": w,
 			"canvasH": h,
+			// treeRect + menuOpen are what a proof needs to show that a REAL
+			// secondary click reaches the Explorer. The native tests exercise
+			// State.HandleContextClick; only a browser can show that the host
+			// listener exists at all — which is exactly the layer that was missing.
+			"treeRect": []any{tr[0], tr[1], tr[2], tr[3]},
+			"menuOpen": state.SidebarMenuOpen(),
 		}
 	}))
 

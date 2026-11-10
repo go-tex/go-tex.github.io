@@ -25,6 +25,7 @@ type fakeGitBackend struct {
 	commitErr error
 	stageErr  error
 	writeErr  error
+	removeErr error
 	pushErr   error
 	// restoreFound makes the fake behave like a browser that already holds this
 	// repository; restoreErr like one holding an entry it cannot reopen.
@@ -42,6 +43,8 @@ type fakeGitBackend struct {
 	gotWrites        map[string]string // last WriteFiles payload (accumulated)
 	writeCalls       int
 	cloneCalls       int
+	removed          []string // paths RemoveFile was asked for, in order
+	removeCalls      int
 
 	hold    bool
 	release func() // parked done, invoked by the test when hold is set
@@ -155,6 +158,35 @@ func (f *fakeGitBackend) WriteFiles(files map[string]string, done func(error)) {
 			f.fileData[p] = c
 		}
 		done(nil)
+	}
+	if f.hold {
+		f.release = fire
+		return
+	}
+	fire()
+}
+
+// RemoveFile drops the path from both the content map and the file list, so the
+// fake behaves like the worker: a removal is the one op that changes which paths
+// exist, and a fake that forgot the list would let a test pass while the real
+// backend's caller kept showing a row for a file that is gone.
+func (f *fakeGitBackend) RemoveFile(path string, done func([]string, error)) {
+	f.removeCalls++
+	f.removed = append(f.removed, path)
+	fire := func() {
+		if f.removeErr != nil {
+			done(nil, f.removeErr)
+			return
+		}
+		delete(f.fileData, path)
+		kept := make([]string, 0, len(f.files))
+		for _, p := range f.files {
+			if p != path {
+				kept = append(kept, p)
+			}
+		}
+		f.files = kept
+		done(kept, nil)
 	}
 	if f.hold {
 		f.release = fire
