@@ -118,6 +118,10 @@ type sidebar struct {
 	tlRect       toolkit.Rect
 	buttons      []sidebarButton
 
+	// laidOutWithRepo is whether the last layout ran with a repository open. The
+	// two states have DIFFERENT geometry — an empty state, or a command band over
+	// two accordion bodies — so a change here is a relayout, not a rebuild.
+	laidOutWithRepo bool
 	// sig is the last tree/timeline signature; a change triggers a rebuild.
 	sig string
 	// commitDetail is the last-clicked commit's one-line detail (sha · subject ·
@@ -433,6 +437,20 @@ func (b *sidebar) syncModel() {
 	if sig := b.signature(); sig != b.sig {
 		b.sig = sig
 		b.rebuild()
+	}
+	// ⛔ A REPOSITORY APPEARING *IS* A GEOMETRY CHANGE, which the comment above
+	// does not cover: with no repo the column lays out an empty state and zeroes
+	// the tree, timeline and detail rects, and with one it lays out a command
+	// band over two accordion bodies. Only BootClone re-laid out (git.go), so a
+	// clone started from the Remote-Git panel left the column holding the empty
+	// state's geometry — a file tree with a zero rect, invisible and unclickable
+	// until a resize or a sidebar toggle happened to lay it out again.
+	//
+	// Found by a browser proof that right-clicked the tree and was handed
+	// treeRect [0,0,0,0] a moment after CLONE_OK.
+	if repo := b.hasRepo(); repo != b.laidOutWithRepo {
+		b.laidOutWithRepo = repo
+		b.layout()
 	}
 }
 
@@ -933,6 +951,47 @@ func (b *sidebar) handleKey(code string) bool {
 	return true
 }
 
+// handleContext opens the file tree's context menu at a secondary click — New
+// File, New Folder, Rename, Delete and whatever the host adds through
+// MenuExtra.
+//
+// It reports whether the column took the gesture, which is what lets the host
+// suppress the PAGE's own menu for this click alone: a right-click anywhere the
+// app does not use one must still offer the browser's, or the page stops being
+// a page.
+//
+// ⛔ The menu is clamped to the tree's own rect by the widget (it sets the
+// popup's surface to its bounds), so it can never spill into the editor — which
+// matters here because the column is drawn BEFORE the body and anything
+// overflowing it would be painted over.
+func (b *sidebar) handleContext(x, y int) bool {
+	if !b.open || !b.bounds.Contains(x, y) {
+		return false
+	}
+	b.ensureWidgets()
+	if !b.hasRepo() || !b.treeRect.Contains(x, y) {
+		return false
+	}
+	b.focusTree()
+	b.tree.Context(x-b.treeRect.X, y-b.treeRect.Y)
+	b.s.git.refresh()
+	return true
+}
+
+// menuOpen reports whether the file tree's context menu is showing, so the app
+// can route a click to it wherever it lands.
+func (b *sidebar) menuOpen() bool { return b.tree != nil && b.tree.MenuOpen() }
+
+// dismissMenu closes the file tree's context menu (and any name being typed),
+// for the click that lands outside the column while it is open.
+func (b *sidebar) dismissMenu() {
+	if b.tree == nil {
+		return
+	}
+	b.tree.Dismiss()
+	b.s.git.refresh()
+}
+
 // handleChar offers a typed character to the focused file tree: type-ahead
 // jumps to the next matching row, and a character typed into an in-place rename
 // lands in its entry.
@@ -1040,6 +1099,22 @@ func (s *State) SidebarRect() [4]int {
 	r := s.sidebar.bounds
 	return [4]int{r.X, r.Y, r.W, r.H}
 }
+
+// SidebarTreeRect is the file tree's device-pixel [x,y,w,h] bounds, zero when
+// the column is closed or has no repository to show. A headless proof needs it
+// to put a real pointer on a row.
+func (s *State) SidebarTreeRect() [4]int {
+	r := s.sidebar.treeRect
+	return [4]int{r.X, r.Y, r.W, r.H}
+}
+
+// SidebarMenuOpen reports whether the file tree's context menu is showing.
+//
+// It exists for the browser proof of the SECONDARY CLICK: the native tests can
+// call [State.HandleContextClick] directly, which proves the routing and says
+// nothing about whether the host listens for the gesture at all — and the host
+// not listening was the whole defect.
+func (s *State) SidebarMenuOpen() bool { return s.sidebar.menuOpen() }
 
 // SidebarFileRows returns the workspace's files as "name" rows with their status
 // mark appended (" M"/" A"/" ?"/…), folders first at each level and each group

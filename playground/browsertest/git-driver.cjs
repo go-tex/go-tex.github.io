@@ -130,6 +130,36 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       }
     }
 
+    // ⛔ THE SECONDARY CLICK, through the REAL browser gesture. The Go side is
+    // covered by native tests that call HandleContextClick directly; those prove
+    // the routing and say nothing about whether the page listens for a
+    // right-click at all — and it did not, which is why New File / Rename /
+    // Delete were keyboard-only. Only a real contextmenu event over the canvas
+    // shows the host wiring exists.
+    const sbBefore = await page.evaluate(() => globalThis.gotexSidebar());
+    const tr = sbBefore.treeRect;
+    if (!(tr[2] > 0 && tr[3] > 0)) {
+      throw new Error("no file tree to right-click (treeRect " + JSON.stringify(tr) + ")");
+    }
+    if (sbBefore.menuOpen) throw new Error("the context menu was already open before the click");
+    {
+      // Device px -> CSS px, the same mapping the app's own handler inverts.
+      const pt = await page.evaluate((q) => {
+        const c = document.getElementById("gotex-canvas");
+        const b = c.getBoundingClientRect();
+        const dpr = c.width / b.width;
+        return { x: b.left + (q[0] + q[2] / 2) / dpr, y: b.top + (q[1] + 8) / dpr };
+      }, tr);
+      await page.mouse.click(pt.x, pt.y, { button: "right" });
+    }
+    const sbAfter = await page.evaluate(() => globalThis.gotexSidebar());
+    if (!sbAfter.menuOpen) {
+      throw new Error("a real right-click on the file tree did not open the Explorer's menu");
+    }
+    console.log("CONTEXT_OK: a real right-click opened the workspace Explorer's menu");
+    // Leave it closed, so what follows is not typing into an open menu.
+    await page.keyboard.press("Escape");
+
     // Edit the loaded document, then Commit + Push.
     await page.evaluate((m) => globalThis.gotexSetSource(globalThis.gotexSource() + "\n" + m + "\n"), marker);
     await page.evaluate(() => globalThis.gotexGitCommit());
