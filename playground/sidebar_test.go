@@ -4,6 +4,7 @@
 package playground
 
 import (
+	"bytes"
 	"errors"
 	"strings"
 	"testing"
@@ -12,69 +13,76 @@ import (
 	"github.com/go-widgets/toolkit"
 )
 
-// --- pure helpers: badgeFor / buildFileTree / timelineEvents / detail ---------
+// --- pure helpers: fileStatus / workspace rows / timelineEvents / detail ------
 
-func TestBadgeFor(t *testing.T) {
-	cases := []struct {
-		status string
-		glyph  string
-		ink    toolkit.RGBA
-	}{
-		{"modified", "M", badgeModifiedInk},
-		{"staged", "A", badgeStagedInk},
-		{"deleted", "D", badgeDeletedInk},
-		{"untracked", "U", badgeUntrackedInk},
-		{"", "", toolkit.RGBA{}},
-		{"whatever", "", toolkit.RGBA{}},
-	}
-	for _, tc := range cases {
-		g, ink := badgeFor(tc.status)
-		if g != tc.glyph || ink != tc.ink {
-			t.Fatalf("badgeFor(%q) = %q/%v, want %q/%v", tc.status, g, ink, tc.glyph, tc.ink)
+// The mapping from this repository's status vocabulary to the Explorer's.
+//
+// ⛔ It replaces TestBadgeFor, which checked a letter and a fixed ink per status.
+// The widget owns both now, so what is left to get wrong is the TRANSLATION —
+// and the one that needs saying is "staged": this workspace writes through
+// `git add` without committing, which is git's staged-new, and the vocabulary
+// the widget shares with Mercurial, Subversion, Jujutsu and Fossil calls that
+// added. A mapping that sent it to FileModified would be plausible and wrong.
+func TestFileStatusTranslation(t *testing.T) {
+	s, f := openWorkspace(t, map[string]string{"a.tex": "", "b.tex": "", "c.tex": "", "d.tex": "", "e.tex": ""}, "")
+	f.status = gitStatus{Branch: "main", Changes: []gitFileChange{
+		{Path: "a.tex", Status: "modified"},
+		{Path: "b.tex", Status: "staged"},
+		{Path: "c.tex", Status: "deleted"},
+		{Path: "d.tex", Status: "untracked"},
+		{Path: "e.tex", Status: "something new"},
+	}}
+	f.statusOK = true
+	s.git.refreshStatus()
+	for path, want := range map[string]toolkit.FileStatus{
+		"a.tex":   toolkit.FileModified,
+		"b.tex":   toolkit.FileAdded,
+		"c.tex":   toolkit.FileDeleted,
+		"d.tex":   toolkit.FileUntracked,
+		"e.tex":   toolkit.FileUnchanged, // a status this build does not know marks nothing
+		"gone.md": toolkit.FileUnchanged, // and so does a path with no entry
+	} {
+		if got := s.sidebar.fileStatus(path); got != want {
+			t.Errorf("fileStatus(%q) = %v, want %v", path, got, want)
 		}
+	}
+	// A buffer the tree does not list is a created or imported file: present, not
+	// yet under version control.
+	s.git.buffers["fresh.tex"] = &fileBuffer{}
+	if got := s.sidebar.fileStatus("fresh.tex"); got != toolkit.FileUntracked {
+		t.Errorf("an unwritten file reads %v, want untracked", got)
 	}
 }
 
-func TestBuildFileTree(t *testing.T) {
-	files := []string{"main.tex", "chapters/intro.tex", "chapters/ch1.tex", "a/deep/nested.tex", "img/logo.png", "refs.bib"}
-	badge := func(p string) (string, toolkit.RGBA) {
-		if p == "refs.bib" {
-			return "A", badgeStagedInk
-		}
-		return "", toolkit.RGBA{}
-	}
-	roots, nodePaths := buildFileTree(files, badge, func(string) iconDrawer { return nil }, nil)
+// The row order the workspace presents: folders first at each level, each group
+// alphabetical, nested folders materialised from the paths under them.
+//
+// ⛔ This used to test buildFileTree, which is gone. It is kept, pointed at
+// SidebarFileRows, because the order is the part a reader depends on and the
+// part that can now drift: toolkit.FileTree owns what is drawn, and this
+// derivation follows the rule its doc states rather than reading the widget's
+// rows back. A test deleted with the function it covered would have left that
+// agreement unpinned.
+func TestWorkspaceRowOrderPutsFoldersFirst(t *testing.T) {
+	s, f := openWorkspace(t, map[string]string{
+		"main.tex":           "",
+		"chapters/intro.tex": "",
+		"chapters/ch1.tex":   "",
+		"a/deep/nested.tex":  "",
+		"img/logo.png":       "",
+		"refs.bib":           "",
+	}, "")
+	// refs.bib is staged, so one row carries a mark and the rest do not.
+	f.status = gitStatus{Branch: "main", Changes: []gitFileChange{{Path: "refs.bib", Status: "staged"}}}
+	f.statusOK = true
+	s.git.refreshStatus()
+	s.sidebar.ensureWidgets()
+	s.sidebar.rebuild()
 
-	// Two top-level directories (chapters/, img/) come before the top-level files
-	// (main.tex, refs.bib) in sorted order, each dir expanded with its children.
-	var rows []string
-	var walk func([]*toolkit.TreeTableNode)
-	walk = func(ns []*toolkit.TreeTableNode) {
-		for _, n := range ns {
-			rows = append(rows, n.Cells[0])
-			walk(n.Children)
-		}
-	}
-	walk(roots)
-	// Nested directories (a/deep/) are materialised recursively; dirs sort before
-	// the top-level files.
-	want := []string{"a/", "deep/", "nested.tex", "chapters/", "ch1.tex", "intro.tex", "img/", "logo.png", "main.tex", "refs.bib"}
+	rows := s.SidebarFileRows()
+	want := []string{"a/", "deep/", "nested.tex", "chapters/", "ch1.tex", "intro.tex", "img/", "logo.png", "main.tex", "refs.bib A"}
 	if strings.Join(rows, ",") != strings.Join(want, ",") {
-		t.Fatalf("tree rows = %v, want %v", rows, want)
-	}
-	// The badge cell + its ink reached the refs.bib leaf.
-	var bib *toolkit.TreeTableNode
-	for n, p := range nodePaths {
-		if p == "refs.bib" {
-			bib = n
-		}
-	}
-	if bib == nil || bib.Cells[1] != "A" || bib.CellInk[1] != badgeStagedInk {
-		t.Fatalf("refs.bib leaf = %+v", bib)
-	}
-	// nodePaths carries only the file leaves (6 files), no directory nodes.
-	if len(nodePaths) != 6 {
-		t.Fatalf("nodePaths has %d entries, want 6 (files only)", len(nodePaths))
+		t.Fatalf("workspace rows = %v, want %v", rows, want)
 	}
 }
 
@@ -288,17 +296,42 @@ func TestSidebarFileTreeAndBadges(t *testing.T) {
 	}
 }
 
-func TestSidebarBadgeColoursPainted(t *testing.T) {
-	s, _ := withClonedSidebar(t)
-	buf := make([]byte, testW*testH*4)
-	s.Draw(buf)
-	// The staged (green) and modified (amber) badge inks appear in the painted
-	// sidebar column (the toolkit TreeTable CellInk override at work).
-	if !hasExactColor(buf, badgeStagedInk) {
-		t.Fatal("staged badge colour (green) not painted")
+// The status marks reach PIXELS and not merely the model.
+//
+// ⛔ It no longer asserts the playground's own two ink constants. The Explorer
+// chooses each mark's colour for CONTRAST — its rule is the first candidate that
+// clears 4.5:1 against the row, with the row's ink as the fallback — so the
+// colour is a function of the theme and not a constant this test can name. An
+// assertion on the old amber and green would now fail for the right reason, and
+// hard-coding whatever the widget currently picks would pin a number nobody
+// chose.
+//
+// So the control is an A/B: the same workspace drawn with marks and without must
+// differ. Comparing the two renders asks the question the colour constants were
+// standing in for — "is anything drawn for a status at all" — without claiming
+// to know which colour it should be.
+func TestSidebarStatusMarksReachThePixels(t *testing.T) {
+	s, f := withClonedSidebar(t)
+	marked := make([]byte, testW*testH*4)
+	s.Draw(marked)
+
+	// Same tree, nothing to mark.
+	f.status = gitStatus{Branch: "main", Clean: true}
+	f.statusOK = true
+	s.git.refreshStatus()
+	s.git.buffers = map[string]*fileBuffer{}
+	s.sidebar.rebuild()
+	clean := make([]byte, testW*testH*4)
+	s.Draw(clean)
+
+	if bytes.Equal(marked, clean) {
+		t.Fatal("a workspace with modified and staged files paints exactly like a clean one: no mark reaches the pixels")
 	}
-	if !hasExactColor(buf, badgeModifiedInk) {
-		t.Fatal("modified badge colour (amber) not painted")
+	// And the marks are in the model, so a difference cannot be some other
+	// incidental change.
+	rows := strings.Join(s.SidebarFileRows(), "|")
+	if strings.Contains(rows, " M") || strings.Contains(rows, " A") {
+		t.Fatalf("the clean render still models marks: %s", rows)
 	}
 }
 
@@ -311,14 +344,25 @@ func hasExactColor(buf []byte, c toolkit.RGBA) bool {
 	return false
 }
 
+// treeRowY is the centre of row i in the workspace's Explorer.
+//
+// ⛔ There is NO column header any more: the Explorer has no header band, so the
+// old offset of one TreeTableHeaderHeight put every click one row late — which
+// is how the directory-row test started opening a file. The row height is
+// TreeView's own default (scaled 18, lifted to the density's hit target), named
+// here because the widget does not export it; if upstream changes it these tests
+// fail loudly rather than clicking the wrong row quietly.
+func treeRowY(tr toolkit.Rect, i int) int {
+	rowH := toolkit.TouchTarget(toolkit.Scaled(18))
+	return tr.Y + i*rowH + rowH/2
+}
+
 func TestSidebarOpenFileOnClick(t *testing.T) {
 	s, _ := withClonedSidebar(t)
 	// Row order: chapters/(0), ch1.tex(1), intro.tex(2), main.tex(3), refs.bib(4).
 	// Click the refs.bib row and assert the editor loaded its content.
 	tr := s.sidebar.treeRect
-	rowH := toolkit.TouchTarget(toolkit.Scaled(toolkit.TreeTableRowHeight))
-	headerH := toolkit.Scaled(toolkit.TreeTableHeaderHeight)
-	y := tr.Y + headerH + 4*rowH + rowH/2
+	y := treeRowY(tr, 4)
 	if !s.HandleClick(tr.X+tr.W/2, y) {
 		t.Fatal("a click in the tree should be consumed")
 	}
@@ -336,9 +380,12 @@ func TestSidebarClickDirRowOpensNothing(t *testing.T) {
 	s, _ := withClonedSidebar(t)
 	before := s.Source()
 	tr := s.sidebar.treeRect
-	headerH := toolkit.Scaled(toolkit.TreeTableHeaderHeight)
-	// Row 0 is the "chapters/" directory: selecting it must not open a file.
-	s.HandleClick(tr.X+tr.W/2, tr.Y+headerH+2)
+	// Row 0 is the "chapters/" directory: clicking it collapses or expands, and
+	// must not open a file. This is one of the clicks the old handler got wrong by
+	// construction: it opened whatever the tree had selected, so a folder row, a
+	// rename entry and a delete confirmation each opened a file as a side effect.
+	// The Explorer now says which action a click was.
+	s.HandleClick(tr.X+tr.W/2, treeRowY(tr, 0))
 	if s.Source() != before {
 		t.Fatalf("clicking a directory row changed the editor buffer")
 	}
@@ -346,17 +393,17 @@ func TestSidebarClickDirRowOpensNothing(t *testing.T) {
 
 func TestSidebarActiveDirtyOverlay(t *testing.T) {
 	s, _ := withClonedSidebar(t)
-	// main.tex is the loaded file and clean → no badge.
-	if b, _ := s.sidebar.fileBadge("main.tex"); b != "" {
-		t.Fatalf("clean active file badge = %q, want blank", b)
+	// main.tex is the loaded file and clean → no mark.
+	if st := s.sidebar.fileStatus("main.tex"); st != toolkit.FileUnchanged {
+		t.Fatalf("clean active file status = %v, want unchanged", st)
 	}
-	// Edit the buffer: the active file now reads dirty ("M") via the overlay.
+	// Edit the buffer: the active file now reads modified via the overlay.
 	s.SetSource("EDITED")
 	if !s.sidebar.activeDirty() {
 		t.Fatal("edited active file should be dirty")
 	}
-	if b, ink := s.sidebar.fileBadge("main.tex"); b != "M" || ink != badgeModifiedInk {
-		t.Fatalf("dirty active badge = %q/%v", b, ink)
+	if st := s.sidebar.fileStatus("main.tex"); st != toolkit.FileModified {
+		t.Fatalf("dirty active status = %v, want modified", st)
 	}
 	// The signature folds the dirtiness, so a redraw rebuilds the tree with the M.
 	s.Draw(make([]byte, testW*testH*4))
@@ -461,7 +508,7 @@ func TestSidebarDetailPriority(t *testing.T) {
 	// error beats everything.
 	s.git.errMsg.Set("boom")
 	got, ink := s.sidebar.detailText()
-	if !strings.Contains(got, "boom") || ink != badgeDeletedInk {
+	if !strings.Contains(got, "boom") || ink != errorInk {
 		t.Fatalf("error detail = %q/%v", got, ink)
 	}
 	// all empty.
