@@ -4,6 +4,7 @@ go 1.27.2
 
 require (
 	github.com/andybalholm/brotli v1.2.8
+	github.com/go-appdirs/outdir v0.3.0
 	github.com/go-crdt/collab v0.77.4
 	github.com/go-crdt/crdt v0.57.0
 	github.com/go-gfx/qr v0.2.0
@@ -17,7 +18,7 @@ require (
 	github.com/go-richdoc/latex v0.8.0
 	github.com/go-richdoc/markdown v0.10.0
 	github.com/go-richdoc/richdoc v0.7.0
-	github.com/go-tex/engine v0.272.0
+	github.com/go-tex/engine v0.275.0
 	github.com/go-widgets/mvvm v0.15.0
 	github.com/go-widgets/painter v0.17.0
 	github.com/go-widgets/toolkit v0.364.1
@@ -33,15 +34,11 @@ require (
 	github.com/cyphar/filepath-securejoin v0.6.1 // indirect
 	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
-	github.com/go-appdirs/outdir v0.3.0 // indirect
 	github.com/go-gfx/gfx v0.41.0 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-icons/iconoir v0.3.0 // indirect
-	github.com/go-images/gif v0.2.0 // indirect
 	github.com/go-images/images v0.1.1-0.20261026203936-4ac989d310a1 // indirect
-	github.com/go-images/jpeg v0.3.0 // indirect
 	github.com/go-images/jpeg2000 v0.14.0 // indirect
-	github.com/go-images/png v0.2.0 // indirect
 	github.com/go-opentype/opentype v0.20.0 // indirect
 	github.com/go-opentype/shape v0.7.0 // indirect
 	github.com/go-pdfkit/pdfkit v0.20.0 // indirect
@@ -59,8 +56,6 @@ require (
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
 	github.com/kevinburke/ssh_config v1.2.0 // indirect
 	github.com/pjbgf/sha1cd v0.7.0 // indirect
-	github.com/sergeymakinen/go-bmp v1.0.0 // indirect
-	github.com/sergeymakinen/go-ico v1.0.0 // indirect
 	github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3 // indirect
 	github.com/skeema/knownhosts v1.3.1 // indirect
 	github.com/tannevaled/gobig2 v0.2.0 // indirect
