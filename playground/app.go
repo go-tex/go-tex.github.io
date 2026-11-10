@@ -1537,6 +1537,14 @@ func (s *State) HandleContextClick(x, y int) bool {
 }
 
 func (s *State) HandleMove(x, y int) bool {
+	// A press that began in the workspace column stays with it: dragging a file
+	// row onto a folder is how a file manager moves a file, and the tree needs
+	// the moves to know what is under the pointer.
+	if s.pressKind == pressSidebar {
+		s.sidebar.handleDrag(x, y)
+		s.dirty = true
+		return true
+	}
 	// The find-and-replace modal is modal: while it is open it swallows every
 	// move, and while its title bar is held it IS the drag. This has to come
 	// FIRST — the hover and drag routes below would otherwise take the move and
