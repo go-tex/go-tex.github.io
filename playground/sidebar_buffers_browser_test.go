@@ -83,14 +83,7 @@ func TestSidebarBuffersBrowser(t *testing.T) {
 	srv := httptest.NewServer(wasmMIME(http.FileServer(http.Dir(served))))
 	defer srv.Close()
 
-	shotDir := os.Getenv("GOTEX_SCREENSHOT_DIR")
-	if shotDir == "" {
-		shotDir = "."
-	}
-	shot, err := filepath.Abs(filepath.Join(shotDir, "sidebar-buffers-proof.png"))
-	if err != nil {
-		t.Fatalf("resolving the screenshot path: %v", err)
-	}
+	shot := shotPath(t, "sidebar-buffers-proof.png")
 
 	// 3. Run the headless driver.
 	cmd := exec.Command(node, "browsertest/sidebar-buffers-driver.cjs")

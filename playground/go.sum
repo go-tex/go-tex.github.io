@@ -32,6 +32,8 @@ github.com/emirpasic/gods v1.18.1 h1:FXtiHYKDGKCW2KzwZKx0iC0PQmdlorYgdFG9jPXJ1Bc
 github.com/emirpasic/gods v1.18.1/go.mod h1:8tpGGwCnJ5H4r6BWwaV6OrWmMoPhUl5jm/FMNAnJvWQ=
 github.com/gliderlabs/ssh v0.3.8 h1:a4YXD1V7xMF9g5nTkdfnja3Sxy1PVDCj1Zg4Wb8vY6c=
 github.com/gliderlabs/ssh v0.3.8/go.mod h1:xYoytBv1sV0aL3CavoDuJIQNURXkkfPA/wxQ1pL1fAU=
+github.com/go-appdirs/outdir v0.3.0 h1:oqVLh83JrPdfh+FEUYmDwevp3oV1xC1qV2LxTmZn5L4=
+github.com/go-appdirs/outdir v0.3.0/go.mod h1:NXh7y7uVjrhGjUmoWb+JuQITVCs7Bj+PrRn/aNCBkb4=
 github.com/go-crdt/collab v0.77.4 h1:wW6opnSdSMQPw6zdZfkd857jyqJqNvWZD77KYsXgLb0=
 github.com/go-crdt/collab v0.77.4/go.mod h1:LFqHBOnnr2kRFrTxCVJYWGlaF8jc7l51Z7yVrUY2RnA=
 github.com/go-crdt/crdt v0.57.0 h1:sNLDTVCEnSb20gm77BUuYav8dzj5krmly/z9O7eRMCo=

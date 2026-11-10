@@ -86,14 +86,7 @@ func TestCollabTwoTabConvergence(t *testing.T) {
 	srv := httptest.NewServer(wasmMIME(http.FileServer(http.Dir(root))))
 	defer srv.Close()
 
-	shotDir := os.Getenv("GOTEX_SCREENSHOT_DIR")
-	if shotDir == "" {
-		shotDir = "."
-	}
-	shot, err := filepath.Abs(filepath.Join(shotDir, "collab-twotab-proof.png"))
-	if err != nil {
-		t.Fatalf("resolving the screenshot path: %v", err)
-	}
+	shot := shotPath(t, "collab-twotab-proof.png")
 
 	cmd := exec.Command(node, "browsertest/twotab-driver.cjs")
 	cmd.Env = append(os.Environ(),
