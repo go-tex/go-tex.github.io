@@ -83,6 +83,14 @@ const (
 	sbRolePull
 	sbRolePush
 	sbRoleForget
+	// sbRoleGitMenu opens the command menu that replaced the eight buttons.
+	//
+	// ⛔ The commands used to be eight buttons wrapped three to a row: THREE rows
+	// of fixed height, in the one column whose scarce resource is vertical space,
+	// for actions used occasionally. One row costs btnH+gap; three cost three
+	// times that, and the difference came straight off the file tree — about
+	// three fewer files visible at default density, permanently.
+	sbRoleGitMenu
 	sbRoleClone  // empty-state action: open the Remote-Git panel to clone
 	sbRoleImport // take a file off this computer into the workspace
 	sbRoleExport // hand the open file's current text back to this computer
@@ -140,7 +148,12 @@ type sidebar struct {
 	// from outside — and it draws the per-entry version-control mark this column
 	// used to spell out in a second "S" column of its own. It changes nothing
 	// itself: every verb arrives here as a FileRequest.
-	tree     *toolkit.FileTree
+	tree *toolkit.FileTree
+	// gitMenu is the command menu the "Git ▾" button drops. Its surface is the
+	// column, so it can never spill into the editor — which matters because the
+	// column is drawn BEFORE the body and anything overflowing would be painted
+	// over.
+	gitMenu  *toolkit.ContextMenu
 	timeline *toolkit.Timeline
 	empty    *toolkit.EmptyState
 	// emptyRect is where layout put the empty state. draw MUST work from this
@@ -184,6 +197,8 @@ func (b *sidebar) ensureWidgets() {
 		return pack.fileIconDrawer(name)
 	}
 	b.tree.OnRequest = b.onFileRequest
+	b.tree.MenuExtra = b.treeMenuExtra
+	b.gitMenu = toolkit.NewContextMenu(toolkit.NewMenu(nil))
 	// Accordion headers over the tree and the timeline, mutually exclusive: opening
 	// one collapses the other (handleClick enforces it), so only one body shows at a
 	// time and the workspace column stays compact. Files opens first. The widgets
@@ -528,35 +543,14 @@ func (b *sidebar) layout() {
 		return
 	}
 
-	// Command buttons, wrapped into rows of up to three.
-	cmds := []sidebarButton{
-		{role: sbRoleRefresh, label: "Refresh"},
-		{role: sbRoleStage, label: "Stage"},
-		{role: sbRoleCommit, label: "Commit"},
-		{role: sbRolePull, label: "Pull"},
-		{role: sbRolePush, label: "Push"},
-		// Drops the copy this browser keeps, so the next visit clones afresh.
-		// It leaves the open workspace alone — see [State.GitForget].
-		{role: sbRoleForget, label: "Forget"},
-		// Off the network entirely: these two talk to the host machine, not the
-		// remote, so they carry their own reason to be unavailable rather than the
-		// busy flag's.
-		{role: sbRoleImport, label: "Import…", disabled: b.s.git.io.Import == nil},
-		{role: sbRoleExport, label: "Export…", disabled: b.s.git.io.Export == nil},
-	}
-	for start := 0; start < len(cmds); start += 3 {
-		end := start + 3
-		if end > len(cmds) {
-			end = len(cmds)
-		}
-		row := cmds[start:end]
-		bw := (innerW - (len(row)-1)*gap) / len(row)
-		for i := range row {
-			row[i].rect = toolkit.Rect{X: innerX + i*(bw+gap), Y: cur, W: bw, H: btnH}
-			b.buttons = append(b.buttons, row[i])
-		}
-		cur += btnH + gap
-	}
+	// ONE row: the command menu. See [sbRoleGitMenu] for what this replaced and
+	// what the two rows it gives back are worth.
+	b.buttons = append(b.buttons, sidebarButton{
+		role:  sbRoleGitMenu,
+		label: "Git ▾",
+		rect:  toolkit.Rect{X: innerX, Y: cur, W: innerW, H: btnH},
+	})
+	cur += btnH + gap
 
 	// Detail strip (clicked-commit detail, or the latest git notice/error). It
 	// reserves a line only when it has something to show — an idle column (the
@@ -814,6 +808,12 @@ func (b *sidebar) draw(p painter.Painter, theme *toolkit.Theme) {
 		b.timeline.Draw(p, theme)
 	}
 	b.drawButtons(p, theme)
+	// LAST in the column, over everything it covers. The tree draws its own
+	// context menu inside its bounds; this one hangs from a button near the top
+	// and must sit above the tree and the timeline it overlaps.
+	if b.gitMenu != nil {
+		b.gitMenu.Draw(p, theme)
+	}
 }
 
 // drawButtons paints every laid-out command button, disabling the network ones
@@ -824,7 +824,11 @@ func (b *sidebar) drawButtons(p painter.Painter, theme *toolkit.Theme) {
 		bt := b.btn(sbBtn.role, sbBtn.label)
 		bt.Label().Set(sbBtn.label)
 		bt.SetBounds(sbBtn.rect)
-		bt.Disabled().Set(busy || sbBtn.disabled)
+		// ⛔ The command menu's own button stays ENABLED while a git op runs. It
+		// opens a menu; the menu is what greys the commands out, each for its own
+		// reason. A disabled opener would hide the whole list — including Refresh,
+		// which is how someone finds out what the column is busy with.
+		bt.Disabled().Set((busy && sbBtn.role != sbRoleGitMenu) || sbBtn.disabled)
 		bt.Draw(p, theme)
 	}
 }
@@ -837,6 +841,14 @@ func (b *sidebar) handleClick(x, y int) bool {
 		return false
 	}
 	b.ensureWidgets()
+	// The command menu takes the click while it is open, including the one that
+	// dismisses it by falling elsewhere in the column — otherwise a click meant
+	// to close it would press whatever is underneath.
+	if b.gitMenu != nil && b.gitMenu.Open().Get() {
+		b.gitMenu.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x, Y: y})
+		b.s.git.refresh()
+		return true
+	}
 	// Command buttons first.
 	for _, sbBtn := range b.buttons {
 		if sbBtn.rect.Contains(x, y) {
@@ -898,6 +910,83 @@ func commitDetailLine(c GitCommitInfo) string {
 		line += " · " + c.Author
 	}
 	return line
+}
+
+// --- the command menu ---------------------------------------------------------
+
+// gitMenuRect is the button the command menu hangs from, or the zero rect when
+// the column is not showing one.
+func (b *sidebar) gitMenuRect() toolkit.Rect {
+	for _, sbBtn := range b.buttons {
+		if sbBtn.role == sbRoleGitMenu {
+			return sbBtn.rect
+		}
+	}
+	return toolkit.Rect{}
+}
+
+// openGitMenu pops the command menu under its button.
+//
+// ⛔ A command that cannot run right now is a DISABLED ROW, not a missing one. A
+// menu whose contents change with the state teaches nothing and leaves the
+// reader wondering whether they misremembered; a greyed row says "this exists,
+// not now". The toolkit spells that as a nil Action.
+func (b *sidebar) openGitMenu() {
+	busy := b.s.git.busy.Get()
+	// act wraps a command so a busy column refuses it, by handing the menu a nil
+	// Action rather than one that silently does nothing.
+	act := func(f func()) func() {
+		if busy {
+			return nil
+		}
+		return f
+	}
+	items := []toolkit.MenuItem{
+		{Label: "Refresh", Action: act(func() { b.dispatch(sbRoleRefresh) })},
+		{Label: "Stage", Action: act(func() { b.dispatch(sbRoleStage) })},
+		{Label: "Commit…", Action: act(func() { b.dispatch(sbRoleCommit) })},
+		{Separator: true},
+		{Label: "Pull", Action: act(func() { b.dispatch(sbRolePull) })},
+		{Label: "Push", Action: act(func() { b.dispatch(sbRolePush) })},
+		{Separator: true},
+		// Last, behind a separator of its own: it throws away this browser's saved
+		// copy. Grouping it with Pull and Push would put a discard one slip away
+		// from the two commands people use most.
+		{Label: "Forget this repository", Action: act(func() { b.dispatch(sbRoleForget) })},
+	}
+	r := b.gitMenuRect()
+	setMenuItems(b.gitMenu.Menu, items)
+	b.gitMenu.SetBounds(b.bounds)
+	b.gitMenu.Popup(r.X, r.Y+r.H)
+	b.s.git.refresh()
+}
+
+// treeMenuExtra is what the file tree's own context menu gains from this host:
+// the two commands that talk to the COMPUTER rather than to the remote.
+//
+// ⛔ They live here, beside New File / Rename / Delete, because that is what
+// they are — things done to files — and not git operations at all. Each carries
+// its own reason to be unavailable (no host picker) rather than the git busy
+// flag's, so a disabled row here means something different from a disabled row
+// in the command menu, and says so.
+func (b *sidebar) treeMenuExtra(p string, dir bool) []toolkit.MenuItem {
+	var items []toolkit.MenuItem
+	imp := toolkit.MenuItem{Label: "Import from this computer…"}
+	if b.s.git.io.Import != nil {
+		imp.Action = func() { b.dispatch(sbRoleImport) }
+	}
+	items = append(items, toolkit.MenuItem{Separator: true}, imp)
+	// Export acts on ONE file, so it is offered on a file row and not on a folder
+	// or on the root — a menu that offered it everywhere would have to decide
+	// what "export this folder" meant, and there is no answer.
+	if !dir && p != "" {
+		exp := toolkit.MenuItem{Label: "Export “" + path.Base(p) + "”…"}
+		if b.s.git.io.Export != nil && p == b.s.git.loaded.Get() {
+			exp.Action = func() { b.dispatch(sbRoleExport) }
+		}
+		items = append(items, exp)
+	}
+	return items
 }
 
 // --- the keyboard, which is what makes the Explorer's verbs reachable --------
@@ -978,17 +1067,25 @@ func (b *sidebar) handleContext(x, y int) bool {
 	return true
 }
 
-// menuOpen reports whether the file tree's context menu is showing, so the app
-// can route a click to it wherever it lands.
-func (b *sidebar) menuOpen() bool { return b.tree != nil && b.tree.MenuOpen() }
-
-// dismissMenu closes the file tree's context menu (and any name being typed),
-// for the click that lands outside the column while it is open.
-func (b *sidebar) dismissMenu() {
-	if b.tree == nil {
-		return
+// menuOpen reports whether EITHER menu is showing — the file tree's context
+// menu or the command menu — so the app can route a click to it wherever it
+// lands.
+func (b *sidebar) menuOpen() bool {
+	if b.gitMenu != nil && b.gitMenu.Open().Get() {
+		return true
 	}
-	b.tree.Dismiss()
+	return b.tree != nil && b.tree.MenuOpen()
+}
+
+// dismissMenu closes whichever menu is open (and any name being typed), for the
+// click that lands outside the column while one is.
+func (b *sidebar) dismissMenu() {
+	if b.gitMenu != nil {
+		b.gitMenu.Close()
+	}
+	if b.tree != nil {
+		b.tree.Dismiss()
+	}
 	b.s.git.refresh()
 }
 
@@ -1044,6 +1141,8 @@ func (b *sidebar) dispatch(role sidebarRole) {
 		// buffer edit's dirtiness (and any fresh status) shows without a git op.
 		b.s.git.refreshStatus()
 		b.sig = ""
+	case sbRoleGitMenu:
+		b.openGitMenu()
 	case sbRoleStage:
 		b.s.GitStage(nil)
 	case sbRoleCommit:
