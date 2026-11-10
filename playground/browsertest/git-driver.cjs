@@ -63,10 +63,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     });
 
     await page.goto(url, { waitUntil: "load", timeout: 30000 });
-    await page.waitForFunction(() => globalThis.gotexPlaygroundReady === true, {
-      timeout: READY_TIMEOUT,
-      polling: POLL,
-    });
+    // Same rule as the waits below: a boot that never happens must say so,
+    // and distinguish "the wasm failed" from "it is still loading".
+    try {
+      await page.waitForFunction(() => globalThis.gotexPlaygroundReady === true, {
+        timeout: READY_TIMEOUT,
+        polling: POLL,
+      });
+    } catch (e) {
+      const boot = await page.evaluate(() => globalThis.__bootError || null);
+      throw new Error("the main-thread wasm never became ready after " + READY_TIMEOUT + "ms" +
+        (boot ? "; boot error: " + boot : "; no boot error was reported"));
+    }
     console.log("playground.wasm booted (main thread)");
 
     // Configure the remote + open the panel; opening spawns the git worker.
@@ -89,14 +97,38 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     // Clone → the seeded main.tex must load into the SOURCE editor.
     const debug = () => page.evaluate(() => globalThis.gotexGitDebug());
+
+    // ⛔ A TIMEOUT MUST SAY WHAT IT WAS WAITING ON. Twice on main — 2026-10-25
+    // and 2026-11-01 — this proof failed with nothing but
+    //
+    //   DRIVER_FAIL Waiting failed: 90000ms exceeded
+    //
+    // which names neither the step nor the state, so both occurrences are
+    // undiagnosable after the fact: the run took 112s and 127s against ~35s
+    // healthy, and that is the whole of what is known. The two-tab driver
+    // prints `last state={…}` on its timeouts and that is precisely why its
+    // stall could be located to one missing event. This does the same.
+    const until = async (what, pred) => {
+      try {
+        await page.waitForFunction(pred, { timeout: OP_TIMEOUT, polling: POLL });
+      } catch (e) {
+        let last = "unreadable";
+        try {
+          last = JSON.stringify(await debug());
+        } catch (e2) {
+          last = "gotexGitDebug() threw: " + (e2 && e2.message ? e2.message : e2);
+        }
+        throw new Error(
+          "timed out waiting for " + what + " after " + OP_TIMEOUT + "ms; last state=" + last +
+          "; worker wasm " + (workerWasmURL ? "was requested" : "was NEVER requested"));
+      }
+    };
+
     const waitIdle = async (what) => {
-      await page.waitForFunction(
-        () => {
-          const d = globalThis.gotexGitDebug();
-          return d.busy === false && (d.loadedPath !== "" || d.error !== "" || d.notice !== "");
-        },
-        { timeout: OP_TIMEOUT, polling: POLL },
-      );
+      await until(what, () => {
+        const d = globalThis.gotexGitDebug();
+        return d.busy === false && (d.loadedPath !== "" || d.error !== "" || d.notice !== "");
+      });
       const d = await debug();
       if (d.error) throw new Error(what + " reported an error: " + d.error);
       return d;
@@ -104,13 +136,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     await page.evaluate(() => globalThis.gotexGitClone());
     // Wait until the clone is no longer busy AND a file loaded.
-    await page.waitForFunction(
-      () => {
-        const d = globalThis.gotexGitDebug();
-        return d.busy === false && (d.loadedPath !== "" || d.error !== "");
-      },
-      { timeout: OP_TIMEOUT, polling: POLL },
-    );
+    await until("the clone to finish", () => {
+      const d = globalThis.gotexGitDebug();
+      return d.busy === false && (d.loadedPath !== "" || d.error !== "");
+    });
     let d = await debug();
     if (d.error) throw new Error("clone error: " + d.error);
     if (d.loadedPath !== "main.tex") throw new Error("clone loaded " + d.loadedPath + ", want main.tex");
