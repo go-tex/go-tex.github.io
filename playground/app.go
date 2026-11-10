@@ -1438,6 +1438,12 @@ func (s *State) HandleClick(x, y int) bool {
 		s.dirty = true
 		return true
 	}
+	// ⛔ EVERY click past this point is outside the workspace column, so the file
+	// tree loses the keyboard here — in ONE place, rather than in each of the
+	// branches below. A Delete pressed after clicking into the editor must not
+	// reach a file, and a focus dropped only by the branches that remembered to
+	// would be a rule with holes in exactly the places nobody looked.
+	s.sidebar.blurTree()
 
 	// Divider (resize grip).
 	if s.onDivider(x, y) {
@@ -1692,6 +1698,11 @@ func (s *State) HandleChar(code string) bool {
 	if s.git.handleChar(code) { // typing edits the focused git panel field
 		return true
 	}
+	// Type-ahead in the workspace Explorer, and the characters of a name being
+	// typed in place. Same focus gate as the keys.
+	if s.sidebar.handleChar(code) {
+		return true
+	}
 	if s.wysiwygChar(code) { // type into the WYSIWYG RichEditor (wysiwyg.go)
 		return true
 	}
@@ -1818,6 +1829,13 @@ func (s *State) HandleKeyDown(code string) bool {
 		return true
 	}
 	if s.git.handleKey(code) { // Backspace/Enter/Tab/Escape in the git panel fields
+		return true
+	}
+	// The workspace Explorer, only while it holds focus: F2 renames, Delete asks
+	// to delete, Shift+F10 and the Menu key open its context menu. The focus gate
+	// lives in the sidebar (treeHasKeyboard) precisely so that a Delete pressed
+	// while writing a paragraph can never reach a file.
+	if s.sidebar.handleKey(code) {
 		return true
 	}
 	if s.wysiwygKey(code) { // navigate/edit the WYSIWYG RichEditor (wysiwyg.go)

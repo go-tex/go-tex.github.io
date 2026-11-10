@@ -854,6 +854,7 @@ func (b *sidebar) handleClick(x, y int) bool {
 	// three of those open a file as a side effect. The tree says which it was,
 	// through onFileRequest.
 	if b.hasRepo() && b.treeRect.Contains(x, y) {
+		b.focusTree()
 		b.tree.OnEvent(toolkit.Event{Kind: toolkit.EventClick, X: x - b.treeRect.X, Y: y - b.treeRect.Y})
 		b.s.git.refresh()
 		return true
@@ -879,6 +880,69 @@ func commitDetailLine(c GitCommitInfo) string {
 		line += " · " + c.Author
 	}
 	return line
+}
+
+// --- the keyboard, which is what makes the Explorer's verbs reachable --------
+
+// focusTree gives the workspace column the keyboard and takes it from whatever
+// had it.
+//
+// ⛔ FOCUS IS THE WHOLE SAFETY ARGUMENT HERE, not a nicety. The Explorer's keys
+// are Delete and F2 on the SELECTED file, and a tree that answered them whenever
+// a key was pressed would delete a file because somebody hit Delete while
+// writing a paragraph. So the keys are routed only while this column holds
+// focus, focus is taken by clicking in it, and it is dropped the moment a click
+// lands anywhere else ([sidebar.blurTree]).
+func (b *sidebar) focusTree() {
+	b.ensureWidgets()
+	b.tree.SetFocused(true)
+	b.s.editor.SetFocused(false)
+	b.s.renderView.SetFocused(false)
+}
+
+// blurTree drops the column's keyboard focus. The app calls it for every click
+// that is not in this column.
+func (b *sidebar) blurTree() {
+	if b.tree == nil {
+		return
+	}
+	// Any name being typed or deletion awaiting confirmation goes with the focus:
+	// an in-place rename left open while the person types in the editor would
+	// catch the next Enter they press in it.
+	b.tree.Dismiss()
+	b.tree.SetFocused(false)
+}
+
+// treeHasKeyboard reports whether the file tree should receive key events.
+func (b *sidebar) treeHasKeyboard() bool {
+	return b.open && b.tree != nil && b.hasRepo() && b.tree.Focused()
+}
+
+// handleKey offers a key to the focused file tree: F2 renames in place, Delete
+// asks to delete, Enter opens, the arrows and Home/End navigate, and
+// Shift+F10 / the Menu key open the context menu — the WAI-ARIA keyboard route
+// to New File, New Folder, Rename and Delete.
+//
+// It reports whether the key was consumed, so the app's chain stops here.
+func (b *sidebar) handleKey(code string) bool {
+	if !b.treeHasKeyboard() {
+		return false
+	}
+	b.tree.OnEvent(toolkit.Event{Kind: toolkit.EventKeyDown, Code: code})
+	b.s.git.refresh()
+	return true
+}
+
+// handleChar offers a typed character to the focused file tree: type-ahead
+// jumps to the next matching row, and a character typed into an in-place rename
+// lands in its entry.
+func (b *sidebar) handleChar(ch string) bool {
+	if !b.treeHasKeyboard() {
+		return false
+	}
+	b.tree.OnEvent(toolkit.Event{Kind: toolkit.EventChar, Code: ch})
+	b.s.git.refresh()
+	return true
 }
 
 // handleRelease clears the momentary pressed face of every command button on the
