@@ -68,14 +68,7 @@ func TestWysiwygV02BrowserProof(t *testing.T) {
 	srv := httptest.NewServer(wasmMIME(http.FileServer(http.Dir(root))))
 	defer srv.Close()
 
-	shotDir := os.Getenv("GOTEX_SCREENSHOT_DIR")
-	if shotDir == "" {
-		shotDir = "."
-	}
-	shot, err := filepath.Abs(filepath.Join(shotDir, "wysiwyg-v02-footnote-proof.png"))
-	if err != nil {
-		t.Fatalf("resolving the screenshot path: %v", err)
-	}
+	shot := shotPath(t, "wysiwyg-v02-footnote-proof.png")
 
 	cmd := exec.Command(node, "browsertest/wysiwyg-driver.cjs")
 	cmd.Env = append(os.Environ(),

@@ -51,11 +51,14 @@ func TestGitPanelScreenshot(t *testing.T) {
 
 	img := &image.RGBA{Pix: buf, Stride: 4 * w, Rect: image.Rect(0, 0, w, h)}
 
-	dir := os.Getenv("GOTEX_SCREENSHOT_DIR")
-	if dir == "" {
-		return // render+encode proven above; skip writing on the plain lane
-	}
-	out := filepath.Join(dir, "git-panel.png")
+	// ⛔ This one never wrote into the working tree — it returned unless
+	// GOTEX_SCREENSHOT_DIR was set — so it was not part of the tracked-PNG
+	// defect. It routes through the same helper anyway, because the env it read
+	// could still name a directory inside a repository while every other proof
+	// now refuses one, and a rule with one exception is a rule nobody can state.
+	// Writing always, rather than only when asked, costs one PNG encode and
+	// means the artefact is there the first time somebody needs it.
+	out := filepath.Join(shotDirFor(t), "git-panel.png")
 	fp, err := os.Create(out)
 	if err != nil {
 		t.Fatalf("create %s: %v", out, err)

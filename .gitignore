@@ -1,14 +1,27 @@
 public/
 resources/
 .hugo_build.lock
-collab-webrtc-proof.png
-collab-twotab-proof-A.png
-collab-twotab-proof-B.png
-collab-localtab-proof-A.png
-collab-localtab-proof-B.png
-richeditor-toolbar-proof.png
-git-worker-two-wasm-proof.png
-collab-failure-proof.png
+# ⛔ BROWSER-PROOF SCREENSHOTS ARE NOT WRITTEN HERE ANY MORE, and this is the
+# second line of defence rather than the rule.
+#
+# Every proof used to default to "." — the working tree — and eleven of the
+# resulting PNGs were TRACKED. One `go test ./...` dirtied nine of them, so
+# `git status` stopped being a usable signal, `gh pr create` warned about
+# uncommitted changes on branches that had not touched them (which is how a
+# screenshot gets committed into a dependency bump by accident), and each commit
+# carrying one added a few hundred kilobytes to a history that never gives them
+# back. The list below used to name eight of them, at the ROOT, from runs in a
+# different directory — a list that only ever grew.
+#
+# They now go to the user's own application-data directory, chosen by
+# playground/internal/proofdir, which REFUSES any directory inside a repository.
+# The rule lives there because a .gitignore is a safety net and not a barrier:
+# `git add -f`, a fresh clone, or any tool that does not consult it commits the
+# file anyway.
+*-proof.png
+*-proof-A.png
+*-proof-B.png
+playground/git-panel.png
 
 # The playground wasm is a BUILD ARTIFACT: pages.yml builds it into static/
 # before hugo runs. It was committed once, went 35 commits stale, and a CDN
