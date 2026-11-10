@@ -1101,10 +1101,31 @@ func (b *sidebar) handleChar(ch string) bool {
 	return true
 }
 
-// handleRelease clears the momentary pressed face of every command button on the
-// mouseup that ends a press this column captured.
+// handleDrag carries a press that began in the file tree: dragging a row onto a
+// folder is how a file manager moves a file, and the Explorer turns the gesture
+// into a FileMove request once the pointer is released over one.
+//
+// ⛔ Without this the gesture is inert, which is NOT the same as absent: the
+// tree outlines the folder under the pointer as a drop target, so a column that
+// drew the invitation and then did nothing on release would be worse than one
+// that never offered it.
+func (b *sidebar) handleDrag(x, y int) {
+	if !b.open || b.tree == nil || !b.hasRepo() {
+		return
+	}
+	b.tree.OnEvent(toolkit.Event{Kind: toolkit.EventMouseDrag, X: x - b.treeRect.X, Y: y - b.treeRect.Y})
+	b.s.git.refresh()
+}
+
+// handleRelease ends a press this column captured: it finishes any row drag
+// (which is where a move actually happens) and clears the momentary pressed
+// face of every command button.
 func (b *sidebar) handleRelease(x, y int) {
+	if b.open && b.tree != nil && b.hasRepo() {
+		b.tree.OnEvent(toolkit.Event{Kind: toolkit.EventMouseUp, X: x - b.treeRect.X, Y: y - b.treeRect.Y})
+	}
 	if b.btns == nil {
+		b.s.git.refresh()
 		return
 	}
 	for _, bt := range b.btns {
