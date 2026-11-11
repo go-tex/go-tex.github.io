@@ -20,6 +20,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"syscall/js"
@@ -27,6 +29,50 @@ import (
 
 	playground "github.com/go-tex/go-tex.github.io/playground"
 )
+
+// proveTheOfferIsBounded is the first half of this proof, and it guards a
+// different silence from the one below.
+//
+// ⛔ `peer.Offer` used to be handed the session context, which has no deadline.
+// collab gathers ICE without trickle and hands back a description only once
+// gathering reports complete, so a browser that gathers addresses and never
+// reports completion produced NO offer and NO error — for ever. Measured:
+// ninety seconds at phase 0, empty offer, empty error, with both a host and an
+// srflx candidate already in hand (go-tex.github.io#139, go-crdt/collab#267).
+//
+// With the bound shortened past any possible gathering, that same path must come
+// back with a reported failure instead of silence.
+//
+// ⚠ WHAT THIS PROVES, EXACTLY: that the deadline is wired and reaches the
+// caller. It does NOT reproduce the real stall — nothing here can make Chromium
+// withhold icegatheringstatechange — so it guards the bound, not the cause. Said
+// plainly because a proof that claimed the second would be worth less than none.
+func proveTheOfferIsBounded() (bool, string) {
+	playground.SetCollabSignalTimeout(time.Millisecond)
+	defer playground.SetCollabSignalTimeout(20 * time.Second)
+
+	probe := playground.NewState(1000, 720, false)
+	probe.CompilePending()
+	probe.SetCollabName("Probe")
+	probe.EnableCollab(func() {})
+	probe.SetCollabICEServers("") // host-candidate only: gathering would be fast
+
+	var err error
+	var called bool
+	probe.CollabHost(func(_ string, e error) { err, called = e, true })
+
+	if !waitUntil(10*time.Second, func() bool { return called }) {
+		return false, "a bounded offer never called back at all — which is the hang this bound exists to end"
+	}
+	if err == nil {
+		return false, "a 1ms offer deadline produced an offer instead of a deadline"
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		return false, fmt.Sprintf("the bounded offer failed with %v, which is not a deadline", err)
+	}
+	logf("PASS a bounded offer reports %q instead of waiting for ever", err)
+	return true, ""
+}
 
 func main() {
 	ok, detail := run()
@@ -43,6 +89,10 @@ func logf(format string, args ...any) {
 
 func run() (bool, string) {
 	playground.SetupText(1)
+
+	if ok, detail := proveTheOfferIsBounded(); !ok {
+		return false, detail
+	}
 
 	// Shorten the open-wait so the unreachable-peer failure surfaces in a few
 	// seconds rather than the production default.

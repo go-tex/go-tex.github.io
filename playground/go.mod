@@ -5,7 +5,7 @@ go 1.27.2
 require (
 	github.com/andybalholm/brotli v1.2.8
 	github.com/go-appdirs/outdir v0.3.0
-	github.com/go-crdt/collab v0.77.4
+	github.com/go-crdt/collab v0.78.1
 	github.com/go-crdt/crdt v0.57.0
 	github.com/go-gfx/qr v0.2.0
 	github.com/go-git/go-billy/v5 v5.9.2
@@ -63,11 +63,11 @@ require (
 	github.com/yuin/goldmark v1.8.6 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/image v0.47.0 // indirect
-	golang.org/x/net v0.61.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260706201446-f0a921348800 // indirect
-	google.golang.org/grpc v1.84.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260817212433-ac3dfec99bb1 // indirect
+	google.golang.org/grpc v1.85.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )

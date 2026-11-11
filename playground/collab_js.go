@@ -46,6 +46,35 @@ var connectTimeout = 25 * time.Second
 // ordinary use never calls it.
 func SetCollabConnectTimeout(d time.Duration) { connectTimeout = d }
 
+// signalTimeout bounds the wait for a handshake BLOB — the offer or the answer —
+// as [connectTimeout] bounds the channel that follows it.
+//
+// ⛔ THE ARGUMENT FOR THIS IS THE ONE ALREADY WRITTEN ABOVE, applied to the other
+// half of the handshake. collab.Peer.Offer gathers ICE without trickle and hands
+// back a description only once gathering reports complete; a browser that gathers
+// addresses and never reports completion produces no offer AND no error, which is
+// the same silent hang connectTimeout was introduced for. It was bounded for the
+// channel and left unbounded for the blob.
+//
+// Measured, not guessed: a healthy host publishes its offer in about a second,
+// and the stall that prompted this ran ninety seconds with phase 0, an empty
+// offer and an empty error (go-tex.github.io#139, go-crdt/collab#267). Twenty
+// seconds is twenty times the healthy case and still short enough that a person
+// watching "preparing the invitation" learns something. It sits below
+// connectTimeout on purpose, so a signalling failure and a channel failure are
+// told apart by when they arrive as well as by what they say.
+//
+// ⚠ The deadline does not make gathering complete. It converts a permanent,
+// silent wait into a reported failure — and since collab v0.78.1 that report
+// names where it stopped: "context deadline exceeded (connection new, ice
+// checking, gathering gathering)". Why icegatheringstatechange fails to fire is
+// still unknown, and this is what will produce the first evidence about it.
+var signalTimeout = 20 * time.Second
+
+// SetCollabSignalTimeout overrides the handshake-blob deadline, the same
+// test/debug seam as [SetCollabConnectTimeout] and for the same reason.
+func SetCollabSignalTimeout(d time.Duration) { signalTimeout = d }
+
 // This is the browser half of the collaborative-editing feature — the
 // syscall/js glue behind the [collabBackend] seam in collab.go. It opens the
 // real WebRTC connection, runs the collab Server/Client and binds the shared
@@ -179,6 +208,11 @@ func (b *webrtcBackend) openChannel(peer *collab.Peer) (js.Value, error) {
 	return peer.DataChannel(ctx)
 }
 
+// signalCtx bounds one handshake blob, the way openChannel bounds the channel.
+func (b *webrtcBackend) signalCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(b.ctx, signalTimeout)
+}
+
 // Host starts a hosting session: it runs a server, joins it over an in-process
 // [collab.Pipe] so the host's own editor is a client, seeds the document with the
 // current source, and makes the offer to hand to the guest.
@@ -217,7 +251,9 @@ func (b *webrtcBackend) Host(name string, color toolkit.RGBA, done func(string, 
 			return
 		}
 		b.remotePeer = peer
-		offer, err := peer.Offer(b.ctx, "collab")
+		sctx, scancel := b.signalCtx()
+		offer, err := peer.Offer(sctx, "collab")
+		scancel()
 		if err != nil {
 			done("", err)
 			return
@@ -261,7 +297,11 @@ func (b *webrtcBackend) Join(name string, color toolkit.RGBA, offer string, done
 			return
 		}
 		b.remotePeer = peer
-		answer, err := peer.Answer(b.ctx, offer)
+		// The guest gathers ICE too, so it can stall in exactly the same place
+		// the host does and is bounded the same way.
+		sctx, scancel := b.signalCtx()
+		answer, err := peer.Answer(sctx, offer)
+		scancel()
 		if err != nil {
 			done("", err)
 			return
