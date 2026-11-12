@@ -198,6 +198,17 @@ func (b *sidebar) ensureWidgets() {
 	}
 	b.tree.OnRequest = b.onFileRequest
 	b.tree.MenuExtra = b.treeMenuExtra
+	// ⛔ The tree marks the working tree ITSELF, from a vcs.Repository — see
+	// gitRepo. We had been computing those marks by hand in fileStatus while
+	// the widget carried SetRepository all along, and go-widgets/vcs sat in
+	// go.mod as `// indirect`.
+	//
+	// ⛔ PostUI is deliberately NOT set: gitRepo.Status reads a snapshot the
+	// backend already holds, so it is cheap and safe on the UI goroutine, and
+	// PostUI would move it onto another goroutine and race the worker's reply.
+	// The toolkit's "a host with a large repository MUST set PostUI" is about a
+	// Status that takes seconds; ours takes a map copy.
+	b.tree.SetRepository(gitRepo{b.s.git})
 	b.gitMenu = toolkit.NewContextMenu(toolkit.NewMenu(nil))
 	// Accordion headers over the tree and the timeline, mutually exclusive: opening
 	// one collapses the other (handleClick enforces it), so only one body shows at a
@@ -287,22 +298,13 @@ func (b *sidebar) fileStatus(path string) toolkit.FileStatus {
 	if b.s.git.bufferDirty(path) {
 		return toolkit.FileModified
 	}
-	for _, c := range b.s.git.status.Changes {
-		if c.Path != path {
-			continue
-		}
-		switch c.Status {
-		case "modified":
-			return toolkit.FileModified
-		case "untracked":
-			return toolkit.FileUntracked
-		case "deleted":
-			return toolkit.FileDeleted
-		case "staged":
-			return toolkit.FileAdded
-		}
-		return toolkit.FileUnchanged
-	}
+	// ⛔ AND NOTHING ELSE. The working tree's own states — modified, untracked,
+	// deleted, added — come from the repository attached with SetRepository
+	// (see gitRepo), which is the widget's job and brings the folder roll-up
+	// and the refresh cancellation this function never had. What stays here is
+	// only what no repository can see: an editor buffer that is edited and not
+	// yet written. FileTree's contract gives it precedence — "a status set on a
+	// FileEntry by the host wins over the repository's".
 	return toolkit.FileUnchanged
 }
 
@@ -343,6 +345,19 @@ func (b *sidebar) signature() string {
 // re-selects the active file's node. Called only when signature() changes.
 func (b *sidebar) rebuild() {
 	setFileEntries(b.tree, b.workspaceEntries()) // widget-state write isolated in sidebar_binding.go
+	// ⛔ AND ASK THE REPOSITORY AGAIN, because setting the entries is not enough
+	// any more. The tree refreshes its marks when the entry LIST changes, and
+	// since the working tree's states moved out of FileEntry.Status and into
+	// the repository, a pure status change — the same files, newly committed —
+	// leaves that list byte-identical. Measured: a workspace that went clean
+	// kept its old marks, map[chapters:1 chapters/ch1.tex:1 refs.bib:2], in
+	// both halves of the A/B that exists to catch exactly this.
+	//
+	// The toolkit says so in its own words: "A change the tree is not told of
+	// needs a FileTree.RefreshStatus call." This is that change. It costs a map
+	// copy — gitRepo.Status reads a snapshot — so it runs on every rebuild
+	// rather than being gated on a guess about when the status moved.
+	b.refreshMarks()
 	// The highlight follows the open file. Selection is the PATH now, not a node,
 	// so there is nothing to look up: the tree resolves it, and a path the list no
 	// longer holds simply selects nothing.
@@ -1250,6 +1265,14 @@ func (s *State) SidebarMenuOpen() bool { return s.sidebar.menuOpen() }
 // is covered by the pixel proof instead.
 func (s *State) SidebarFileRows() []string {
 	entries := s.sidebar.tree.Entries().Get()
+	// ⛔ THE REPOSITORY'S MARKS ARE NOT IN Entries, AND THAT IS DELIBERATE.
+	// FileEntry.Status is the HOST's field: the tree never overwrites it,
+	// because a status the host set wins over the repository's. What the
+	// repository put on the tree lives in Marks() — path to status, folders
+	// included. Reading Status alone made a workspace with modified and staged
+	// files render exactly like a clean one, which is what the pixel proof
+	// said before this line existed.
+	repoMarks := s.sidebar.tree.Marks().Get()
 	marks := make(map[string]string, len(entries))
 	byDir := map[string][]string{}
 	subdirs := map[string]map[string]bool{}
@@ -1259,7 +1282,17 @@ func (s *State) SidebarFileRows() []string {
 			dir, name = e.Path[:i], e.Path[i+1:]
 		}
 		byDir[dir] = append(byDir[dir], name)
-		marks[e.Path] = fileStatusMark(e.Status)
+		// The host's own status wins; the repository fills the rest. Unchanged
+		// is the zero value, so "the host set nothing" and "the host set
+		// unchanged" are the same thing — which is the toolkit's convention
+		// too, and why an unmarked entry can take the repository's state.
+		st := e.Status
+		if st == toolkit.FileUnchanged {
+			if m, ok := repoMarks[e.Path]; ok {
+				st = m
+			}
+		}
+		marks[e.Path] = fileStatusMark(st)
 		// Every ancestor of a path is a folder, whether or not anything listed it.
 		for d := dir; d != ""; {
 			parent := ""

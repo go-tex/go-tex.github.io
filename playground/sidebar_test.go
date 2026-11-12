@@ -23,6 +23,14 @@ import (
 // `git add` without committing, which is git's staged-new, and the vocabulary
 // the widget shares with Mercurial, Subversion, Jujutsu and Fossil calls that
 // added. A mapping that sent it to FileModified would be plausible and wrong.
+// ⛔ THE TRANSLATION MOVED, AND THIS TEST FOLLOWED IT. It used to assert
+// sidebar.fileStatus, which mapped our status words to the Explorer's by hand.
+// That function now carries only what no repository can see — an editor buffer
+// edited and not yet written — and the working tree's own states come from a
+// vcs.Repository the tree is told about (gitRepo). The thing that can still be
+// got wrong is the same as before: the TRANSLATION. It is asserted where it now
+// lives, through the repository, so the test reaches the code that runs rather
+// than a function that no longer decides.
 func TestFileStatusTranslation(t *testing.T) {
 	s, f := openWorkspace(t, map[string]string{"a.tex": "", "b.tex": "", "c.tex": "", "d.tex": "", "e.tex": ""}, "")
 	f.status = gitStatus{Branch: "main", Changes: []gitFileChange{
@@ -34,20 +42,33 @@ func TestFileStatusTranslation(t *testing.T) {
 	}}
 	f.statusOK = true
 	s.git.refreshStatus()
+	s.sidebar.rebuild() // sets the entries and re-asks the repository
+
+	marks := s.sidebar.tree.Marks().Get()
 	for path, want := range map[string]toolkit.FileStatus{
-		"a.tex":   toolkit.FileModified,
-		"b.tex":   toolkit.FileAdded,
-		"c.tex":   toolkit.FileDeleted,
-		"d.tex":   toolkit.FileUntracked,
-		"e.tex":   toolkit.FileUnchanged, // a status this build does not know marks nothing
-		"gone.md": toolkit.FileUnchanged, // and so does a path with no entry
+		"a.tex": toolkit.FileModified,
+		"b.tex": toolkit.FileAdded, // ⛔ staged-new is ADDED, not modified: this
+		// workspace writes through `git add` without committing, and the
+		// vocabulary the widget shares with Mercurial, Subversion, Jujutsu and
+		// Fossil calls that added. FileModified would be plausible and wrong.
+		"c.tex": toolkit.FileDeleted,
+		"d.tex": toolkit.FileUntracked,
 	} {
-		if got := s.sidebar.fileStatus(path); got != want {
-			t.Errorf("fileStatus(%q) = %v, want %v", path, got, want)
+		if got := marks[path]; got != want {
+			t.Errorf("mark for %q = %v, want %v", path, got, want)
 		}
 	}
-	// A buffer the tree does not list is a created or imported file: present, not
-	// yet under version control.
+	// A status this build does not know marks nothing, and neither does a path
+	// the repository never mentioned. Absent from the map, not Unchanged in it.
+	for _, path := range []string{"e.tex", "gone.md"} {
+		if got, ok := marks[path]; ok {
+			t.Errorf("%q is marked %v; an unknown status and an unmentioned path must carry none", path, got)
+		}
+	}
+
+	// And the half the host keeps: a buffer the tree does not list is a created
+	// or imported file — present, not yet under version control. The repository
+	// cannot see it, and FileTree's contract gives the host's status precedence.
 	s.git.buffers["fresh.tex"] = &fileBuffer{}
 	if got := s.sidebar.fileStatus("fresh.tex"); got != toolkit.FileUntracked {
 		t.Errorf("an unwritten file reads %v, want untracked", got)
