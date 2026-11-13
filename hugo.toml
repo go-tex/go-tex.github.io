@@ -117,12 +117,17 @@ disableKinds = ['taxonomy', 'term', 'rss', 'sitemap', '404']
   url = "https://en.wikipedia.org/wiki/Digital_commons"
 
 # The other sites of this organisation, hanging from the title in the top bar
-# (the kit's brand-menu.html). The menu lists go-tex itself first, so the title
-# keeps the link it used to be.
+# (the kit's brand-menu.html). go-tex itself is NOT a row: a reader opening this
+# menu is already on that page.
+#
+# The icon is each site's own favicon, served by that site — not a copy here,
+# which would go stale the day they rebrand.
 [[params.siblings]]
   name = "go-pdfkit"
   url  = "https://go-pdfkit.github.io"
+  icon = "https://go-pdfkit.github.io/favicon.svg"
 
 [[params.siblings]]
   name = "go-slides"
   url  = "https://go-slides.github.io"
+  icon = "https://go-slides.github.io/favicon.svg"
