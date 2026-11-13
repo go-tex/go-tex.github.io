@@ -23,11 +23,19 @@
 </head>
 <body class="lm">
   <header class="nav"><div class="wrap">
-    <a class="brand" href="/"><img class="glyph" src="/favicon.svg" width="32" height="32" alt="go-tex logo"> go-tex</a>
+    {{/* The title is the kit's brand-menu.html now, so the sites listed in
+         [[params.siblings]] hang from it. With the glyph passed in it renders
+         the <img> and the name this line wrote by hand, character for
+         character; with no siblings it renders the plain anchor it was. */ -}}
+    {{ partial "brand-menu.html" (dict "ctx" . "glyph" "/favicon.svg" "glyphAlt" "go-tex logo") }}
     <nav><a href="#features">Why</a><a href="#capabilities">Capabilities</a><a href="#scope">Scope</a><a href="#repos">Repositories</a></nav>
     {{ partial "theme-toggle.html" . }}
   </div></header>
-  {{ partial "fork-ribbon.html" "https://github.com/go-tex/engine" }}
+  {{/* ⛔ THE TWO BANDS GO ON ONE LINE, WITH NOTHING BETWEEN THEM.
+       commons-ribbon.html emits its own leading newline when it emits anything
+       and nothing at all when [params.commons] url is unset, so on a line of
+       its own it would leave a blank one behind. */ -}}
+  {{ partial "fork-ribbon.html" "https://github.com/go-tex/engine" }}{{ partial "commons-ribbon.html" . }}
 
   <div class="hero"><div class="wrap">
     <div>

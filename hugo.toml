@@ -109,3 +109,20 @@ disableKinds = ['taxonomy', 'term', 'rss', 'sitemap', '404']
 # shipped under its own licence (read from its licence files).
 [params.mantra]
   items = ["LICENSE=BSD-3-Clause", "CGO_ENABLED=0", "macros: LPPL-1.3c", "fonts: OFL-1.1"]
+
+# The second corner band, parallel to "Fork me on GitHub" and outside it. That
+# one says the code can be taken; this says what it is taken into. The kit
+# draws the band and ships no default link, so the destination is named here.
+[params.commons]
+  url = "https://en.wikipedia.org/wiki/Digital_commons"
+
+# The other sites of this organisation, hanging from the title in the top bar
+# (the kit's brand-menu.html). The menu lists go-tex itself first, so the title
+# keeps the link it used to be.
+[[params.siblings]]
+  name = "go-pdfkit"
+  url  = "https://go-pdfkit.github.io"
+
+[[params.siblings]]
+  name = "go-slides"
+  url  = "https://go-slides.github.io"
