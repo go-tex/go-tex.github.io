@@ -1,11 +1,11 @@
 module github.com/go-tex/go-tex.github.io/playground
 
-go 1.27.2
+go 1.27.4
 
 require (
-	github.com/andybalholm/brotli v1.2.8
+	github.com/andybalholm/brotli v1.3.0
 	github.com/go-appdirs/outdir v0.3.0
-	github.com/go-crdt/collab v0.78.1
+	github.com/go-crdt/collab v0.79.1
 	github.com/go-crdt/crdt v0.57.0
 	github.com/go-gfx/qr v0.2.0
 	github.com/go-git/go-billy/v5 v5.9.2
@@ -15,13 +15,13 @@ require (
 	github.com/go-icons/seti v0.2.0
 	github.com/go-icons/vscode-icons v0.2.0
 	github.com/go-opentype/fonts v0.14.0
-	github.com/go-richdoc/latex v0.8.0
-	github.com/go-richdoc/markdown v0.10.0
-	github.com/go-richdoc/richdoc v0.7.0
+	github.com/go-richdoc/latex v0.10.0
+	github.com/go-richdoc/markdown v0.13.0
+	github.com/go-richdoc/richdoc v0.10.0
 	github.com/go-tex/engine v0.275.0
 	github.com/go-widgets/mvvm v0.15.0
-	github.com/go-widgets/painter v0.17.0
-	github.com/go-widgets/toolkit v0.373.0
+	github.com/go-widgets/painter v0.17.1
+	github.com/go-widgets/toolkit v0.374.11
 	github.com/go-widgets/toolkit/rougelex v0.2.0
 	github.com/go-widgets/vcs v0.1.0
 )
@@ -60,7 +60,7 @@ require (
 	github.com/skeema/knownhosts v1.3.1 // indirect
 	github.com/tannevaled/gobig2 v0.2.0 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
-	github.com/yuin/goldmark v1.8.6 // indirect
+	github.com/yuin/goldmark v1.8.7 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/image v0.47.0 // indirect
 	golang.org/x/net v0.62.0 // indirect
