@@ -6,3 +6,5 @@ github.com/go-fleettools/landingkit v0.24.0 h1:13GBGUDEHYyMJfgU8NpP2arLa8R6rtYLF
 github.com/go-fleettools/landingkit v0.24.0/go.mod h1:jSXTO7FVKNXCK1aJjLq7H7x8d8wxDoXe3ncXWGcAKRE=
 github.com/go-fleettools/landingkit v0.24.1 h1:Ch0QFTWuMdmuSkXd5AIrKLXCfAa72yjCq2EdtHAFUXs=
 github.com/go-fleettools/landingkit v0.24.1/go.mod h1:jSXTO7FVKNXCK1aJjLq7H7x8d8wxDoXe3ncXWGcAKRE=
+github.com/go-fleettools/landingkit v0.24.2 h1:wtqOW0UL/VdZF/vclcJ8hMUX3MvD3YLgwm4IOa2JcWk=
+github.com/go-fleettools/landingkit v0.24.2/go.mod h1:jSXTO7FVKNXCK1aJjLq7H7x8d8wxDoXe3ncXWGcAKRE=
