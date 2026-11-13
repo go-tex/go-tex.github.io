@@ -7,8 +7,16 @@ name: links
 # the per-repository cards only become real URLs once Hugo has expanded them.
 #
 # The checker is `landingkit links` (go-fleettools/landingkit): it replaces a
-# hand-written curl loop. Its version is pinned here, not through go.mod: the
-# site renders with landingkit v0.7.1, and the checker must not move that.
+# hand-written curl loop. Its version is pinned HERE, not through go.mod: the
+# checker is a tool this lane runs, and the kit the site RENDERS with is a
+# different decision that must not be dragged along by it.
+#
+# ⛔ WHICH ALSO MEANS BUMPING go.mod DOES NOT MOVE THIS LANE, and that cost a
+# red run: the Digital Commons link made the check fail with 403 from
+# Wikipedia, the kit's checker was fixed to name itself (landingkit#37,
+# v0.24.2), go.mod was bumped — and this line still fetched v0.20.0, so the
+# lane failed again with the identical message. Two pins, one subject: when the
+# fix is in the CHECKER, this is the line to move.
 
 on:
   pull_request:
@@ -40,4 +48,4 @@ jobs:
       - name: Check
         env:
           GOWORK: "off"
-        run: go run github.com/go-fleettools/landingkit/cmd/landingkit@v0.20.0 links public
+        run: go run github.com/go-fleettools/landingkit/cmd/landingkit@v0.24.2 links public
