@@ -105,10 +105,21 @@ disableKinds = ['taxonomy', 'term', 'rss', 'sitemap', '404']
   statsEnd = "#d5d3f9"
   bandText = "#e3e1fb"
 
-# The strip under the top bar: the code's licence and cgo, and the data
-# shipped under its own licence (read from its licence files).
+# The strip under the top bar: how the code is built, then everything that is a
+# LICENCE, together.
+#
+# ⚠ THE ORDER IS THE GROUPING. The kit lays four chips out two to a row, so the
+# order decides what sits beside what. It used to read
+#
+#   LICENSE=BSD-3-Clause   CGO_ENABLED=0
+#   macros: LPPL-1.3c      fonts: OFL-1.1
+#
+# which split the three licences across both rows and put the build flag in the
+# middle of them. Now the flag leads and the licences run together — BSD for the
+# code, LPPL for the macros, OFL for the fonts — so a reader counting what this
+# project is licensed under reads three chips in sequence rather than hunting.
 [params.mantra]
-  items = ["LICENSE=BSD-3-Clause", "CGO_ENABLED=0", "macros: LPPL-1.3c", "fonts: OFL-1.1"]
+  items = ["CGO_ENABLED=0", "LICENSE=BSD-3-Clause", "macros: LPPL-1.3c", "fonts: OFL-1.1"]
 
 # The second corner band, parallel to "Fork me on GitHub" and outside it. That
 # one says the code can be taken; this says what it is taken into. The kit
