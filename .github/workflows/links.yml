@@ -49,3 +49,7 @@ jobs:
         env:
           GOWORK: "off"
         run: go run github.com/go-fleettools/landingkit/cmd/landingkit@v0.24.2 links public
+      - name: Say the mantra once, and the row from the kit
+        env:
+          GOWORK: "off"
+        run: go run github.com/go-fleettools/landingkit/cmd/landingkit check public

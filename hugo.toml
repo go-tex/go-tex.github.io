@@ -133,6 +133,16 @@ disableKinds = ['taxonomy', 'term', 'rss', 'sitemap', '404']
 #
 # The icon is each site's own favicon, served by that site — not a copy here,
 # which would go stale the day they rebrand.
+# The hero's buttons, rendered by landingkit's cta.html in the kit's order.
+[[params.cta]]
+  kind  = "docs"
+  href  = "https://go-tex.github.io/docs/"
+  label = "Read the documentation →"
+[[params.cta]]
+  kind  = "try"
+  href  = "/playground/"
+  label = "Try it in your browser"
+
 [[params.siblings]]
   name = "go-pdfkit"
   url  = "https://go-pdfkit.github.io"
