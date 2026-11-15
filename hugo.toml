@@ -119,6 +119,7 @@ disableKinds = ['taxonomy', 'term', 'rss', 'sitemap', '404']
 # code, LPPL for the macros, OFL for the fonts — so a reader counting what this
 # project is licensed under reads three chips in sequence rather than hunting.
 [params.mantra]
+  goarch = ["amd64", "arm64"]
   items = ["CGO_ENABLED=0", "LICENSE=BSD-3-Clause", "macros: LPPL-1.3c", "fonts: OFL-1.1"]
 
 # The second corner band, parallel to "Fork me on GitHub" and outside it. That
