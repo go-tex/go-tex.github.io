@@ -1,12 +1,12 @@
 module github.com/go-tex/go-tex.github.io/playground
 
-go 1.27.2
+go 1.27.4
 
 require (
-	github.com/andybalholm/brotli v1.2.8
+	github.com/andybalholm/brotli v1.3.0
 	github.com/go-appdirs/outdir v0.3.0
-	github.com/go-crdt/collab v0.78.1
-	github.com/go-crdt/crdt v0.57.0
+	github.com/go-crdt/collab v0.83.0
+	github.com/go-crdt/crdt v0.59.0
 	github.com/go-gfx/qr v0.2.0
 	github.com/go-git/go-billy/v5 v5.9.2
 	github.com/go-git/go-git/v5 v5.19.3
@@ -15,13 +15,13 @@ require (
 	github.com/go-icons/seti v0.2.0
 	github.com/go-icons/vscode-icons v0.2.0
 	github.com/go-opentype/fonts v0.14.0
-	github.com/go-richdoc/latex v0.8.0
-	github.com/go-richdoc/markdown v0.10.0
-	github.com/go-richdoc/richdoc v0.7.0
-	github.com/go-tex/engine v0.275.0
+	github.com/go-richdoc/latex v0.10.0
+	github.com/go-richdoc/markdown v0.13.0
+	github.com/go-richdoc/richdoc v0.10.0
+	github.com/go-tex/engine v0.282.0
 	github.com/go-widgets/mvvm v0.15.0
-	github.com/go-widgets/painter v0.17.0
-	github.com/go-widgets/toolkit v0.373.0
+	github.com/go-widgets/painter v0.17.1
+	github.com/go-widgets/toolkit v0.390.0
 	github.com/go-widgets/toolkit/rougelex v0.2.0
 	github.com/go-widgets/vcs v0.1.0
 )
@@ -37,10 +37,9 @@ require (
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/go-gfx/gfx v0.41.0 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
-	github.com/go-icons/iconoir v0.3.0 // indirect
-	github.com/go-images/images v0.1.1-0.20261026203936-4ac989d310a1 // indirect
+	github.com/go-images/images v0.3.0 // indirect
 	github.com/go-images/jpeg2000 v0.14.0 // indirect
-	github.com/go-opentype/opentype v0.20.0 // indirect
+	github.com/go-opentype/opentype v0.22.0 // indirect
 	github.com/go-opentype/shape v0.7.0 // indirect
 	github.com/go-pdfkit/pdfkit v0.20.0 // indirect
 	github.com/go-regexp/engine v0.1.0 // indirect
@@ -49,8 +48,8 @@ require (
 	github.com/go-simd/highway v0.0.14 // indirect
 	github.com/go-tex/math v0.50.0 // indirect
 	github.com/go-typeset/bidi v0.3.1 // indirect
-	github.com/go-typeset/hyphenation v1.0.0 // indirect
-	github.com/go-typeset/linebreak v1.3.0 // indirect
+	github.com/go-typeset/hyphenation v1.0.1 // indirect
+	github.com/go-typeset/linebreak v1.12.0 // indirect
 	github.com/go-widgets/textinput v0.1.0 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
@@ -60,7 +59,7 @@ require (
 	github.com/skeema/knownhosts v1.3.1 // indirect
 	github.com/tannevaled/gobig2 v0.2.0 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
-	github.com/yuin/goldmark v1.8.6 // indirect
+	github.com/yuin/goldmark v1.8.7 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/image v0.47.0 // indirect
 	golang.org/x/net v0.62.0 // indirect
