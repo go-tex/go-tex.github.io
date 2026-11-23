@@ -69,6 +69,9 @@ disableKinds = ['taxonomy', 'term', 'rss', 'sitemap', '404']
   name = "Faithful engine"
   what = "Category-code mouth and gullet, a scaled-point stomach with Knuth–Plass line breaking, a cost-based page builder that keeps TeX's `page_total` and `page_depth` apart — the depth of a page's last line is capped at `\\maxdepth` and not charged against the goal, so a page that fills to exactly `\\textheight` is accepted — and `\\halign` tables."
 [[params.families]]
+  name = "Primitives and packages"
+  what = "`\\halign` entries run live as `tex.web` §785-791 does, `\\leaders`, `\\cleaders` and `\\xleaders` are real primitives, and `\\c@page` is a real count register. `geometry` keeps its default body and restores the preamble layout with `\\restoregeometry`; `a4`, `eso-pic` shipout pictures, `setspace` in floats and footnotes, `titlesec`, `manyfoot`, `algorithm2e`, `tocdepth`, `comment`, `xstring` and `\\DeclareUnicodeCharacter` are handled, and `elsarticle` front matter and `acmart`'s Biolinum and Inconsolata faces are set."
+[[params.families]]
   name = "Math and fonts"
   what = "Math via go-tex/math (vector output); OpenType fonts with a built-in default font, kerning and ligatures — runs with no assets, and a full family (roman, bold, italic, slanted, typewriter, sans) when one is given. The size ladder is the class's own table to the point, not a whole-point approximation of it: all ten of `\\tiny`…`\\Huge` match tectonic, including the three that are not whole numbers (`\\Large` 14.4, `\\LARGE` 17.28, `\\huge` 20.74), and an `[11pt]` class sets its body at the 10.95 its `\\@xipt` states. Kerning comes from every GPOS lookup rather than the first that covers a pair: `\\hbox{AV}` in Libertinus at 10pt is 12.35pt, XeTeX's own figure, where stopping at the first lookup gave 13.47."
 [[params.families]]
