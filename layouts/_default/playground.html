@@ -74,7 +74,7 @@ body{overflow:hidden;background:var(--bg)}
 </div>
 
 <script src="{{ "js/wasm_exec.js" | absURL }}"></script>
-<script src="{{ "js/git-prespawn.js" | absURL }}"></script>
+<script>{{ readFile "static/js/git-prespawn.js" | safeJS }}</script>
 <script>
 "use strict";
 (function(){
