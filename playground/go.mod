@@ -1,15 +1,14 @@
 module github.com/go-tex/go-tex.github.io/playground
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/andybalholm/brotli v1.2.8
 	github.com/go-appdirs/outdir v0.3.0
+	github.com/go-browserhttp/browsergit v0.4.0
 	github.com/go-crdt/collab v0.78.1
 	github.com/go-crdt/crdt v0.57.0
 	github.com/go-gfx/qr v0.2.0
-	github.com/go-git/go-billy/v5 v5.9.2
-	github.com/go-git/go-git/v5 v5.19.3
 	github.com/go-icons/devicon v0.2.0
 	github.com/go-icons/material v0.2.0
 	github.com/go-icons/seti v0.2.0
@@ -37,6 +36,8 @@ require (
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/go-gfx/gfx v0.41.0 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
+	github.com/go-git/go-billy/v5 v5.9.2 // indirect
+	github.com/go-git/go-git/v5 v5.19.3 // indirect
 	github.com/go-icons/iconoir v0.3.0 // indirect
 	github.com/go-images/images v0.1.1-0.20261026203936-4ac989d310a1 // indirect
 	github.com/go-images/jpeg2000 v0.14.0 // indirect

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-tex/go-tex.github.io/playground/internal/browsergit"
-	"github.com/go-tex/go-tex.github.io/playground/internal/gitrpc"
+	"github.com/go-browserhttp/browsergit"
+	"github.com/go-browserhttp/browsergit/gitrpc"
 )
 
 // fakeSession is a canned [gitSession] with per-method error injection, so the

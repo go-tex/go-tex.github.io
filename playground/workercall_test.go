@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-tex/go-tex.github.io/playground/internal/gitrpc"
+	"github.com/go-browserhttp/browsergit/gitrpc"
 )
 
 // A reply that is already there is returned without waiting: the deadline is an

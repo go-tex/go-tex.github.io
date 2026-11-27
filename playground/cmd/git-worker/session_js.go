@@ -6,8 +6,8 @@
 package main
 
 import (
-	"github.com/go-tex/go-tex.github.io/playground/internal/browsergit"
-	"github.com/go-tex/go-tex.github.io/playground/internal/gitrpc"
+	"github.com/go-browserhttp/browsergit"
+	"github.com/go-browserhttp/browsergit/gitrpc"
 )
 
 // browsergitSession is the live [gitSession]: one in-memory browsergit repository
@@ -164,7 +164,7 @@ func (s *browsergitSession) WriteFile(p, content string) error {
 	return s.repo.WriteFile(p, []byte(content))
 }
 
-func (s *browsergitSession) RemoveFile(p string) error { return s.repo.Remove(p) }
+func (s *browsergitSession) RemoveFile(p string) error { return s.repo.RemoveFile(p) }
 
 func (s *browsergitSession) Commit(message string) error {
 	_, err := s.repo.Commit(message)

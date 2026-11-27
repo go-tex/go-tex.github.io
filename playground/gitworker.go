@@ -10,7 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-tex/go-tex.github.io/playground/internal/gitrpc"
+	"github.com/go-browserhttp/browsergit/gitrpc"
+	"github.com/go-tex/go-tex.github.io/playground/internal/gitops"
 )
 
 // workerBootDeadline bounds the wait for the git client's wasm to instantiate.
@@ -424,7 +425,7 @@ func (b *workerGitBackend) WriteFiles(files map[string]string, done func(error))
 // workspace would offer to open a file the repository no longer has.
 func (b *workerGitBackend) RemoveFile(path string, done func(files []string, err error)) {
 	go func() {
-		reply := b.t.Call(gitrpc.Request{Op: gitrpc.OpRemoveFile, Args: gitrpc.Args{Path: path}}, nil)
+		reply := b.t.Call(gitrpc.Request{Op: gitops.OpRemoveFile, Args: gitrpc.Args{Path: path}}, nil)
 		if !reply.OK {
 			done(nil, codeToError(reply.Code, reply.Error))
 			return
