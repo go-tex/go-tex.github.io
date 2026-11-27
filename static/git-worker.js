@@ -33,7 +33,18 @@
     total = parseInt(new URLSearchParams(bust).get("n") || "0", 10) || 0;
   } catch (e) { /* no URLSearchParams: the bar simply reports "unknown" */ }
 
-  function report(got) {
+  // ⛔ NOT one message per chunk. The stream yields a chunk every few KB, and each
+  // message makes the page repaint its whole canvas on the page's only thread
+  // (EnableGit's onProgress): measured, ~800 ms of the page's thread were spent
+  // repainting a progress bar while the worker's "ready" waited in the queue behind
+  // it. Progress is reported at most every PROGRESS_EVERY_MS, and the first and the
+  // final byte count always go through (force).
+  var PROGRESS_EVERY_MS = 100;
+  var lastReport = -Infinity;
+  function report(got, force) {
+    var now = Date.now();
+    if (!force && now - lastReport < PROGRESS_EVERY_MS) return;
+    lastReport = now;
     self.postMessage({ t: "gotex-asset-progress", got: got, total: total });
   }
 
@@ -46,10 +57,11 @@
       if (!r.ok) throw new Error("HTTP " + r.status + " fetching git-worker.wasm");
       if (!r.body || !r.body.getReader) return r.arrayBuffer(); // no streaming: one shot
       var reader = r.body.getReader(), received = 0, chunks = [];
-      report(0);
+      report(0, true);
       return (function pump() {
         return reader.read().then(function (res) {
           if (res.done) {
+            report(received, true);
             var buf = new Uint8Array(received), pos = 0;
             for (var i = 0; i < chunks.length; i++) { buf.set(chunks[i], pos); pos += chunks[i].length; }
             return buf.buffer;
