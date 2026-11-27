@@ -203,6 +203,9 @@ func main() {
 	if d := js.Global().Get("gotexDeclineBootClone"); d.Truthy() {
 		state.DeclineBootClone()
 	}
+	if u := js.Global().Get("gotexBootRemoteURL"); u.Type() == js.TypeString {
+		state.SetBootRemote(u.String())
+	}
 	state.BootClone(func(error) { render() })
 
 	// While any git operation is in flight, run a requestAnimationFrame loop so the

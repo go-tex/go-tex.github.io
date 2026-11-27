@@ -74,6 +74,7 @@ body{overflow:hidden;background:var(--bg)}
 </div>
 
 <script src="{{ "js/wasm_exec.js" | absURL }}"></script>
+<script>{{ readFile "static/js/git-prespawn.js" | safeJS }}</script>
 <script>
 "use strict";
 (function(){
@@ -253,6 +254,10 @@ body{overflow:hidden;background:var(--bg)}
         var m=new Uint8Array(ab,0,4);
         if(!(m[0]===0x00&&m[1]===0x61&&m[2]===0x73&&m[3]===0x6d))
           throw new Error("the engine URL did not return a WebAssembly module");
+        // The engine's bytes are here and the network is about to go quiet while
+        // they compile and initialise. Start the git client's download now, so it
+        // fills that gap instead of beginning after boot (static/js/git-prespawn.js).
+        if(globalThis.gotexPrespawnGitWorker) globalThis.gotexPrespawnGitWorker();
         return WebAssembly.instantiate(ab,go.importObject);
       });
     }

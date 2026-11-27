@@ -222,6 +222,9 @@ type gitView struct {
 	//
 	// A page that wants the samples simply does not set it: the default is to clone.
 	bootDeclined bool
+	// bootRemote overrides [DefaultRemoteURL] for the boot clone; see
+	// [State.SetBootRemote].
+	bootRemote string
 
 	// cloneGen counts clone attempts so a superseded one cannot act on its
 	// result, and bootInFlight says whether the running one is the speculative
@@ -1794,6 +1797,12 @@ func (nopGitBackend) HasRepo() bool                   { return false }
 // It must be called before [State.BootClone]; afterwards it has nothing to stop.
 func (s *State) DeclineBootClone() { s.git.bootDeclined = true }
 
+// SetBootRemote points the boot clone at url instead of [DefaultRemoteURL]. A
+// host that measures or proves the start-up (the page served from 127.0.0.1
+// cannot reach the real remote: its CORS policy names go-tex.github.io) serves its
+// own origin. An empty url keeps the default.
+func (s *State) SetBootRemote(url string) { s.git.bootRemote = url }
+
 // errNoBrowserGit explains why the no-op backend never clones.
 var errNoBrowserGit = errors.New("git: remote git needs a browser")
 
@@ -1821,7 +1830,11 @@ func (s *State) BootClone(done func(err error)) {
 		}
 		return
 	}
-	v.url.Set(DefaultRemoteURL)
+	if v.bootRemote != "" {
+		v.url.Set(v.bootRemote)
+	} else {
+		v.url.Set(DefaultRemoteURL)
+	}
 	v.bootBuffer = s.Source()
 
 	settle := func(err error) {

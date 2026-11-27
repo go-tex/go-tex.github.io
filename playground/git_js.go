@@ -150,13 +150,34 @@ func gitWorkerURL() string {
 // filling the form, and Call calls it too as a safety net.
 func (w *jsWorkerTransport) Spawn() {
 	w.mu.Lock()
-	defer w.mu.Unlock()
+	replay := w.spawnLocked()
+	w.mu.Unlock()
+	// The handlers take w.mu themselves, so the replay of an adopted Worker's
+	// backlog runs after it is released.
+	if replay != nil {
+		replay()
+	}
+}
+
+// spawnLocked does Spawn's work with w.mu held. It returns the replay of an
+// adopted Worker's backlog, or nil.
+func (w *jsWorkerTransport) spawnLocked() func() {
 	if w.spawned {
-		return
+		return nil
 	}
 	w.spawned = true
 
-	w.worker = js.Global().Get("Worker").New(gitWorkerURL())
+	// Adopt the Worker the page started while playground.wasm was still booting
+	// (static/js/git-prespawn.js), so the git client's download overlaps the main
+	// wasm's compile instead of following it. Absent, create it here as always.
+	var backlog js.Value
+	if pre := js.Global().Get("gotexGitWorker"); pre.Truthy() {
+		w.worker = pre
+		backlog = js.Global().Get("gotexGitWorkerBacklog")
+		js.Global().Set("gotexGitWorker", js.Undefined()) // one adopter only
+	} else {
+		w.worker = js.Global().Get("Worker").New(gitWorkerURL())
+	}
 
 	w.onmessage = js.FuncOf(func(_ js.Value, args []js.Value) any {
 		data := args[0].Get("data")
@@ -246,6 +267,21 @@ func (w *jsWorkerTransport) Spawn() {
 		return nil
 	})
 	w.worker.Set("onerror", w.onerror)
+
+	// Take over from the page's listener and replay what it kept. Nothing yields
+	// between the assignments above and here, so no message is lost or doubled.
+	if !backlog.Truthy() {
+		return nil
+	}
+	backlog.Set("adopted", true)
+	return func() {
+		for i, n := 0, backlog.Length(); i < n; i++ {
+			w.onmessage.Invoke(backlog.Index(i))
+		}
+		if backlog.Get("failed").Truthy() {
+			w.onerror.Invoke(js.Undefined())
+		}
+	}
 }
 
 // awaitReady waits for the worker's wasm to report ready and says whether it

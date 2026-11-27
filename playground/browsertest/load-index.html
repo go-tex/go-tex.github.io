@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>go-tex playground — Git panel load measurement</title>
+    <style>
+      #gotex-canvas {
+        width: 1100px;
+        height: 800px;
+        display: block;
+        background: #fff;
+        border: 1px solid #999;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="gotex-canvas"></canvas>
+    <!-- Same boot order as layouts/_default/playground.html: download the engine
+         through fetch, and (unless ?prespawn=0 asks for the old order) start the git
+         Worker the moment its bytes are in. ?legacy=1 serves the bootstrap as it was
+         before progress was throttled (git-worker-legacy.js). Unlike git-index.html
+         this page does NOT decline the boot clone: the boot clone is what is being
+         measured, against the origin named by ?remote=. -->
+    <script>
+      const q = new URLSearchParams(location.search);
+      globalThis.gotexGitWorkerURL = q.get("legacy") === "1" ? "git-worker-legacy.js" : "git-worker.js";
+      globalThis.gotexBootRemoteURL = q.get("remote") || "";
+      globalThis.__marks = {};
+      globalThis.__progressMsgs = 0;
+      const mark = (n) => { if (!(n in globalThis.__marks)) globalThis.__marks[n] = performance.now(); };
+      // Count the download-progress messages every Worker sends this page.
+      const RealWorker = globalThis.Worker;
+      globalThis.Worker = class extends RealWorker {
+        constructor(...a) {
+          super(...a);
+          this.addEventListener("message", (e) => {
+            if (e.data && typeof e.data === "object") globalThis.__progressMsgs++;
+          });
+        }
+      };
+    </script>
+    <script src="js/wasm_exec.js"></script>
+    <script src="js/git-prespawn.js"></script>
+    <script>
+      (async () => {
+        try {
+          const go = new Go();
+          mark("main-fetch-start");
+          const ab = await (await fetch("playground.wasm")).arrayBuffer();
+          mark("main-downloaded");
+          if (q.get("prespawn") !== "0") globalThis.gotexPrespawnGitWorker();
+          const result = await WebAssembly.instantiate(ab, go.importObject);
+          mark("main-instantiated");
+          go.run(result.instance);
+        } catch (err) {
+          console.log("BOOT_FAIL the page failed to run playground.wasm: " + err);
+          globalThis.__bootError = String(err);
+        }
+      })();
+    </script>
+  </body>
+</html>
